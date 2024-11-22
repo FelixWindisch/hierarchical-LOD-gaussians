@@ -28,6 +28,7 @@ def direct_collate(x):
 def training(dataset, opt, pipe, saving_iterations, checkpoint_iterations, checkpoint, debug_from):
     first_iter = 0
     prepare_output_and_logger(dataset)
+    print("coarse source path: " + dataset.source_path)
     gaussians = GaussianModel(1)
     scene = Scene(dataset, gaussians)
     gaussians.training_setup(opt)

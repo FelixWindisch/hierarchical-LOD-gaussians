@@ -21,7 +21,7 @@ from utils.sh_utils import RGB2SH
 from simple_knn._C import distCUDA2
 from utils.graphics_utils import BasicPointCloud
 from utils.general_utils import strip_symmetric, build_scaling_rotation
-from gaussian_hierarchy._C import load_hierarchy, write_hierarchy
+from gaussian_hierarchy._C import load_hierarchy, write_hierarchy, load_dynamic_hierarchy
 from scene.OurAdam import Adam
 
 class GaussianModel:
@@ -47,6 +47,7 @@ class GaussianModel:
 
 
     def __init__(self, sh_degree : int):
+        self.is_hierarchy = False
         self.active_sh_degree = 0
         self.max_sh_degree = sh_degree  
         self._xyz = torch.empty(0)
@@ -322,11 +323,14 @@ class GaussianModel:
 
         return xyz, features_dc, features_extra, opacities, scales, rots
 
-
+    # scaffold file is only required for number of skybox points
     def create_from_hier(self, path, spatial_lr_scale : float, scaffold_file : str):
+        
+        self.is_hierarchy = True
         self.spatial_lr_scale = spatial_lr_scale
-
-        xyz, shs_all, alpha, scales, rots, nodes, boxes = load_hierarchy(path)
+        print(path)
+        #xyz, shs_all, alpha, scales, rots, nodes, boxes = load_hierarchy(path)
+        xyz, shs_all, alpha, scales, rots, nodes = load_dynamic_hierarchy(path)
 
         base = os.path.dirname(path)
 
@@ -396,7 +400,7 @@ class GaussianModel:
         self.hierarchy_path = path
 
         self.nodes = nodes.cuda()
-        self.boxes = boxes.cuda()
+        #self.boxes = boxes.cuda()
 
     def create_from_pt(self, path, spatial_lr_scale : float ):
         self.spatial_lr_scale = spatial_lr_scale
@@ -540,6 +544,8 @@ class GaussianModel:
                 optimizable_tensors[group["name"]] = group["params"][0]
         return optimizable_tensors
 
+
+    # removes the pruned gaussians from the optimizer and return tensors with the pruned gaussian properties removed
     def _prune_optimizer(self, mask):
         optimizable_tensors = {}
         for group in self.optimizer.param_groups:
@@ -561,7 +567,8 @@ class GaussianModel:
     def prune_points(self, mask):
         valid_points_mask = ~mask
         optimizable_tensors = self._prune_optimizer(valid_points_mask)
-
+        
+        
         self._xyz = optimizable_tensors["xyz"]
         self._features_dc = optimizable_tensors["f_dc"]
         self._features_rest = optimizable_tensors["f_rest"]
@@ -573,6 +580,22 @@ class GaussianModel:
 
         self.denom = self.denom[valid_points_mask]
         self.max_radii2D = self.max_radii2D[valid_points_mask]
+        
+        if(self.is_hierarchy):
+            cum_sum = np.cumsum(~mask)-1
+            n.nodes = n.nodes[valid_points_mask]
+            n.boxes = n.boxes[valid_points_mask]
+            for n in self.nodes:
+                n.parent = cum_sum[n.parent]
+                n.start = cum_sum[n.start]
+                n.start_children = cum_sum[n.start]
+                n.count_children = cum_sum[n.start + n.count_children] - cum_sum[n.start] + 1
+                if n.count_children == 0:
+                    n.depth = 0
+                    n.count_leafs = 1
+                    
+            #self.nodes = 
+        
 
     def cat_tensors_to_optimizer(self, tensors_dict):
         optimizable_tensors = {}
@@ -631,6 +654,8 @@ class GaussianModel:
         if self.scaffold_points is not None:
             selected_pts_mask[:self.scaffold_points] = False
 
+
+        gaussians_to_split = np.where(selected_pts_mask)
         stds = self.get_scaling[selected_pts_mask].repeat(N,1)
         means =torch.zeros((stds.size(0), 3),device="cuda")
         samples = torch.normal(mean=means, std=stds)
@@ -641,7 +666,10 @@ class GaussianModel:
         new_features_dc = self._features_dc[selected_pts_mask].repeat(N,1,1)
         new_features_rest = self._features_rest[selected_pts_mask].repeat(N,1,1)
         new_opacity = self._opacity[selected_pts_mask].repeat(N,1)
+        new_boxes = self._opacity[selected_pts_mask].repeat(N,1)
 
+        
+        
         self.densification_postfix(new_xyz, new_features_dc, new_features_rest, new_opacity, new_scaling, new_rotation)
 
         prune_filter = torch.cat((selected_pts_mask, torch.zeros(N * selected_pts_mask.sum(), device="cuda", dtype=bool)))
@@ -650,8 +678,9 @@ class GaussianModel:
     def densify_and_clone(self, grads, grad_threshold, scene_extent):
         # Extract points that satisfy the gradient condition
         selected_pts_mask = torch.where(torch.norm(grads, dim=-1) * self.max_radii2D * torch.pow(self.get_opacity.flatten(), 1/5.0) >= grad_threshold, True, False)
+        # Don't densify points that will be pruned
         selected_pts_mask = torch.logical_and(selected_pts_mask, self.get_opacity.flatten() > 0.15)
-
+        # Don't densify points that will be pruned
         selected_pts_mask = torch.logical_and(selected_pts_mask,
                                               torch.max(self.get_scaling, dim=1).values <= self.percent_dense*scene_extent)
         # No densification of the scaffold
@@ -687,3 +716,21 @@ class GaussianModel:
     def add_densification_stats(self, viewspace_point_tensor, update_filter):
         self.xyz_gradient_accum[update_filter] = torch.max(torch.norm(viewspace_point_tensor.grad[update_filter,:2], dim=-1, keepdim=True), self.xyz_gradient_accum[update_filter])
         self.denom[update_filter] += 1
+
+    
+    def densify_and_prune_hierarchy(self, max_grad, min_opacity, extent):
+        grads = self.xyz_gradient_accum 
+        grads[grads.isnan()] = 0.0
+
+        self.densify_and_clone(grads, max_grad, extent)
+        self.densify_and_split(grads, max_grad, extent)
+
+        prune_mask = (self.get_opacity < min_opacity).squeeze()
+        if self.scaffold_points is not None:
+            prune_mask[:self.scaffold_points] = False
+
+        self.prune_points(prune_mask)
+
+        self.max_radii2D = torch.zeros((self.get_xyz.shape[0]), device="cuda")
+
+        torch.cuda.empty_cache()

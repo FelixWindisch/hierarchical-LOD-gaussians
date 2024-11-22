@@ -87,7 +87,7 @@ def render_set(args, scene, pipe, out_dir, tau, eval):
             render_indices=indices,
             parent_indices = parent_indices,
             interpolation_weights = interpolation_weights,
-            num_node_kids = num_siblings, 
+            num_node_siblings = num_siblings, 
             use_trained_exp=args.train_test_exp
             )["render"], 0.0, 1.0)
 

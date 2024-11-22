@@ -69,6 +69,9 @@ class ModelParams(ParamGroup):
 
     def extract(self, args):
         g = super().extract(args)
+        # TODO: Fix this
+        #g.source_path = "/home/felix-windisch/Datasets/example_dataset_LOD/example_dataset/camera_calibration/aligned"
+        # What is up with this?
         g.source_path = os.path.abspath(g.source_path)
         return g
 

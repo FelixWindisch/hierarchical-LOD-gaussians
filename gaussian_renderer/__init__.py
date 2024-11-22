@@ -54,6 +54,7 @@ def render(
         campos=viewpoint_camera.camera_center,
         prefiltered=False,
         debug=pipe.debug,
+        # This is false for render_coarse
         do_depth=True,
         render_indices=render_indices,
         parent_indices=parent_indices,
@@ -112,10 +113,14 @@ def render(
         rotations = rotations,
         cov3D_precomp = cov3D_precomp)
     
+    
+    # This is missing in render_coarse
     if use_trained_exp:
         exposure = pc.get_exposure_from_name(viewpoint_camera.image_name)
         rendered_image = torch.matmul(rendered_image.permute(1, 2, 0), exposure[:3, :3]).permute(2, 0, 1) + exposure[:3, 3,   None, None]
     rendered_image = rendered_image.clamp(0, 1)
+    # This is missing in render_coarse
+
 
     subfilter = radii > 0
     if indices is not None:
@@ -134,7 +139,7 @@ def render(
             "visibility_filter" : vis_filter.nonzero().flatten().long(),
             "radii": radii[subfilter]}
 
-
+# render with hierarchy, interpolate Gaussians with their parent nodes beforehand
 def render_post(
         viewpoint_camera, 
         pc : GaussianModel, 
@@ -145,7 +150,8 @@ def render_post(
         render_indices = torch.Tensor([]).int(),
         parent_indices = torch.Tensor([]).int(),
         interpolation_weights = torch.Tensor([]).float(),
-        num_node_kids = torch.Tensor([]).int(),
+        # number of siblings
+        num_node_siblings = torch.Tensor([]).int(),
         interp_python = True,
         use_trained_exp = False):
     """
@@ -192,6 +198,8 @@ def render_post(
         else:
             shs = pc.get_features
     else:
+        # Technically, we don't need the SHs if we precompute color, maybe remove?
+        #shs = pc.get_features
         colors_precomp = override_color
 
     # Rasterize visible Gaussians to image, obtain their radii (on screen).
@@ -207,7 +215,8 @@ def render_post(
 
             means3D_base = (interps * means3D[render_inds] + interps_inv * means3D[parent_inds]).contiguous()
             scales_base = (interps * scales[render_inds] + interps_inv * scales[parent_inds]).contiguous()
-            shs_base = (interps.unsqueeze(2) * shs[render_inds] + interps_inv.unsqueeze(2) * shs[parent_inds]).contiguous()
+            if override_color is None:
+                shs_base = (interps.unsqueeze(2) * shs[render_inds] + interps_inv.unsqueeze(2) * shs[parent_inds]).contiguous()
             
             parents = rotations[parent_inds]
             rots = rotations[render_inds]
@@ -222,8 +231,9 @@ def render_post(
             else:
                 skybox_inds = torch.range(pc._xyz.size(0) - pc.skybox_points, pc._xyz.size(0)-1, device="cuda").long()
 
-            means3D = torch.cat((means3D_base, means3D[skybox_inds])).contiguous()  
-            shs = torch.cat((shs_base, shs[skybox_inds])).contiguous() 
+            means3D = torch.cat((means3D_base, means3D[skybox_inds])).contiguous() 
+            if override_color is None: 
+                shs = torch.cat((shs_base, shs[skybox_inds])).contiguous() 
             opacity = torch.cat((opacity_base, opacity[skybox_inds])).contiguous()  
             rotations = torch.cat((rotations_base, rotations[skybox_inds])).contiguous()    
             means2D = means2D[:(num_entries + pc.skybox_points)].contiguous()     
@@ -231,12 +241,13 @@ def render_post(
 
             interpolation_weights = interpolation_weights.clone().detach()
             interpolation_weights[num_entries:num_entries+pc.skybox_points] = 1.0 
-            num_node_kids[num_entries:num_entries+pc.skybox_points] = 1 
+            num_node_siblings[num_entries:num_entries+pc.skybox_points] = 1 
         
         else:
             means3D = means3D[render_inds].contiguous()
             means2D = means2D[render_inds].contiguous()
-            shs = shs[render_inds].contiguous()
+            if override_color is None: 
+                shs = shs[render_inds].contiguous()
             opacity = opacity[render_inds].contiguous()
             scales = scales[render_inds].contiguous()
             rotations = rotations[render_inds].contiguous() 
@@ -260,12 +271,14 @@ def render_post(
         render_indices=render_indices,
         parent_indices=parent_indices,
         interpolation_weights=interpolation_weights,
-        num_node_kids=num_node_kids,
+        num_node_kids=num_node_siblings,
         do_depth=False
     )
 
     rasterizer = GaussianRasterizer(raster_settings=raster_settings)
 
+    
+    
     rendered_image, radii, _ = rasterizer(
         means3D = means3D,
         means2D = means2D,
@@ -293,6 +306,8 @@ def render_post(
             "visibility_filter" : vis_filter,
             "radii": radii[vis_filter]}
 
+
+# Exactly like render, but without the option to use exposure and without returning depth data (depth regularization is only used in chunk training)
 def render_coarse(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, scaling_modifier = 1.0, zfar=0.0, override_color = None, indices = None):
     """
     Render the scene for the coarse optimization. 

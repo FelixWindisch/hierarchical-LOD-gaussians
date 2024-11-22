@@ -22,13 +22,14 @@ from torch.utils.data import DataLoader
 from argparse import ArgumentParser, Namespace
 from arguments import ModelParams, PipelineParams, OptimizationParams
 import math
+import torchvision
 
 from gaussian_hierarchy._C import expand_to_size, get_interpolation_weights
 
 def direct_collate(x):
     return x
 
-def training(dataset, opt, pipe, saving_iterations, checkpoint_iterations, checkpoint, debug_from):
+def training(dataset, opt : OptimizationParams, pipe, saving_iterations, checkpoint_iterations, checkpoint, debug_from):
     first_iter = 0
     prepare_output_and_logger(dataset)
     gaussians = GaussianModel(dataset.sh_degree)
@@ -71,6 +72,7 @@ def training(dataset, opt, pipe, saving_iterations, checkpoint_iterations, check
             for viewpoint_cam in viewpoint_batch:
 
                 sample = torch.rand(1).item()
+                # target granularity
                 limit = math.pow(2, sample * (math.log2(limmax) - math.log2(limmin)) + math.log2(limmin))
                 scale = 1
 
@@ -124,11 +126,12 @@ def training(dataset, opt, pipe, saving_iterations, checkpoint_iterations, check
                     render_indices=indices,
                     parent_indices = parent_indices,
                     interpolation_weights = interpolation_weights,
-                    num_node_kids = num_siblings,
+                    num_node_siblings = num_siblings,
                     use_trained_exp=True,
                     )
                 image, viewspace_point_tensor, visibility_filter, radii = render_pkg["render"], render_pkg["viewspace_points"], render_pkg["visibility_filter"], render_pkg["radii"]
-
+                #print(os.path.join(scene.model_path, str(limit) + ".png"))
+                #torchvision.utils.save_image(image, os.path.join(scene.model_path, str(limit) + ".png"))
 
                 # Loss
                 gt_image = viewpoint_cam.original_image.cuda()
@@ -161,6 +164,20 @@ def training(dataset, opt, pipe, saving_iterations, checkpoint_iterations, check
                         progress_bar.close()
                         return
 
+
+
+                    # Densification
+                    if iteration < opt.densify_until_iter or True:
+                        # Keep track of max radii in image-space for pruning
+                        gaussians.max_radii2D[visibility_filter] = torch.max(gaussians.max_radii2D[visibility_filter], radii)
+                        gaussians.add_densification_stats(viewspace_point_tensor, visibility_filter)
+
+                        if iteration > opt.densify_from_iter and iteration % opt.densification_interval == 0:
+                            gaussians.densify_and_prune(opt.densify_grad_threshold, 0.005, scene.cameras_extent)
+
+                        if iteration % opt.opacity_reset_interval == 0 or (dataset.white_background and iteration == opt.densify_from_iter):
+                            print("-----------------RESET OPACITY!-------------")
+                            gaussians.reset_opacity()
                     # Optimizer step
                     if iteration < opt.iterations:
 
@@ -173,12 +190,14 @@ def training(dataset, opt, pipe, saving_iterations, checkpoint_iterations, check
                                 gaussians._opacity.grad[-gaussians.skybox_points:, :] = 0
                                 gaussians._scaling.grad[-gaussians.skybox_points:, :] = 0
                             
-                            gaussians._xyz.grad[gaussians.anchors, :] = 0
-                            gaussians._rotation.grad[gaussians.anchors, :] = 0
-                            gaussians._features_dc.grad[gaussians.anchors, :, :] = 0
-                            gaussians._features_rest.grad[gaussians.anchors, :, :] = 0
-                            gaussians._opacity.grad[gaussians.anchors, :] = 0
-                            gaussians._scaling.grad[gaussians.anchors, :] = 0
+                            
+                            # This would prevent further training of the leaves
+                            #gaussians._xyz.grad[gaussians.anchors, :] = 0
+                            #gaussians._rotation.grad[gaussians.anchors, :] = 0
+                            #gaussians._features_dc.grad[gaussians.anchors, :, :] = 0
+                            #gaussians._features_rest.grad[gaussians.anchors, :, :] = 0
+                            #gaussians._opacity.grad[gaussians.anchors, :] = 0
+                            #gaussians._scaling.grad[gaussians.anchors, :] = 0
                         
                         ## OurAdam version
                         # if gaussians._opacity.grad != None:
