@@ -118,6 +118,7 @@ if __name__ == '__main__':
     gaussians = GaussianModel(1)
     gaussians.load_ply(os.path.join(output_dir, "scaffold/point_cloud/iteration_30000/point_cloud.ply"))
     scaffold_scene = Scene(model_params, gaussians)
+    print(f"Number of Gaussians in Scaffold : {len(scaffold_scene.gaussians._xyz)}")
     #debug_utils.generate_some_flat_scene_images(scaffold_scene, pipeline_params, output_dir)
             
     #if not os.path.isabs(images_dir):
@@ -153,9 +154,15 @@ if __name__ == '__main__':
     
     gaussians = GaussianModel(1)
     model_params.hierarchy = os.path.join(output_dir, "scaffold/point_cloud/iteration_30000/", "hierarchy.dhier")
+    model_params.model_path = output_dir
     hierarchy_scene = Scene(model_params, gaussians, resolution_scales = [1], create_from_hier=True)
-    debug_utils.generate_some_hierarchy_scene_images(hierarchy_scene, pipeline_params, output_dir, limit=0.1, no_images=3)
-
+    # The Gaussians are fine here
+    hierarchy_scene.dump_gaussians("Dump", only_leaves=True)
+    print(f"Number of hierarchy leaf nodes: {hierarchy_scene.gaussians.get_number_of_leaf_nodes()}")
+    print(f"Number of hierarchy nodes: {len(hierarchy_scene.gaussians._xyz)}")
+    #debug_utils.generate_some_flat_scene_images(hierarchy_scene, pipeline_params, output_dir)
+    
+    #debug_utils.generate_some_hierarchy_scene_images_dynamic(hierarchy_scene, pipeline_params, output_dir, limit=0.01, no_images=3)
     debug_utils.generate_some_hierarchy_scene_images(hierarchy_scene, pipeline_params, output_dir, limit=0.1, show_depth=True, no_images=3)
     
     
@@ -171,7 +178,7 @@ if __name__ == '__main__':
         subprocess.run(
             post_opt_chunk_args + " -s " + colmap_dir + 
             " --model_path " + os.path.join(output_dir, "scaffold/point_cloud/iteration_30000/") +
-            " --hierarchy " + os.path.join(output_dir, "scaffold/point_cloud/iteration_30000/", "hierarchy.hier") + " --save_iterations " + str(14000),
+            " --hierarchy " + os.path.join(output_dir, "scaffold/point_cloud/iteration_30000/", "hierarchy.dhier") + " --save_iterations " + str(14000),
             shell=True, check=True
         )
     except subprocess.CalledProcessError as e:
@@ -192,7 +199,7 @@ if __name__ == '__main__':
 
 
     subprocess.run(
-                    post_opt_chunk_args + " -s "+ source_chunk + 
+                    post_opt_chunk_args + " -s " + source_chunk + 
                     " --model_path " + trained_chunk +
                     " --hierarchy " + os.path.join(trained_chunk, "hierarchy.hier"),
                     shell=True, check=True

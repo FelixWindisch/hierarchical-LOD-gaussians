@@ -24,7 +24,7 @@ from arguments import ModelParams, PipelineParams, OptimizationParams
 import math
 import torchvision
 
-from gaussian_hierarchy._C import expand_to_size, get_interpolation_weights
+from gaussian_hierarchy._C import expand_to_size, get_interpolation_weights, expand_to_size_dynamic, get_interpolation_weights_dynamic
 
 def direct_collate(x):
     return x
@@ -90,9 +90,10 @@ def training(dataset, opt : OptimizationParams, pipe, saving_iterations, checkpo
                 if iteration % 1000 == 0:
                     gaussians.oneupSHdegree()
 
-                to_render = expand_to_size(
+                to_render = expand_to_size_dynamic(
                     gaussians.nodes,
-                    gaussians.boxes,
+                    gaussians._xyz,
+                    gaussians._scaling,
                     limit * scale,
                     viewpoint_cam.camera_center,
                     torch.zeros((3)),
@@ -103,11 +104,12 @@ def training(dataset, opt : OptimizationParams, pipe, saving_iterations, checkpo
                 indices = render_indices[:to_render].int()
                 node_indices = nodes_for_render_indices[:to_render]
 
-                get_interpolation_weights(
+                get_interpolation_weights_dynamic(
                     node_indices,
                     limit * scale,
                     gaussians.nodes,
-                    gaussians.boxes,
+                    gaussians._xyz,
+                    gaussians._scaling,
                     viewpoint_cam.camera_center.cpu(),
                     torch.zeros((3)),
                     interpolation_weights,
@@ -165,12 +167,12 @@ def training(dataset, opt : OptimizationParams, pipe, saving_iterations, checkpo
                         return
 
 
-
+                    print(visibility_filter)
                     # Densification
                     if iteration < opt.densify_until_iter or True:
                         # Keep track of max radii in image-space for pruning
-                        gaussians.max_radii2D[visibility_filter] = torch.max(gaussians.max_radii2D[visibility_filter], radii)
-                        gaussians.add_densification_stats(viewspace_point_tensor, visibility_filter)
+                        #gaussians.max_radii2D[visibility_filter] = torch.max(gaussians.max_radii2D[visibility_filter], radii)
+                        #gaussians.add_densification_stats(viewspace_point_tensor, visibility_filter)
 
                         if iteration > opt.densify_from_iter and iteration % opt.densification_interval == 0:
                             gaussians.densify_and_prune(opt.densify_grad_threshold, 0.005, scene.cameras_extent)

@@ -24,6 +24,14 @@ from utils.general_utils import strip_symmetric, build_scaling_rotation
 from gaussian_hierarchy._C import load_hierarchy, write_hierarchy, load_dynamic_hierarchy
 from scene.OurAdam import Adam
 
+hierarchy_node_depth = 0
+hierarchy_node_parent = 1
+hierarchy_node_child_count = 2
+hierarchy_node_first_child = 3
+hierarchy_node_next_sibling = 4
+hierarchy_node_max_side_length = 5
+
+
 class GaussianModel:
 
     def setup_functions(self):
@@ -72,6 +80,9 @@ class GaussianModel:
 
         self.setup_functions()
 
+    def get_number_of_leaf_nodes(self):
+        return torch.sum(self.nodes[:, hierarchy_node_child_count] == 0).item()
+    
     def capture(self):
         return (
             self.active_sh_degree,
@@ -331,6 +342,8 @@ class GaussianModel:
         print(path)
         #xyz, shs_all, alpha, scales, rots, nodes, boxes = load_hierarchy(path)
         xyz, shs_all, alpha, scales, rots, nodes = load_dynamic_hierarchy(path)
+        #alpha = torch.log(alpha)
+        #scales = torch.log(scales)
 
         base = os.path.dirname(path)
 
@@ -492,16 +505,20 @@ class GaussianModel:
             f.write(rotation.numpy().tobytes())
 
 
-    def save_ply(self, path):
+    def save_ply(self, path, only_leaves=False):
         mkdir_p(os.path.dirname(path))
-
-        xyz = self._xyz.detach().cpu().numpy()
+        if only_leaves:
+            mask = self.nodes[:, hierarchy_node_child_count] == 0
+        else:
+            # all true mask
+            mask = self.nodes[:, hierarchy_node_child_count] != 1000000000000
+        xyz = self._xyz[mask].detach().cpu().numpy()
         normals = np.zeros_like(xyz)
-        f_dc = self._features_dc.detach().transpose(1, 2).flatten(start_dim=1).contiguous().cpu().numpy()
-        f_rest = self._features_rest.detach().transpose(1, 2).flatten(start_dim=1).contiguous().cpu().numpy()
-        opacities = self._opacity.detach().cpu().numpy()
-        scale = self._scaling.detach().cpu().numpy()
-        rotation = self._rotation.detach().cpu().numpy()
+        f_dc = self._features_dc[mask].detach().transpose(1, 2).flatten(start_dim=1).contiguous().cpu().numpy()
+        f_rest = self._features_rest[mask].detach().transpose(1, 2).flatten(start_dim=1).contiguous().cpu().numpy()
+        opacities = self._opacity[mask].detach().cpu().numpy()
+        scale = self._scaling[mask].detach().cpu().numpy()
+        rotation = self._rotation[mask].detach().cpu().numpy()
 
         dtype_full = [(attribute, 'f4') for attribute in self.construct_list_of_attributes()]
 
@@ -655,23 +672,42 @@ class GaussianModel:
             selected_pts_mask[:self.scaffold_points] = False
 
 
-        gaussians_to_split = np.where(selected_pts_mask)
-        stds = self.get_scaling[selected_pts_mask].repeat(N,1)
+        stds = self.get_scaling[selected_pts_mask].repeat_interleave(N,1)
         means =torch.zeros((stds.size(0), 3),device="cuda")
         samples = torch.normal(mean=means, std=stds)
-        rots = build_rotation(self._rotation[selected_pts_mask]).repeat(N,1,1)
-        new_xyz = torch.bmm(rots, samples.unsqueeze(-1)).squeeze(-1) + self.get_xyz[selected_pts_mask].repeat(N, 1)
-        new_scaling = self.scaling_inverse_activation(self.get_scaling[selected_pts_mask].repeat(N,1) / (0.8*N))
-        new_rotation = self._rotation[selected_pts_mask].repeat(N,1)
-        new_features_dc = self._features_dc[selected_pts_mask].repeat(N,1,1)
-        new_features_rest = self._features_rest[selected_pts_mask].repeat(N,1,1)
-        new_opacity = self._opacity[selected_pts_mask].repeat(N,1)
-        new_boxes = self._opacity[selected_pts_mask].repeat(N,1)
+        rots = build_rotation(self._rotation[selected_pts_mask]).repeat_interleave(N,1,1)
+        new_xyz = torch.bmm(rots, samples.unsqueeze(-1)).squeeze(-1) + self.get_xyz[selected_pts_mask].repeat_interleave(N, 1)
+        new_scaling = self.scaling_inverse_activation(self.get_scaling[selected_pts_mask].repeat_interleave(N,1) / (0.8*N))
+        new_rotation = self._rotation[selected_pts_mask].repeat_interleave(N,1)
+        new_features_dc = self._features_dc[selected_pts_mask].repeat_interleave(N,1,1)
+        new_features_rest = self._features_rest[selected_pts_mask].repeat_interleave(N,1,1)
+        new_opacity = self._opacity[selected_pts_mask].repeat_interleave(N,1)
+        #new_boxes = self._opacity[selected_pts_mask].repeat(N,1)
+        
+        new_nodes = torch.zeros((len(new_xyz), 6), dtype=torch.int32)
+        for index, node in enumerate(np.where(selected_pts_mask)):
+            full_index = len(self._xyz) + index*2
+            node = self.nodes[node]
+            node[hierarchy_node_child_count] = 2
+            node[hierarchy_node_first_child] = full_index
+            
+            
+            new_nodes[index][hierarchy_node_depth] = node[hierarchy_node_depth] + 1
+            new_nodes[index][hierarchy_node_parent] = node
+            new_nodes[index][hierarchy_node_child_count] = 0
+            new_nodes[index][hierarchy_node_first_child] = -1
+            new_nodes[index][hierarchy_node_next_sibling] = full_index + 1
+            
+            new_nodes[index+1][hierarchy_node_depth] = node[hierarchy_node_depth] + 1
+            new_nodes[index+1][hierarchy_node_parent] = node
+            new_nodes[index+1][hierarchy_node_child_count] = 0
+            new_nodes[index+1][hierarchy_node_first_child] = -1
+            new_nodes[index+1][hierarchy_node_next_sibling] = -1
+        self.nodes = torch.cat(self.nodes, new_nodes)
 
         
         
         self.densification_postfix(new_xyz, new_features_dc, new_features_rest, new_opacity, new_scaling, new_rotation)
-
         prune_filter = torch.cat((selected_pts_mask, torch.zeros(N * selected_pts_mask.sum(), device="cuda", dtype=bool)))
         self.prune_points(prune_filter)
 
@@ -693,6 +729,28 @@ class GaussianModel:
         new_opacities = self._opacity[selected_pts_mask]
         new_scaling = self._scaling[selected_pts_mask]
         new_rotation = self._rotation[selected_pts_mask]
+
+
+        new_nodes = torch.zeros((len(new_xyz), 6), dtype=torch.int32)
+        for index, node in enumerate(np.where(selected_pts_mask)):
+            full_index = len(self._xyz) + index*2
+            node = self.nodes[node]
+            node[hierarchy_node_child_count] = 2
+            node[hierarchy_node_first_child] = full_index
+            
+            
+            new_nodes[index][hierarchy_node_depth] = node[hierarchy_node_depth] + 1
+            new_nodes[index][hierarchy_node_parent] = node
+            new_nodes[index][hierarchy_node_child_count] = 0
+            new_nodes[index][hierarchy_node_first_child] = -1
+            new_nodes[index][hierarchy_node_next_sibling] = full_index + 1
+            
+            new_nodes[index+1][hierarchy_node_depth] = node[hierarchy_node_depth] + 1
+            new_nodes[index+1][hierarchy_node_parent] = node
+            new_nodes[index+1][hierarchy_node_child_count] = 0
+            new_nodes[index+1][hierarchy_node_first_child] = -1
+            new_nodes[index+1][hierarchy_node_next_sibling] = -1
+        self.nodes = torch.cat(self.nodes, new_nodes)
 
         self.densification_postfix(new_xyz, new_features_dc, new_features_rest, new_opacities, new_scaling, new_rotation)
 

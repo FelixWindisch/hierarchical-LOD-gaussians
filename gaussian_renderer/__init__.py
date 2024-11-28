@@ -18,7 +18,13 @@ from diff_gaussian_rasterization import _C
 import numpy as np
 
 def render(
-        viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, scaling_modifier = 1.0, override_color = None, indices = None, use_trained_exp=False):
+        viewpoint_camera, pc : GaussianModel, 
+        pipe, 
+        bg_color : torch.Tensor, 
+        scaling_modifier = 1.0, 
+        override_color = None, 
+        indices = None, 
+        use_trained_exp=False):
     """
     Render the scene. 
     
