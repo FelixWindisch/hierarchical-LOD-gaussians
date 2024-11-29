@@ -246,6 +246,7 @@ def render_post(
             scales = torch.cat((scales_base, scales[skybox_inds])).contiguous()  
 
             interpolation_weights = interpolation_weights.clone().detach()
+            # Skybox Points are not interpolated
             interpolation_weights[num_entries:num_entries+pc.skybox_points] = 1.0 
             num_node_siblings[num_entries:num_entries+pc.skybox_points] = 1 
         
@@ -295,12 +296,12 @@ def render_post(
         rotations = rotations,
         cov3D_precomp = cov3D_precomp)
     
-    if use_trained_exp and pc.pretrained_exposures:
-        try:
-            exposure = pc.pretrained_exposures[viewpoint_camera.image_name]
-            rendered_image = torch.matmul(rendered_image.permute(1, 2, 0), exposure[:3, :3]).permute(2, 0, 1) + exposure[:3, 3,   None, None]
-        except Exception as e:
-            print(f"Exposures should be optimized in single. Missing exposure for image {viewpoint_camera.image_name}")
+    #if use_trained_exp and pc.pretrained_exposures:
+    #    try:
+    #        exposure = pc.pretrained_exposures[viewpoint_camera.image_name]
+    #        rendered_image = torch.matmul(rendered_image.permute(1, 2, 0), exposure[:3, :3]).permute(2, 0, 1) + exposure[:3, 3,   None, None]
+    #    except Exception as e:
+    #        print(f"Exposures should be optimized in single. Missing exposure for image {viewpoint_camera.image_name}")
     rendered_image = rendered_image.clamp(0, 1)
     
     vis_filter = radii > 0

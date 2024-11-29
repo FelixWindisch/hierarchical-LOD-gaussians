@@ -7,6 +7,7 @@ from pathlib import Path
 from scene import Scene, GaussianModel
 from arguments import ModelParams, PipelineParams, OptimizationParams
 import debug_utils
+import train_post
 def submit_job(slurm_args):
     """Submit a job using sbatch and return the job ID."""    
     try:
@@ -155,17 +156,45 @@ if __name__ == '__main__':
     gaussians = GaussianModel(1)
     model_params.hierarchy = os.path.join(output_dir, "scaffold/point_cloud/iteration_30000/", "hierarchy.dhier")
     model_params.model_path = output_dir
-    hierarchy_scene = Scene(model_params, gaussians, resolution_scales = [1], create_from_hier=True)
-    # The Gaussians are fine here
-    hierarchy_scene.dump_gaussians("Dump", only_leaves=True)
+    hierarchy_scene = Scene(model_params, gaussians, resolution_scales = [1], create_from_hier=True, shuffle=True)
+    
+    #hierarchy_scene.dump_gaussians("Dump", only_leaves=True)
     print(f"Number of hierarchy leaf nodes: {hierarchy_scene.gaussians.get_number_of_leaf_nodes()}")
     print(f"Number of hierarchy nodes: {len(hierarchy_scene.gaussians._xyz)}")
     #debug_utils.generate_some_flat_scene_images(hierarchy_scene, pipeline_params, output_dir)
     
-    #debug_utils.generate_some_hierarchy_scene_images_dynamic(hierarchy_scene, pipeline_params, output_dir, limit=0.01, no_images=3)
-    debug_utils.generate_some_hierarchy_scene_images(hierarchy_scene, pipeline_params, output_dir, limit=0.1, show_depth=True, no_images=3)
+
+    #debug_utils.generate_some_hierarchy_scene_images_dynamic(hierarchy_scene, pipeline_params, output_dir, limit=0.0000001, no_images=3)
     
+    optimization_params = OptimizationParams(parser)
+    optimization_params = optimization_params.extract(args)
+    optimization_params.position_lr_init=2e-05
+    optimization_params.position_lr_final=2e-07
+    optimization_params.position_lr_delay_mult=0.01
+    optimization_params.position_lr_max_steps=30000
+    optimization_params.feature_lr=0.0005
+    optimization_params.opacity_lr=0.01
+    optimization_params.scaling_lr=0.001
+    optimization_params.rotation_lr=0.001
+    optimization_params.exposure_lr_init=0.001
+    optimization_params.exposure_lr_final=0.0001
+    optimization_params.exposure_lr_delay_steps=5000
+    optimization_params.exposure_lr_delay_mult=0.001
+    optimization_params.percent_dense=0.001
+    optimization_params.iterations=15000 
+    optimization_params.lambda_dssim=0.2
+    optimization_params.densification_interval=250
+    optimization_params.opacity_reset_interval=3000
+    optimization_params.densify_from_iter=100
+    optimization_params.densify_until_iter=15000
+    #optimization_params.densify_grad_threshold=0.015
+    optimization_params.densify_grad_threshold=0.0015
+    optimization_params.depth_l1_weight_init=1.0
+    optimization_params.depth_l1_weight_final=0.01
+
+    train_post.training(model_params, optimization_params, pipeline_params, [], [], [], [])
     
+    exit()
     post_opt_chunk_args =  " ".join([
         "python", "-u train_post.py",
         "--iterations 15000", "--feature_lr 0.0005",

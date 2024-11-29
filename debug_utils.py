@@ -7,7 +7,7 @@ from scene import Scene, GaussianModel
 from utils.general_utils import safe_state
 import uuid
 from tqdm import tqdm
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, Subset
 from argparse import ArgumentParser, Namespace
 from arguments import ModelParams, PipelineParams, OptimizationParams
 import math
@@ -108,6 +108,7 @@ def generate_some_hierarchy_scene_images(scene : Scene, pipe : PipelineParams, o
                     else: 
                         override_colors = None
                         
+                    #render_pkg = render(viewpoint_cam, gaussians, pipe, background)
                     render_pkg = render_post(
                         viewpoint_cam, 
                         gaussians, 
@@ -149,7 +150,8 @@ def generate_some_hierarchy_scene_images_dynamic(scene : Scene, pipe : PipelineP
         to_render = 0
         
         n = 0
-        training_generator = DataLoader(scene.getTrainCameras(), num_workers = 8, prefetch_factor = 1, persistent_workers = True, collate_fn=direct_collate)
+        training_generator = DataLoader(scene.getTrainCameras(), num_workers = 8, prefetch_factor = 1, persistent_workers = True, collate_fn=direct_collate, shuffle=False)
+        #debug_subset = Subset(training_generator, list(range(no_images)))
         for viewpoint_batch in training_generator:
                 for viewpoint_cam in viewpoint_batch:
                     
@@ -194,20 +196,22 @@ def generate_some_hierarchy_scene_images_dynamic(scene : Scene, pipe : PipelineP
                         override_colors = 2*(torch.sigmoid(torch.tensor(depth_colors, dtype=torch.float32, device="cuda"))-0.5)
                     else: 
                         override_colors = None
-                    
-
-                    render_pkg = render_post(
-                        viewpoint_cam, 
-                        gaussians, 
-                        pipe, 
-                        background, 
-                        override_color=override_colors,
-                        render_indices=indices,
-                        parent_indices = parent_indices,
-                        interpolation_weights = interpolation_weights,
-                        num_node_siblings = num_siblings,
-                        use_trained_exp=True
-                        )
+                    #indices[-1]=(len(gaussians._xyz))
+                    #indices[0]=0
+                    render_pkg = render(viewpoint_cam, gaussians, pipe, background, indices=indices)
+                    pipe.debug = True
+                    #render_pkg = render_post(
+                    #    viewpoint_cam, 
+                    #    gaussians, 
+                    #    pipe, 
+                    #    background, 
+                    #    override_color=override_colors,
+                    #    render_indices=indices,
+                    #    parent_indices=parent_indices,
+                    #    interpolation_weights=interpolation_weights,
+                    #    num_node_siblings=num_siblings,
+                    #    use_trained_exp=True
+                    #    )
 
                     image, viewspace_point_tensor, visibility_filter, radii = render_pkg["render"], render_pkg["viewspace_points"], render_pkg["visibility_filter"], render_pkg["radii"]
                     out_path = os.path.join(output_dir, "hier_"  +str(n)  + ("_depth" if show_depth else "")+ ".png")

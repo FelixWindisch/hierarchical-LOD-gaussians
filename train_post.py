@@ -29,11 +29,14 @@ from gaussian_hierarchy._C import expand_to_size, get_interpolation_weights, exp
 def direct_collate(x):
     return x
 
+
+
 def training(dataset, opt : OptimizationParams, pipe, saving_iterations, checkpoint_iterations, checkpoint, debug_from):
     first_iter = 0
     prepare_output_and_logger(dataset)
     gaussians = GaussianModel(dataset.sh_degree)
     gaussians.active_sh_degree = dataset.sh_degree
+    gaussians.scaffold_points = None
     scene = Scene(dataset, gaussians, resolution_scales = [1], create_from_hier=True)
     gaussians.training_setup(opt, our_adam=False)
     if checkpoint:
@@ -53,7 +56,7 @@ def training(dataset, opt : OptimizationParams, pipe, saving_iterations, checkpo
     indices = None
 
     iteration = first_iter
-    training_generator = DataLoader(scene.getTrainCameras(), num_workers = 8, prefetch_factor = 1, persistent_workers = True, collate_fn=direct_collate)
+    training_generator = DataLoader(scene.getTrainCameras(), num_workers = 8, prefetch_factor = 1, persistent_workers = True, collate_fn=direct_collate, shuffle=True)
 
     limit = 0.001
 
@@ -74,6 +77,8 @@ def training(dataset, opt : OptimizationParams, pipe, saving_iterations, checkpo
                 sample = torch.rand(1).item()
                 # target granularity
                 limit = math.pow(2, sample * (math.log2(limmax) - math.log2(limmin)) + math.log2(limmin))
+                
+                limit = 0
                 scale = 1
 
                 viewpoint_cam.world_view_transform = viewpoint_cam.world_view_transform.cuda()
@@ -132,9 +137,7 @@ def training(dataset, opt : OptimizationParams, pipe, saving_iterations, checkpo
                     use_trained_exp=True,
                     )
                 image, viewspace_point_tensor, visibility_filter, radii = render_pkg["render"], render_pkg["viewspace_points"], render_pkg["visibility_filter"], render_pkg["radii"]
-                #print(os.path.join(scene.model_path, str(limit) + ".png"))
-                #torchvision.utils.save_image(image, os.path.join(scene.model_path, str(limit) + ".png"))
-
+                
                 # Loss
                 gt_image = viewpoint_cam.original_image.cuda()
                 if viewpoint_cam.alpha_mask is not None:
@@ -167,19 +170,23 @@ def training(dataset, opt : OptimizationParams, pipe, saving_iterations, checkpo
                         return
 
 
-                    print(visibility_filter)
                     # Densification
-                    if iteration < opt.densify_until_iter or True:
+                    if iteration < opt.densify_until_iter:
                         # Keep track of max radii in image-space for pruning
-                        #gaussians.max_radii2D[visibility_filter] = torch.max(gaussians.max_radii2D[visibility_filter], radii)
-                        #gaussians.add_densification_stats(viewspace_point_tensor, visibility_filter)
-
+                        gaussians.max_radii2D[indices[visibility_filter]] = torch.max(gaussians.max_radii2D[indices[visibility_filter]], radii)
+                        gaussians.add_densification_stats(viewspace_point_tensor, visibility_filter, indices)
+#
                         if iteration > opt.densify_from_iter and iteration % opt.densification_interval == 0:
-                            gaussians.densify_and_prune(opt.densify_grad_threshold, 0.005, scene.cameras_extent)
+                            print(os.path.join(scene.model_path, str(iteration) + ".png"))
+                            torchvision.utils.save_image(image, os.path.join(scene.model_path, str(iteration) + ".png"))
 
-                        if iteration % opt.opacity_reset_interval == 0 or (dataset.white_background and iteration == opt.densify_from_iter):
-                            print("-----------------RESET OPACITY!-------------")
-                            gaussians.reset_opacity()
+                            print("-----------------DENSIFY!--------------------")
+                            gaussians.densify_and_prune(opt.densify_grad_threshold, 0.005, scene.cameras_extent)
+                            #gaussians.sanity_check_hierarchy()
+                        # Resetting Opacity fucks our hierarchy                       
+                        #if iteration % opt.opacity_reset_interval == 0 or (dataset.white_background and iteration == opt.densify_from_iter):
+                        #    print("-----------------RESET OPACITY!-------------")
+                        #    gaussians.reset_opacity()
                     # Optimizer step
                     if iteration < opt.iterations:
 
@@ -202,12 +209,12 @@ def training(dataset, opt : OptimizationParams, pipe, saving_iterations, checkpo
                             #gaussians._scaling.grad[gaussians.anchors, :] = 0
                         
                         ## OurAdam version
-                        # if gaussians._opacity.grad != None:
-                        #     relevant = (gaussians._opacity.grad.flatten() != 0).nonzero()
-                        #     relevant = relevant.flatten().long()
-                        #     if(relevant.size(0) > 0):
-                        #         gaussians.optimizer.step(relevant)
-                        #     gaussians.optimizer.zero_grad(set_to_none = True)
+                        #if gaussians._opacity.grad != None:
+                        #    relevant = (gaussians._opacity.grad.flatten() != 0).nonzero()
+                        #    relevant = relevant.flatten().long()
+                        #    if(relevant.size(0) > 0):
+                        #        gaussians.optimizer.step(relevant)
+                        #    gaussians.optimizer.zero_grad(set_to_none = True)
 
                         gaussians.optimizer.step()
                         gaussians.optimizer.zero_grad(set_to_none = True)
@@ -250,6 +257,8 @@ if __name__ == "__main__":
     parser.add_argument("--checkpoint_iterations", nargs="+", type=int, default=[])
     parser.add_argument("--start_checkpoint", type=str, default = None)
     args = parser.parse_args(sys.argv[1:])
+    print(args)
+    exit()
     args.save_iterations.append(args.iterations)
     
     print("Optimizing " + args.model_path)
