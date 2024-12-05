@@ -171,6 +171,7 @@ def render_post(
     try:
         screenspace_points.retain_grad()
     except:
+        print("screenspace_points do not retain grad???")
         pass
 
     # Set up rasterization configuration

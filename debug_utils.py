@@ -130,8 +130,63 @@ def generate_some_hierarchy_scene_images(scene : Scene, pipe : PipelineParams, o
                         #if show_depth:
                         #    gaussians._opacity -= 1
                         return None
+              
+def render_level_slices(scene : Scene, pipe : PipelineParams, output_dir):
+    with torch.no_grad():
+        bg_color = [0, 0, 0]
+        background = torch.tensor(bg_color, dtype=torch.float32, device="cuda")
+        
+        gaussians = scene.gaussians
+        
+
+        n = 0
+        training_generator = DataLoader(scene.getTrainCameras(), num_workers = 8, prefetch_factor = 1, persistent_workers = True, collate_fn=direct_collate)
+        for viewpoint_batch in training_generator:
+            for viewpoint_cam in viewpoint_batch:
+                
+                viewpoint_cam.world_view_transform = viewpoint_cam.world_view_transform.cuda()
+                viewpoint_cam.projection_matrix = viewpoint_cam.projection_matrix.cuda()
+                viewpoint_cam.full_proj_transform = viewpoint_cam.full_proj_transform.cuda()
+                viewpoint_cam.camera_center = viewpoint_cam.camera_center.cuda()
+                
+                indices = torch.where(gaussians.nodes[:, 2] == 0)[0]
+                number_of_levels = torch.min(gaussians.nodes[indices, 0]).item()-1
+                # for each level in the hierarchy:
+                for level in range(number_of_levels):
+                    render_pkg = render_coarse(viewpoint_cam, gaussians, pipe, background, indices = indices)
+                    image, viewspace_point_tensor, visibility_filter, radii = render_pkg["render"], render_pkg["viewspace_points"], render_pkg["visibility_filter"], render_pkg["radii"]
+                    print(os.path.join(output_dir, "render_level_" + str(number_of_levels-level) + ".png"))
+                    torchvision.utils.save_image(image, os.path.join(output_dir, "render_level_" + str(number_of_levels-level) + ".png"))
+                    indices = gaussians.nodes[indices, 1].unique()
+                return None
+              
                     
-                    
+def render_depth_slices(scene : Scene, pipe : PipelineParams, output_dir):
+    with torch.no_grad():
+        bg_color = [0, 0, 0]
+        background = torch.tensor(bg_color, dtype=torch.float32, device="cuda")
+        
+        gaussians = scene.gaussians
+        
+
+        n = 0
+        training_generator = DataLoader(scene.getTrainCameras(), num_workers = 8, prefetch_factor = 1, persistent_workers = True, collate_fn=direct_collate)
+        for viewpoint_batch in training_generator:
+            for viewpoint_cam in viewpoint_batch:
+                
+                viewpoint_cam.world_view_transform = viewpoint_cam.world_view_transform.cuda()
+                viewpoint_cam.projection_matrix = viewpoint_cam.projection_matrix.cuda()
+                viewpoint_cam.full_proj_transform = viewpoint_cam.full_proj_transform.cuda()
+                viewpoint_cam.camera_center = viewpoint_cam.camera_center.cuda()
+                
+                # for each level in the hierarchy:
+                for depth in range(torch.max(gaussians.nodes[:, 0])):
+                    indices = torch.where(gaussians.nodes[:, 0] == depth)[0]
+                    render_pkg = render_coarse(viewpoint_cam, gaussians, pipe, background, indices = indices)
+                    image, viewspace_point_tensor, visibility_filter, radii = render_pkg["render"], render_pkg["viewspace_points"], render_pkg["visibility_filter"], render_pkg["radii"]
+                    print(os.path.join(output_dir, "render_depth_" + str(depth) + ".png"))
+                    torchvision.utils.save_image(image, os.path.join(output_dir, "render_depth_" + str(depth) + ".png"))
+                return None
                     
 def generate_some_hierarchy_scene_images_dynamic(scene : Scene, pipe : PipelineParams, output_dir, limit = 0.05, no_images = 10, show_depth=False):
     with torch.no_grad():

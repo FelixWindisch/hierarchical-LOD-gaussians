@@ -23,7 +23,7 @@ from utils.graphics_utils import BasicPointCloud
 from utils.general_utils import strip_symmetric, build_scaling_rotation
 from gaussian_hierarchy._C import load_hierarchy, write_hierarchy, load_dynamic_hierarchy
 from scene.OurAdam import Adam
-
+import random
 hierarchy_node_depth = 0
 hierarchy_node_parent = 1
 hierarchy_node_child_count = 2
@@ -33,7 +33,42 @@ hierarchy_node_max_side_length = 5
 
 
 class GaussianModel:
+    
+    def merge_gaussians(self, indices):
+        ellipse_surface  = lambda scale: scale[0] * scale[1] + scale[0] * scale[2] + scale[1] * scale[2]
+        weights = []
+        for index in indices:
+            weights.append(self.get_opacity[index] * ellipse_surface(self.get_scaling[index]))
+        weights /= np.sum(weights)
+        new_position = self._xyz[indices]*weights
+        new_features_dc = self._features_dc[indices]*weights
+        new_features_rest = self._features_rest[indices]*weights
+        
+        
+        pos_differences = self._xyz[indices] - new_position
+        
 
+    def compute_bounding_sphere_divergence(self, samples=1000):
+        diverged = 0
+        for i in range(samples):
+            random_node = random.randrange(1, len(self.nodes))
+            bounding_sphere_radius = torch.max(self.get_scaling[random_node]).item()
+            bounding_sphere_position = self._xyz[random_node].detach().cpu()
+            parent = self.nodes[random_node, hierarchy_node_parent]
+            parent_sphere_radius = torch.max(self.get_scaling[parent])
+            parent_sphere_position = self._xyz[parent].detach().cpu()
+            for j in range(100):
+                while True:
+                    # Generate a random point in a cube of side 2*radius centered at the origin
+                    point = (torch.rand(3)-0.5)*2
+                    if torch.linalg.vector_norm(point) <= 1:
+                        if torch.linalg.vector_norm((point*bounding_sphere_radius+bounding_sphere_position)-parent_sphere_position) > parent_sphere_radius:
+                            diverged += 1
+                        break
+        print(diverged)
+        return diverged/(100*samples)
+        
+    
     def sanity_check_hierarchy(self):
         print("Commencing Sanity Check of Hierarchy")
         self.sanity_counter = 0
@@ -58,8 +93,10 @@ class GaussianModel:
             for child in children:
                 if self.nodes[child][hierarchy_node_parent] != node:
                     print(f"Error: Siblings have different parents ({self.nodes[child][hierarchy_node_parent]} instead of {node})")
-                #if self.nodes[child][hierarchy_node_depth] != self.nodes[node][hierarchy_node_depth]-1:
-                #    print(f"Error: Child has depth {self.nodes[child][hierarchy_node_depth]}, but parent has depth {self.nodes[node][hierarchy_node_depth]}")
+                if self.nodes[child][hierarchy_node_depth] != self.nodes[node][hierarchy_node_depth]+1:
+                    print(f"Error: Child has depth {self.nodes[child][hierarchy_node_depth]}, but parent has depth {self.nodes[node][hierarchy_node_depth]}")
+                #if torch.prod(self.get_scaling[child]).item() > (torch.prod(self.get_scaling[node]).item() * 1.1):
+                #    print(f"Warning: Child has max scale {torch.prod(self.get_scaling[child]).item()}, but parent has max scale {torch.prod(self.get_scaling[node]).item()}")
                 sanity_check_rec(child)
                 
         sanity_check_rec(0)
@@ -550,7 +587,7 @@ class GaussianModel:
         normals = np.zeros_like(xyz)
         f_dc = self._features_dc[mask].detach().transpose(1, 2).flatten(start_dim=1).contiguous().cpu().numpy()
         f_rest = self._features_rest[mask].detach().transpose(1, 2).flatten(start_dim=1).contiguous().cpu().numpy()
-        opacities = self._opacity[mask].detach().cpu().numpy()
+        opacities = self.inverse_opacity_activation(self._opacity[mask]).detach().cpu().numpy()
         scale = self._scaling[mask].detach().cpu().numpy()
         rotation = self._rotation[mask].detach().cpu().numpy()
 
@@ -693,8 +730,8 @@ class GaussianModel:
         selected_pts_mask = torch.where(padded_grad * self.max_radii2D * torch.pow(self.get_opacity.flatten(), 1/5.0) >= grad_threshold, True, False)
         selected_pts_mask = torch.logical_and(selected_pts_mask, self.get_opacity.flatten() > 0.15)
 
-        selected_pts_mask = torch.logical_and(selected_pts_mask,
-                                              torch.max(self.get_scaling, dim=1).values > self.percent_dense*scene_extent)
+        #selected_pts_mask = torch.logical_and(selected_pts_mask,
+        #                                      torch.max(self.get_scaling, dim=1).values > self.percent_dense*scene_extent)
         # Only densify leaf nodes
         selected_pts_mask = torch.logical_and(selected_pts_mask, self.nodes[:,hierarchy_node_child_count] == 0)        
         
@@ -709,7 +746,7 @@ class GaussianModel:
         samples = torch.normal(mean=means, std=stds)
         rots = build_rotation(self._rotation[selected_pts_mask]).repeat_interleave(repeats=N,dim=0)
         new_xyz = torch.bmm(rots, samples.unsqueeze(-1)).squeeze(-1) + self.get_xyz[selected_pts_mask].repeat_interleave(repeats=N,dim=0)
-        new_scaling = self.scaling_inverse_activation(self.get_scaling[selected_pts_mask].repeat_interleave(repeats=N,dim=0) / (0.8*N))
+        new_scaling = self.scaling_inverse_activation(self.get_scaling[selected_pts_mask].repeat_interleave(repeats=N,dim=0) / (0.7*N))
         new_rotation = self._rotation[selected_pts_mask].repeat_interleave(repeats=N,dim=0)
         new_features_dc = self._features_dc[selected_pts_mask].repeat_interleave(repeats=N,dim=0)
         new_features_rest = self._features_rest[selected_pts_mask].repeat_interleave(repeats=N,dim=0)
@@ -748,8 +785,8 @@ class GaussianModel:
         # Don't densify points that will be pruned
         selected_pts_mask = torch.logical_and(selected_pts_mask, self.get_opacity.flatten() > 0.15)
         # Don't densify points that will be pruned
-        selected_pts_mask = torch.logical_and(selected_pts_mask,
-                                              torch.max(self.get_scaling, dim=1).values <= self.percent_dense*scene_extent)
+        #selected_pts_mask = torch.logical_and(selected_pts_mask,
+        #                                      torch.max(self.get_scaling, dim=1).values <= self.percent_dense*scene_extent)
         # No densification of the scaffold
         if self.scaffold_points is not None:
             selected_pts_mask[:self.scaffold_points] = False
@@ -759,10 +796,11 @@ class GaussianModel:
         
         print(f"Clone {len(torch.where(selected_pts_mask)[0])} points")
         new_xyz = self._xyz[selected_pts_mask].repeat_interleave(repeats=N,dim=0)
+        new_scaling = self.scaling_inverse_activation(self.get_scaling[selected_pts_mask].repeat_interleave(repeats=N,dim=0))
         new_features_dc = self._features_dc[selected_pts_mask].repeat_interleave(repeats=N,dim=0)
         new_features_rest = self._features_rest[selected_pts_mask].repeat_interleave(repeats=N,dim=0)
         new_opacities = self._opacity[selected_pts_mask].repeat_interleave(repeats=N,dim=0)
-        new_scaling = self._scaling[selected_pts_mask].repeat_interleave(repeats=N,dim=0)
+        
         new_rotation = self._rotation[selected_pts_mask].repeat_interleave(repeats=N,dim=0)
 
 
@@ -788,18 +826,71 @@ class GaussianModel:
 
         self.densification_postfix(new_xyz, new_features_dc, new_features_rest, new_opacities, new_scaling, new_rotation)
 
+
+    def densify(self, grads, grad_threshold, scene_extent, N=2):
+        
+        # Replace 2D gradients with 3D gradients
+        #grads = self._xyz.grad
+        
+        # Extract points that satisfy the gradient condition
+        selected_pts_mask = torch.where(torch.norm(grads, dim=-1) * self.max_radii2D * torch.pow(self.get_opacity.flatten(), 1/5.0) >= grad_threshold, True, False)
+        # Don't densify points that will be pruned
+        selected_pts_mask = torch.logical_and(selected_pts_mask, self.get_opacity.flatten() > 0.15)
+        # Don't densify points that will be pruned
+        #selected_pts_mask = torch.logical_and(selected_pts_mask,
+        #                                      torch.max(self.get_scaling, dim=1).values <= self.percent_dense*scene_extent)
+        # No densification of the scaffold
+        if self.scaffold_points is not None:
+            selected_pts_mask[:self.scaffold_points] = False
+        # Only densify leaf nodes
+        selected_pts_mask = torch.logical_and(selected_pts_mask, self.nodes[:,hierarchy_node_child_count] == 0)
+
+        
+        print(f"Densify {len(torch.where(selected_pts_mask)[0])} points")
+        new_xyz = self._xyz[selected_pts_mask].repeat_interleave(repeats=N,dim=0)
+        new_scaling = self.scaling_inverse_activation(self.get_scaling[selected_pts_mask].repeat_interleave(repeats=N,dim=0) / (0.8*N))
+        new_features_dc = self._features_dc[selected_pts_mask].repeat_interleave(repeats=N,dim=0)
+        new_features_rest = self._features_rest[selected_pts_mask].repeat_interleave(repeats=N,dim=0)
+        new_opacities = self._opacity[selected_pts_mask].repeat_interleave(repeats=N,dim=0)
+        
+        new_rotation = self._rotation[selected_pts_mask].repeat_interleave(repeats=N,dim=0)
+
+
+        new_nodes = torch.zeros((len(new_xyz), 6), dtype=torch.int32)
+        for index, node in enumerate(torch.where(selected_pts_mask)[0]):
+            full_index = len(self._xyz) + index*2
+            self.nodes[node][hierarchy_node_child_count] = 2
+            self.nodes[node][hierarchy_node_first_child] = full_index
+            
+            
+            new_nodes[index*2][hierarchy_node_depth] = self.nodes[node][hierarchy_node_depth] + 1
+            new_nodes[index*2][hierarchy_node_parent] = node
+            new_nodes[index*2][hierarchy_node_child_count] = 0
+            new_nodes[index*2][hierarchy_node_first_child] = -1
+            new_nodes[index*2][hierarchy_node_next_sibling] = full_index + 1
+            
+            new_nodes[index*2+1][hierarchy_node_depth] = self.nodes[node][hierarchy_node_depth] + 1
+            new_nodes[index*2+1][hierarchy_node_parent] = node
+            new_nodes[index*2+1][hierarchy_node_child_count] = 0
+            new_nodes[index*2+1][hierarchy_node_first_child] = -1
+            new_nodes[index*2+1][hierarchy_node_next_sibling] = 0
+        self.nodes = torch.cat((self.nodes, new_nodes.to('cuda')))
+
+        self.densification_postfix(new_xyz, new_features_dc, new_features_rest, new_opacities, new_scaling, new_rotation)
+        print("")
+
+
     def densify_and_prune(self, max_grad, min_opacity, extent):
         grads = self.xyz_gradient_accum 
         grads[grads.isnan()] = 0.0
 
-        self.densify_and_clone(grads, max_grad, extent)
-        self.densify_and_split(grads, max_grad, extent)
+        self.densify(grads, max_grad, extent)
 
         prune_mask = (self.get_opacity < min_opacity).squeeze()
         if self.scaffold_points is not None:
             prune_mask[:self.scaffold_points] = False
 
-        self.prune_points(prune_mask)
+        #self.prune_points(prune_mask)
 
         self.max_radii2D = torch.zeros((self.get_xyz.shape[0]), device="cuda")
 
@@ -809,25 +900,9 @@ class GaussianModel:
         update_filter_indices = torch.where(update_filter)[0]
         update_indices = indices[update_filter_indices]
         
-        self.xyz_gradient_accum[update_indices] = torch.max(torch.norm(viewspace_point_tensor.grad[indices][update_filter,:2], dim=-1, keepdim=True), self.xyz_gradient_accum[update_indices])
+        #self.xyz_gradient_accum[update_indices] = torch.max(torch.norm(viewspace_point_tensor.grad[indices][update_filter,:2], dim=-1, keepdim=True), self.xyz_gradient_accum[update_indices])
+        # I use xyz gradients here instead of screen space gradients
+        self.xyz_gradient_accum[update_indices] = torch.max(torch.norm(self._xyz.grad[indices][update_filter,:2], dim=-1, keepdim=True), self.xyz_gradient_accum[update_indices])
         #print(torch.sum(torch.abs(torch.max(torch.norm(viewspace_point_tensor.grad[indices][update_filter,:2], dim=-1, keepdim=True), self.xyz_gradient_accum[update_indices]))))
         #print(torch.max((self.xyz_gradient_accum[update_indices])))
         self.denom[update_indices] += 1
-
-    
-    def densify_and_prune_hierarchy(self, max_grad, min_opacity, extent):
-        grads = self.xyz_gradient_accum 
-        grads[grads.isnan()] = 0.0
-
-        self.densify_and_clone(grads, max_grad, extent)
-        self.densify_and_split(grads, max_grad, extent)
-
-        prune_mask = (self.get_opacity < min_opacity).squeeze()
-        if self.scaffold_points is not None:
-            prune_mask[:self.scaffold_points] = False
-
-        self.prune_points(prune_mask)
-
-        self.max_radii2D = torch.zeros((self.get_xyz.shape[0]), device="cuda")
-
-        torch.cuda.empty_cache()

@@ -157,12 +157,13 @@ if __name__ == '__main__':
     model_params.hierarchy = os.path.join(output_dir, "scaffold/point_cloud/iteration_30000/", "hierarchy.dhier")
     model_params.model_path = output_dir
     hierarchy_scene = Scene(model_params, gaussians, resolution_scales = [1], create_from_hier=True, shuffle=True)
-    
-    #hierarchy_scene.dump_gaussians("Dump", only_leaves=True)
+    print(f"Hierarchy bounding sphere divergence: {hierarchy_scene.gaussians.compute_bounding_sphere_divergence()}")
+    hierarchy_scene.dump_gaussians("Dump", only_leaves=True)
+    #debug_utils.render_depth_slices(hierarchy_scene, pipeline_params, output_dir)
+    #debug_utils.render_level_slices(hierarchy_scene, pipeline_params, output_dir)
     print(f"Number of hierarchy leaf nodes: {hierarchy_scene.gaussians.get_number_of_leaf_nodes()}")
     print(f"Number of hierarchy nodes: {len(hierarchy_scene.gaussians._xyz)}")
     #debug_utils.generate_some_flat_scene_images(hierarchy_scene, pipeline_params, output_dir)
-    
 
     #debug_utils.generate_some_hierarchy_scene_images_dynamic(hierarchy_scene, pipeline_params, output_dir, limit=0.0000001, no_images=3)
     

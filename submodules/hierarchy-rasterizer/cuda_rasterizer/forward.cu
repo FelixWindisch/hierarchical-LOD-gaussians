@@ -671,6 +671,7 @@ void FORWARD::preprocess(int P, int D, int M,
 		}
 	}
 
+	// Launch thread for every Gaussian
 	preprocessCUDA<NUM_CHANNELS> << <(P + 255) / 256, 256, 0, stream >> > (
 		P, D, M,
 		indices,

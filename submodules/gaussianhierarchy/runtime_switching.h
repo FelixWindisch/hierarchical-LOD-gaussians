@@ -25,7 +25,20 @@ public:
 		int* render_indices
 	);
 
-    static int expandToSizeDynamic(int N, float target_size, int *nodes, float *positions, float *scales, float *viewpoint, float x, float y, float z, int *render_indices, int *node_markers, int *parent_indices, int *nodes_for_render_indices);
+    static int expandToSizeDynamic(
+		int N, 
+		float target_size, 
+		int *nodes, 
+		float *positions, 
+		float *scales, 
+		float *viewpoint, 
+		float x, 
+		float y, 
+		float z, 
+		int *render_indices, 
+		int *node_markers, 
+		int *parent_indices, 
+		int *nodes_for_render_indices);
 
     static int expandToSize(
         int N,

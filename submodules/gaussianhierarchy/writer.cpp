@@ -105,7 +105,7 @@ void populateDynamicRec(
 	std::vector<Eigen::Vector3f>& log_scales,
 	std::vector<float>& opacities,
 	std::vector<SHs>& shs,
-	std::vector<HierarchyNode>& basenodes,
+	std::vector<HierarchyNode>& basenodes, int depth,
 	std::map<int, const ExplicitTreeNode*>* base2tree = nullptr)
 {
 	if(base2tree)
@@ -142,7 +142,7 @@ void populateDynamicRec(
 	//}
 	basenodes[id].child_count = treenode->children.size();
 
-	basenodes[id].depth = treenode->depth+1;
+	basenodes[id].depth = depth;
 	//std::cout << treenode->depth  << std::endl;
 	//std::cout << id << std::endl;
 	//std::cout << treenode->depth << std::endl;
@@ -161,7 +161,7 @@ void populateDynamicRec(
 			log_scales, 
 			opacities,
 			shs, 
-			basenodes,
+			basenodes, depth + 1,
 			base2tree);
 		if (n < treenode->children.size()-1)
 			basenodes[prev_node].next_sibling = basenodes.size();
@@ -200,7 +200,7 @@ void Writer::makeDynamicHierarchy(
 		root,
 		0,
 		gaussians,
-		positions, rotations, log_scales, opacities, shs, basenodes, base2tree);
+		positions, rotations, log_scales, opacities, shs, basenodes, 0, base2tree);
 }
 
 

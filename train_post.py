@@ -11,6 +11,7 @@
 
 import os
 import torch
+import debug_utils
 from utils.loss_utils import l1_loss, ssim
 from gaussian_renderer import render_post
 import sys
@@ -68,7 +69,7 @@ def training(dataset, opt : OptimizationParams, pipe, saving_iterations, checkpo
     to_render = 0
 
     limmax = 0.1
-    limmin = 0.005
+    limmin = 0.00001
 
     while iteration < opt.iterations + 1:
         for viewpoint_batch in training_generator:
@@ -78,7 +79,6 @@ def training(dataset, opt : OptimizationParams, pipe, saving_iterations, checkpo
                 # target granularity
                 limit = math.pow(2, sample * (math.log2(limmax) - math.log2(limmin)) + math.log2(limmin))
                 
-                limit = 0
                 scale = 1
 
                 viewpoint_cam.world_view_transform = viewpoint_cam.world_view_transform.cuda()
@@ -105,10 +105,12 @@ def training(dataset, opt : OptimizationParams, pipe, saving_iterations, checkpo
                     render_indices,
                     parent_indices,
                     nodes_for_render_indices)
-                
+                print(f"render {to_render} Gaussians")
+                # indices == nodes_for_render_indices
                 indices = render_indices[:to_render].int()
                 node_indices = nodes_for_render_indices[:to_render]
 
+                # parent indices contains as many elements as indices
                 get_interpolation_weights_dynamic(
                     node_indices,
                     limit * scale,
@@ -125,6 +127,7 @@ def training(dataset, opt : OptimizationParams, pipe, saving_iterations, checkpo
                 if (iteration - 1) == debug_from:
                     pipe.debug = True
 
+                # num siblings always includes the node itself
                 render_pkg = render_post(
                     viewpoint_cam, 
                     gaussians, 
@@ -167,6 +170,11 @@ def training(dataset, opt : OptimizationParams, pipe, saving_iterations, checkpo
                     if iteration == opt.iterations:
                             
                         progress_bar.close()
+                        scene.dump_gaussians("Results", only_leaves=True)
+                        print(f"Hierarchy bounding sphere divergence: {scene.gaussians.compute_bounding_sphere_divergence()}")
+
+                        debug_utils.render_depth_slices(scene, pipe, dataset.output_dir)
+                        debug_utils.render_level_slices(scene, pipe, dataset.output_dir)
                         return
 
 
@@ -182,6 +190,7 @@ def training(dataset, opt : OptimizationParams, pipe, saving_iterations, checkpo
 
                             print("-----------------DENSIFY!--------------------")
                             gaussians.densify_and_prune(opt.densify_grad_threshold, 0.005, scene.cameras_extent)
+                            print(f"Current LOD depth: {torch.max(gaussians.nodes[:, 0])}")
                             #gaussians.sanity_check_hierarchy()
                         # Resetting Opacity fucks our hierarchy                       
                         #if iteration % opt.opacity_reset_interval == 0 or (dataset.white_background and iteration == opt.densify_from_iter):
@@ -224,8 +233,7 @@ def training(dataset, opt : OptimizationParams, pipe, saving_iterations, checkpo
                         torch.save((gaussians.capture(), iteration), scene.model_path + "/chkpnt" + str(iteration) + ".pth")
 
                     iteration += 1
-
-
+    
 
 def prepare_output_and_logger(args):    
     if not args.model_path:
