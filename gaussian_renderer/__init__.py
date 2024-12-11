@@ -148,7 +148,7 @@ def render(
 # render with hierarchy, interpolate Gaussians with their parent nodes beforehand
 def render_post(
         viewpoint_camera, 
-        pc : GaussianModel, 
+        gaussians : GaussianModel, 
         pipe, 
         bg_color : torch.Tensor, 
         scaling_modifier = 1.0, 
@@ -167,7 +167,7 @@ def render_post(
     """
  
     # Create zero tensor. We will use it to make pytorch return gradients of the 2D (screen-space) means
-    screenspace_points = torch.zeros_like(pc.get_xyz, dtype=pc.get_xyz.dtype, requires_grad=True, device="cuda") + 0
+    screenspace_points = torch.zeros_like(gaussians.get_xyz, dtype=gaussians.get_xyz.dtype, requires_grad=True, device="cuda") + 0
     try:
         screenspace_points.retain_grad()
     except:
@@ -178,9 +178,9 @@ def render_post(
     tanfovx = math.tan(viewpoint_camera.FoVx * 0.5)
     tanfovy = math.tan(viewpoint_camera.FoVy * 0.5)
 
-    means3D = pc.get_xyz
+    means3D = gaussians.get_xyz
     means2D = screenspace_points
-    opacity = pc.get_opacity
+    opacity = gaussians.get_opacity
 
     # If precomputed 3d covariance is provided, use it. If not, then it will be computed from
     # scaling / rotation by the rasterizer.
@@ -188,22 +188,22 @@ def render_post(
     rotations = None
     cov3D_precomp = None
     if pipe.compute_cov3D_python:
-        cov3D_precomp = pc.get_covariance(scaling_modifier)
+        cov3D_precomp = gaussians.get_covariance(scaling_modifier)
     else:
-        scales = pc.get_scaling
-        rotations = pc.get_rotation
+        scales = gaussians.get_scaling
+        rotations = gaussians.get_rotation
 
     shs = None
     colors_precomp = None
     if override_color is None:
         if pipe.convert_SHs_python:
-            shs_view = pc.get_features.transpose(1, 2).view(-1, 3, (pc.max_sh_degree+1)**2)
-            dir_pp = (pc.get_xyz - viewpoint_camera.camera_center.repeat(pc.get_features.shape[0], 1))
+            shs_view = gaussians.get_features.transpose(1, 2).view(-1, 3, (gaussians.max_sh_degree+1)**2)
+            dir_pp = (gaussians.get_xyz - viewpoint_camera.camera_center.repeat(gaussians.get_features.shape[0], 1))
             dir_pp_normalized = dir_pp/dir_pp.norm(dim=1, keepdim=True)
-            sh2rgb = eval_sh(pc.active_sh_degree, shs_view, dir_pp_normalized)
+            sh2rgb = eval_sh(gaussians.active_sh_degree, shs_view, dir_pp_normalized)
             colors_precomp = torch.clamp_min(sh2rgb + 0.5, 0.0)
         else:
-            shs = pc.get_features
+            shs = gaussians.get_features
     else:
         # Technically, we don't need the SHs if we precompute color, maybe remove?
         #shs = pc.get_features
@@ -233,23 +233,28 @@ def render_post(
             
             opacity_base = (interps * opacity[render_inds] + interps_inv * opacity[parent_inds]).contiguous()
 
-            if pc.skybox_points == 0:
+            if gaussians.skybox_points == 0:
                 skybox_inds = torch.Tensor([]).long()
             else:
-                skybox_inds = torch.range(pc._xyz.size(0) - pc.skybox_points, pc._xyz.size(0)-1, device="cuda").long()
+                # The end index is fucking inclusive
+                skybox_inds = torch.range(0, gaussians.skybox_points-1, device="cuda").long()
+                # skybox_inds = torch.range(pc._xyz.size(0) - pc.skybox_points, pc._xyz.size(0)-1, device="cuda").long()
 
-            means3D = torch.cat((means3D_base, means3D[skybox_inds])).contiguous() 
+            means3D = torch.cat((means3D[skybox_inds], means3D_base)).contiguous() 
             if override_color is None: 
-                shs = torch.cat((shs_base, shs[skybox_inds])).contiguous() 
-            opacity = torch.cat((opacity_base, opacity[skybox_inds])).contiguous()  
-            rotations = torch.cat((rotations_base, rotations[skybox_inds])).contiguous()    
-            means2D = means2D[:(num_entries + pc.skybox_points)].contiguous()     
-            scales = torch.cat((scales_base, scales[skybox_inds])).contiguous()  
+                shs = torch.cat((shs[skybox_inds], shs_base)).contiguous() 
+            opacity = torch.cat((opacity[skybox_inds], opacity_base )).contiguous()  
+            rotations = torch.cat((rotations[skybox_inds], rotations_base )).contiguous()    
+            means2D = means2D[:(gaussians.skybox_points + num_entries)].contiguous()     
+            scales = torch.cat((scales[skybox_inds], scales_base)).contiguous()  
 
             interpolation_weights = interpolation_weights.clone().detach()
             # Skybox Points are not interpolated
-            interpolation_weights[num_entries:num_entries+pc.skybox_points] = 1.0 
-            num_node_siblings[num_entries:num_entries+pc.skybox_points] = 1 
+            interpolation_weights = torch.cat((torch.ones(gaussians.skybox_points, device='cuda', dtype=torch.int32), interpolation_weights[:-gaussians.skybox_points]))
+            num_node_siblings = torch.cat((torch.ones(gaussians.skybox_points, device='cuda', dtype=torch.int32), num_node_siblings[:-gaussians.skybox_points]))
+
+            #interpolation_weights[0:pc.skybox_points] = 1.0 
+            #num_node_siblings[0:pc.skybox_points] = 1 
         
         else:
             means3D = means3D[render_inds].contiguous()
@@ -272,7 +277,7 @@ def render_post(
         scale_modifier=scaling_modifier,
         viewmatrix=viewpoint_camera.world_view_transform,
         projmatrix=viewpoint_camera.full_proj_transform,
-        sh_degree=pc.active_sh_degree,
+        sh_degree=gaussians.active_sh_degree,
         campos=viewpoint_camera.camera_center,
         prefiltered=False,
         debug=pipe.debug,
@@ -304,7 +309,7 @@ def render_post(
     #    except Exception as e:
     #        print(f"Exposures should be optimized in single. Missing exposure for image {viewpoint_camera.image_name}")
     rendered_image = rendered_image.clamp(0, 1)
-    
+    radii = radii[gaussians.skybox_points:]
     vis_filter = radii > 0
 
     # Those Gaussians that were frustum culled or had a radius of 0 were not visible.
@@ -397,7 +402,7 @@ def render_coarse(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.T
         means3D = means3D[indices].contiguous()
         means2D = means2D[indices].contiguous()
         shs = shs[indices].contiguous()
-        opacity = opacity[indices].contiguous()
+        opacity = (opacity[indices].contiguous())
         scales = scales[indices].contiguous()
         rotations = rotations[indices].contiguous() 
 

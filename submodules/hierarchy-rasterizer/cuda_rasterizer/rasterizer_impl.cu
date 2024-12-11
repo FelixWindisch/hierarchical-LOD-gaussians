@@ -228,7 +228,7 @@ int CudaRasterizer::Rasterizer::forward(
 	float* depth,
 	int* radii,
 	int* rects,
-	float* boxmin,
+	float* boxmin, // =nullptr by default
 	float* boxmax,
 	bool debug,
 	int skyboxnum,
@@ -237,6 +237,8 @@ int CudaRasterizer::Rasterizer::forward(
 	float biglimit,
 	bool on_cpu)
 {
+	//std::cout << "Number of Gaussians: " << P << std::endl;
+	//std::cout << "boxmin: " << boxmin << std::endl;
 	cudaStream_t stream = (cudaStream_t)streamy;
 	const float focal_y = height / (2.0f * tan_fovy);
 	const float focal_x = width / (2.0f * tan_fovx);
@@ -313,6 +315,7 @@ int CudaRasterizer::Rasterizer::forward(
 
 	// Compute prefix sum over full list of touched tile counts by Gaussians
 	// E.g., [2, 3, 0, 2, 1] -> [2, 5, 5, 7, 8]
+	// result is stored in point_offsets
 	CHECK_CUDA(cub::DeviceScan::InclusiveSum(geomState.scanning_space, geomState.scan_size, geomState.tiles_touched, geomState.point_offsets, P, stream), debug);
 
 	// Retrieve total number of Gaussian instances to launch and resize aux buffers
@@ -323,7 +326,6 @@ int CudaRasterizer::Rasterizer::forward(
 
 	CHECK_CUDA(cudaMemcpyAsync(num_rendered, geomState.point_offsets + P - 1, sizeof(int), cudaMemcpyDeviceToHost, stream), debug);
 	cudaStreamSynchronize(stream);
-
 	if (*num_rendered == 0)
 		return 0;
 
@@ -333,6 +335,7 @@ int CudaRasterizer::Rasterizer::forward(
 
 	// For each instance to be rendered, produce adequate [ tile | depth ] key 
 	// and corresponding dublicated Gaussian indices to be sorted
+	// fill point_list_keys_unsorted and point_list_unsorted
 	duplicateWithKeys << <(P + 255) / 256, 256, 0, stream >> > (
 		P,
 		geomState.means2D,

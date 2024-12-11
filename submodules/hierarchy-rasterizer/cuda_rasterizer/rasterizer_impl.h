@@ -30,7 +30,7 @@ namespace CudaRasterizer
 	{
 		size_t scan_size;
 		float* depths;
-		char* scanning_space;
+		char* scanning_space; // temp buffer for prefix sum of tiles touched
 		bool* clamped;
 		bool* p_clamped;
 		int* internal_radii;
@@ -60,7 +60,7 @@ namespace CudaRasterizer
 		uint64_t* point_list_keys;
 		uint32_t* point_list_unsorted;
 		uint32_t* point_list;
-		char* list_sorting_space;
+		char* list_sorting_space; // buffer for SortPairs
 
 		static BinningState fromChunk(char*& chunk, size_t P);
 	};

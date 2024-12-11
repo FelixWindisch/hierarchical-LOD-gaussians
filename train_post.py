@@ -13,7 +13,7 @@ import os
 import torch
 import debug_utils
 from utils.loss_utils import l1_loss, ssim
-from gaussian_renderer import render_post
+from gaussian_renderer import render_post, render, render_coarse
 import sys
 from scene import Scene, GaussianModel
 from utils.general_utils import safe_state
@@ -24,7 +24,7 @@ from argparse import ArgumentParser, Namespace
 from arguments import ModelParams, PipelineParams, OptimizationParams
 import math
 import torchvision
-
+from torch.utils.tensorboard import SummaryWriter
 from gaussian_hierarchy._C import expand_to_size, get_interpolation_weights, expand_to_size_dynamic, get_interpolation_weights_dynamic
 
 def direct_collate(x):
@@ -33,17 +33,24 @@ def direct_collate(x):
 
 
 def training(dataset, opt : OptimizationParams, pipe, saving_iterations, checkpoint_iterations, checkpoint, debug_from):
+    #torch.autograd.set_detect_anomaly(True)
+    writer = SummaryWriter()
     first_iter = 0
     prepare_output_and_logger(dataset)
     gaussians = GaussianModel(dataset.sh_degree)
     gaussians.active_sh_degree = dataset.sh_degree
     gaussians.scaffold_points = None
     scene = Scene(dataset, gaussians, resolution_scales = [1], create_from_hier=True)
-    gaussians.training_setup(opt, our_adam=False)
+    #with torch.no_grad():
+    #    gaussians._opacity.sigmoid_()
+    gaussians.training_setup(opt, our_adam=True)
     if checkpoint:
         (model_params, first_iter) = torch.load(checkpoint)
         gaussians.restore(model_params, opt)
-
+        
+    
+    
+    
     bg_color = [1, 1, 1] if dataset.white_background else [0, 0, 0]
     background = torch.tensor(bg_color, dtype=torch.float32, device="cuda")
 
@@ -68,8 +75,8 @@ def training(dataset, opt : OptimizationParams, pipe, saving_iterations, checkpo
     num_siblings = torch.zeros(gaussians._xyz.size(0)).int().cuda()
     to_render = 0
 
-    limmax = 0.1
-    limmin = 0.00001
+    limmax = 0.02
+    limmin = 0.0001
 
     while iteration < opt.iterations + 1:
         for viewpoint_batch in training_generator:
@@ -78,7 +85,7 @@ def training(dataset, opt : OptimizationParams, pipe, saving_iterations, checkpo
                 sample = torch.rand(1).item()
                 # target granularity
                 limit = math.pow(2, sample * (math.log2(limmax) - math.log2(limmin)) + math.log2(limmin))
-                
+                limit = 0
                 scale = 1
 
                 viewpoint_cam.world_view_transform = viewpoint_cam.world_view_transform.cuda()
@@ -95,22 +102,31 @@ def training(dataset, opt : OptimizationParams, pipe, saving_iterations, checkpo
                 if iteration % 1000 == 0:
                     gaussians.oneupSHdegree()
 
+                camera_direction = torch.tensor([0.0, 0.0, 1.0])
+                camera_direction = torch.matmul(torch.from_numpy(viewpoint_cam.R).to(torch.float32), camera_direction)
+
                 to_render = expand_to_size_dynamic(
                     gaussians.nodes,
                     gaussians._xyz,
-                    gaussians._scaling,
+                    gaussians.get_scaling,
                     limit * scale,
                     viewpoint_cam.camera_center,
-                    torch.zeros((3)),
+                    camera_direction,
                     render_indices,
                     parent_indices,
                     nodes_for_render_indices)
-                print(f"render {to_render} Gaussians")
-                # indices == nodes_for_render_indices
+                to_render = min(to_render, 569200)
+                if to_render >= 569200:
+                    print("Number of Gaussians overflowed")
+                print(f"render {to_render} Gaussians out of {gaussians.get_number_of_leaf_nodes()}")
+
+                # indices == nodes_for_render_indices !
                 indices = render_indices[:to_render].int()
                 node_indices = nodes_for_render_indices[:to_render]
-
+                
+                
                 # parent indices contains as many elements as indices
+                
                 get_interpolation_weights_dynamic(
                     node_indices,
                     limit * scale,
@@ -118,11 +134,11 @@ def training(dataset, opt : OptimizationParams, pipe, saving_iterations, checkpo
                     gaussians._xyz,
                     gaussians._scaling,
                     viewpoint_cam.camera_center.cpu(),
-                    torch.zeros((3)),
+                    camera_direction,
                     interpolation_weights,
                     num_siblings
                 )
-
+                
                 # Render
                 if (iteration - 1) == debug_from:
                     pipe.debug = True
@@ -139,8 +155,18 @@ def training(dataset, opt : OptimizationParams, pipe, saving_iterations, checkpo
                     num_node_siblings = num_siblings,
                     use_trained_exp=True,
                     )
+                #render_pkg = render_coarse(
+                #    viewpoint_cam, 
+                #    gaussians, 
+                #    pipe, 
+                #    background, 
+                #    indices=indices
+                #    )
                 image, viewspace_point_tensor, visibility_filter, radii = render_pkg["render"], render_pkg["viewspace_points"], render_pkg["visibility_filter"], render_pkg["radii"]
-                
+
+                if iteration % 250 == 0:
+                    torchvision.utils.save_image(image, os.path.join(scene.model_path, str(iteration) + ".png"))
+                    writer.add_image('images', image, iteration)
                 # Loss
                 gt_image = viewpoint_cam.original_image.cuda()
                 if viewpoint_cam.alpha_mask is not None:
@@ -151,6 +177,11 @@ def training(dataset, opt : OptimizationParams, pipe, saving_iterations, checkpo
                     loss = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * (1.0 - ssim(image, gt_image))
 
                 loss.backward()
+                writer.add_scalar('Loss', loss, iteration)
+                writer.add_scalar('Number of hierarchy levels', gaussians.get_number_of_levels(), iteration)
+                writer.add_scalar('Number of Gaussians', len(gaussians._xyz), iteration)
+                writer.add_scalars('Opacity', {"min":torch.min(gaussians.get_opacity), "mean": torch.mean(gaussians.get_opacity), "max": torch.max(gaussians.get_opacity)}, iteration)
+                writer.add_scalars('Scaling', {"min":torch.min(gaussians.get_scaling), "mean": torch.mean(gaussians.get_scaling), "max": torch.max(gaussians.get_scaling)}, iteration)
 
                 iter_end.record()
 
@@ -170,23 +201,23 @@ def training(dataset, opt : OptimizationParams, pipe, saving_iterations, checkpo
                     if iteration == opt.iterations:
                             
                         progress_bar.close()
-                        scene.dump_gaussians("Results", only_leaves=True)
+                        scene.dump_gaussians("Dump", only_leaves=True, file_name="ResultCloud")
                         print(f"Hierarchy bounding sphere divergence: {scene.gaussians.compute_bounding_sphere_divergence()}")
 
-                        debug_utils.render_depth_slices(scene, pipe, dataset.output_dir)
-                        debug_utils.render_level_slices(scene, pipe, dataset.output_dir)
+                        debug_utils.render_depth_slices(scene, pipe, dataset.scaffold_file)
+                        debug_utils.render_level_slices(scene, pipe, dataset.scaffold_file)
                         return
 
 
                     # Densification
                     if iteration < opt.densify_until_iter:
+                        #visibility_filter = visibility_filter[indices]
                         # Keep track of max radii in image-space for pruning
                         gaussians.max_radii2D[indices[visibility_filter]] = torch.max(gaussians.max_radii2D[indices[visibility_filter]], radii)
                         gaussians.add_densification_stats(viewspace_point_tensor, visibility_filter, indices)
 #
                         if iteration > opt.densify_from_iter and iteration % opt.densification_interval == 0:
                             print(os.path.join(scene.model_path, str(iteration) + ".png"))
-                            torchvision.utils.save_image(image, os.path.join(scene.model_path, str(iteration) + ".png"))
 
                             print("-----------------DENSIFY!--------------------")
                             gaussians.densify_and_prune(opt.densify_grad_threshold, 0.005, scene.cameras_extent)
@@ -198,17 +229,30 @@ def training(dataset, opt : OptimizationParams, pipe, saving_iterations, checkpo
                         #    gaussians.reset_opacity()
                     # Optimizer step
                     if iteration < opt.iterations:
-
+                        #print(f"Opacity Grad Sum: {torch.sum(gaussians._opacity.grad)}")
                         if gaussians._xyz.grad != None:
                             if gaussians.skybox_points != 0 and gaussians.skybox_locked: #No post-opt for skybox
-                                gaussians._xyz.grad[-gaussians.skybox_points:, :] = 0
-                                gaussians._rotation.grad[-gaussians.skybox_points:, :] = 0
-                                gaussians._features_dc.grad[-gaussians.skybox_points:, :, :] = 0
-                                gaussians._features_rest.grad[-gaussians.skybox_points:, :, :] = 0
-                                gaussians._opacity.grad[-gaussians.skybox_points:, :] = 0
-                                gaussians._scaling.grad[-gaussians.skybox_points:, :] = 0
+                                gaussians._xyz.grad[0:gaussians.skybox_points, :] = 0
+                                gaussians._rotation.grad[0:gaussians.skybox_points, :] = 0
+                                gaussians._features_dc.grad[0:gaussians.skybox_points, :, :] = 0
+                                gaussians._features_rest.grad[0:gaussians.skybox_points, :, :] = 0
+                                gaussians._opacity.grad[0:gaussians.skybox_points, :] = 0
+                                gaussians._scaling.grad[0:gaussians.skybox_points, :] = 0
                             
-                            
+                            if torch.sum(torch.isnan(gaussians._scaling.grad)) > 0:
+                                torchvision.utils.save_image(image, os.path.join(scene.model_path, "Error" + ".png"))
+                                print("gradients collapsed :(")
+                            else:
+                                #gaussians.optimizer.step()
+                                #gaussians.optimizer.zero_grad(set_to_none = True)
+                                ## OurAdam version
+                                if gaussians._opacity.grad != None:
+                                    relevant = (gaussians._opacity.grad.flatten() != 0).nonzero()
+                                    relevant = relevant.flatten().long()
+                                    if(relevant.size(0) > 0):
+                                        gaussians.optimizer.step(relevant)
+                                    gaussians.optimizer.zero_grad(set_to_none = True)
+                            #torchvision.utils.save_image(image, os.path.join(scene.model_path, "Last" + ".png"))
                             # This would prevent further training of the leaves
                             #gaussians._xyz.grad[gaussians.anchors, :] = 0
                             #gaussians._rotation.grad[gaussians.anchors, :] = 0
@@ -216,18 +260,19 @@ def training(dataset, opt : OptimizationParams, pipe, saving_iterations, checkpo
                             #gaussians._features_rest.grad[gaussians.anchors, :, :] = 0
                             #gaussians._opacity.grad[gaussians.anchors, :] = 0
                             #gaussians._scaling.grad[gaussians.anchors, :] = 0
+                            
+                            
+                            # Clamp values to avoid NaNs?
+                            #with torch.no_grad():
+                            #    gaussians._scaling.clamp_min_(-15)
+                            #    gaussians._scaling.clamp_max_(10)
+                            #    gaussians._opacity.clamp_min_(-3)
+                            #    gaussians._opacity.clamp_max_(3)
+                                #gaussians._opacity.clamp_max_(-10)
                         
-                        ## OurAdam version
-                        #if gaussians._opacity.grad != None:
-                        #    relevant = (gaussians._opacity.grad.flatten() != 0).nonzero()
-                        #    relevant = relevant.flatten().long()
-                        #    if(relevant.size(0) > 0):
-                        #        gaussians.optimizer.step(relevant)
-                        #    gaussians.optimizer.zero_grad(set_to_none = True)
 
-                        gaussians.optimizer.step()
-                        gaussians.optimizer.zero_grad(set_to_none = True)
-
+                            
+                            
                     if (iteration in checkpoint_iterations):
                         print("\n[ITER {}] Saving Checkpoint".format(iteration))
                         torch.save((gaussians.capture(), iteration), scene.model_path + "/chkpnt" + str(iteration) + ".pth")

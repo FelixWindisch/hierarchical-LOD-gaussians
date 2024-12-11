@@ -134,19 +134,46 @@ __device__ bool inboxCUDA(Box& box, Point viewpoint)
 }
 
 
-__device__ float pointgaussiandistCUDA(float3& position, float3& scale, Point viewpoint)
+__device__ float pointgaussiandistCUDA(float3& position, float3& scale, Point viewpoint, Point zdir)
 {
 	float3 offset_pos = position;
-	offset_pos.x += 3 * (position.x < viewpoint.xyz[0] ? scale.x : -scale.x);
-	offset_pos.y += 3 * (position.y < viewpoint.xyz[1] ? scale.y : -scale.y);
-	offset_pos.z += 3 * (position.z < viewpoint.xyz[2] ? scale.z : -scale.z);
+	offset_pos.x += 3.0 * (position.x < viewpoint.xyz[0] ? scale.x : -scale.x);
+	offset_pos.y += 3.0 * (position.y < viewpoint.xyz[1] ? scale.y : -scale.y);
+	offset_pos.z += 3.0 * (position.z < viewpoint.xyz[2] ? scale.z : -scale.z);
 	Point diff = {
 		viewpoint.xyz[0] - position.x,
 		viewpoint.xyz[1] - position.y,
 		viewpoint.xyz[2] - position.z
 	};
+	float norm = sqrt(diff.xyz[0] * diff.xyz[0] + diff.xyz[1] * diff.xyz[1] + diff.xyz[2] * diff.xyz[2]);
+	return norm;
+	Point normalized_diff = {diff.xyz[0]/norm, diff.xyz[1] / norm, diff.xyz[2] / norm};
+	float cos_angle = normalized_diff.xyz[0] * zdir.xyz[0] + normalized_diff.xyz[1] * zdir.xyz[1] + normalized_diff.xyz[2] * zdir.xyz[2];
+		
+}
 
-	return sqrt(diff.xyz[0] * diff.xyz[0] + diff.xyz[1] * diff.xyz[1] + diff.xyz[2] * diff.xyz[2]);
+__device__ bool is_in_frustum(float3& position, float3& scale, Point viewpoint, Point zdir)
+{
+	float3 offset_pos = position;
+	offset_pos.x += 3.0 * (position.x < viewpoint.xyz[0] ? scale.x : -scale.x);
+	offset_pos.y += 3.0 * (position.y < viewpoint.xyz[1] ? scale.y : -scale.y);
+	offset_pos.z += 3.0 * (position.z < viewpoint.xyz[2] ? scale.z : -scale.z);
+	Point diff = {
+		viewpoint.xyz[0] - position.x,
+		viewpoint.xyz[1] - position.y,
+		viewpoint.xyz[2] - position.z
+	};
+	float norm = sqrt(diff.xyz[0] * diff.xyz[0] + diff.xyz[1] * diff.xyz[1] + diff.xyz[2] * diff.xyz[2]);
+	Point normalized_diff = {diff.xyz[0]/norm, diff.xyz[1] / norm, diff.xyz[2] / norm};
+	float cos_angle = normalized_diff.xyz[0] * zdir.xyz[0] + normalized_diff.xyz[1] * zdir.xyz[1] + normalized_diff.xyz[2] * zdir.xyz[2];
+	if (cos_angle < -0.5)
+	{
+		return true;
+	}
+	else
+	{
+		return false;
+	}
 }
 
 __device__ float pointboxdistCUDA(Box& box, Point viewpoint)
@@ -171,7 +198,8 @@ __device__ float pointboxdistCUDA(Box& box, Point viewpoint)
 // This implicitly assumes that zdir is (0,0,1) ?!
 // projected AABB axis lengths?
 __device__ float computeSizeGPU(Box& box, Point viewpoint, Point zdir)
-{
+{ 
+
 	if (inboxCUDA(box, viewpoint))
 		return FLT_MAX;
 	// This is not taking view direction into account
@@ -188,8 +216,11 @@ __device__ float computeSizeGPUDynamic(float3& position, float3& scale, Point vi
 	//if (inboxCUDA(box, viewpoint))
 	//	return FLT_MAX;
 	// This is not taking view direction into account
-	float min_dist = pointgaussiandistCUDA(position, scale, viewpoint);
-	
+	float min_dist = pointgaussiandistCUDA(position, scale, viewpoint, zdir);
+	if (min_dist < 0.0)
+	{
+		return 0;
+	}
 	return fmaxf(scale.x, fmaxf(scale.y, scale.z)) / min_dist;
 }
 
@@ -499,18 +530,33 @@ __global__ void markNodesForSizeDynamic(HierarchyNode* nodes, float3* positions,
 
 	int node_id = idx;
 	HierarchyNode node = nodes[node_id];
+
+	if(!is_in_frustum(positions[node_id], scales[node_id], *viewpoint, zdir))
+	{
+		if (node_markers != nullptr)
+			node_markers[node_id] = 0;
+
+		if (render_counts != nullptr)
+			render_counts[node_id] = 0;
+		return;
+	}
 	// how large is this box projected onto a particular viewpoint?
 	// this does not use zdir at all
 	float size = computeSizeGPUDynamic(positions[node_id], scales[node_id], *viewpoint, zdir);
 
 	int count = 0;
-	if (size >= target_size && node.child_count == 0)
+	// skybox points are added later
+	if (node.depth < 0)
 	{
-		
+		count = 0;
+	}
+	// leaf nodes are visible if all parent nodes are too coarse
+	else if (size >= target_size && node.child_count == 0)
+	{
 		count = 1;
 	}
 	// if your parent is greater than the target size, but you are not, you will be rendered
-	else if (node.parent != -1)
+	else if (node.parent >= 0)
 	{
 		float parent_size = computeSizeGPUDynamic(positions[node.parent], scales[node.parent], *viewpoint, zdir);
 		if (parent_size >= target_size && size < target_size)
@@ -601,7 +647,7 @@ __global__ void computeTsIndexedDynamic(
 	HierarchyNode node = nodes[node_id];
 
 	float t;
-	if (node.parent == -1)
+	if (node.parent < 0)
 		t = 1.0f;
 	else
 	{
@@ -626,7 +672,7 @@ __global__ void computeTsIndexedDynamic(
 	}
 
 	ts[idx] = t;
-	num_siblings[idx] = (node.parent == -1) ? 1 : nodes[node.parent].child_count;
+	num_siblings[idx] = (node.parent < 0) ? 1 : nodes[node.parent].child_count;
 }
 
 // get interpolation weights
@@ -705,6 +751,7 @@ int Switching::expandToSizeDynamic(
 	int* parent_indices,
 	int* nodes_for_render_indices)
 {
+
 	size_t temp_storage_bytes;
 	thrust::device_vector<char> temp_storage;
 	thrust::device_vector<int> render_counts(N);
@@ -714,13 +761,12 @@ int Switching::expandToSizeDynamic(
 	Point zdir = { x, y, z };
 
 	int num_blocks = (N + 255) / 256;
+	
 	// mark the highest nodes in the hierarchy that are below limit in node_markers and populate render_counts
 	markNodesForSizeDynamic << <num_blocks, 256 >> > ((HierarchyNode*)nodes, (float3*)positions, (float3*)scales, N, (Point*)viewpoint, zdir, target_size, render_counts.data().get(), node_markers);
-
 	cub::DeviceScan::InclusiveSum(nullptr, temp_storage_bytes, render_counts.data().get(), render_offsets.data().get(), N);
 	temp_storage.resize(temp_storage_bytes);
 	cub::DeviceScan::InclusiveSum(temp_storage.data().get(), temp_storage_bytes, render_counts.data().get(), render_offsets.data().get(), N);
-
 	putRenderIndicesDynamic << <num_blocks, 256 >> > ((HierarchyNode*)nodes, N, render_counts.data().get(), render_offsets.data().get(), render_indices, parent_indices, nodes_for_render_indices);
 
 	int count = 0;

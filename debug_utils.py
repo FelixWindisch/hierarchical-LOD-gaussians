@@ -20,14 +20,14 @@ def direct_collate(x):
     return x
 
 
-def generate_some_flat_scene_images(scene : Scene, pipe : PipelineParams, output_dir,  no_images = 10):
+def generate_some_flat_scene_images(scene : Scene, pipe : PipelineParams, output_dir,  no_images = 10, indices = None):
     with torch.no_grad():
         bg_color = [0, 0, 0]
         background = torch.tensor(bg_color, dtype=torch.float32, device="cuda")
         
         gaussians = scene.gaussians
         
-        indices = None
+        
 
         n = 0
         training_generator = DataLoader(scene.getTrainCameras(), num_workers = 8, prefetch_factor = 1, persistent_workers = True, collate_fn=direct_collate)

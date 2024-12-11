@@ -65,6 +65,10 @@ class ModelParams(ParamGroup):
         self.scaffold_file = ""
         self.bounds_file = ""
         self.skybox_locked = False
+        # MCMC
+        #self.eval = True
+        self.cap_max = -1
+        #MCMC
         super().__init__(parser, "Loading Parameters", sentinel)
 
     def extract(self, args):
@@ -106,6 +110,11 @@ class OptimizationParams(ParamGroup):
         self.densify_grad_threshold = 0.015
         self.depth_l1_weight_init = 1.0
         self.depth_l1_weight_final = 0.01
+        #MCMC
+        self.noise_lr = 5e5
+        self.scale_reg = 0.01
+        self.opacity_reg = 0.01
+        #MCMC
         super().__init__(parser, "Optimization Parameters")
 
 def get_combined_args(parser : ArgumentParser):

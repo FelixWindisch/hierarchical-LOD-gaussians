@@ -3,6 +3,7 @@ import subprocess
 import argparse
 import time
 import platform
+import torch
 from pathlib import Path
 from scene import Scene, GaussianModel
 from arguments import ModelParams, PipelineParams, OptimizationParams
@@ -156,8 +157,12 @@ if __name__ == '__main__':
     gaussians = GaussianModel(1)
     model_params.hierarchy = os.path.join(output_dir, "scaffold/point_cloud/iteration_30000/", "hierarchy.dhier")
     model_params.model_path = output_dir
+    model_params.scaffold_file = os.path.join(output_dir, "scaffold/point_cloud/iteration_30000/")
     hierarchy_scene = Scene(model_params, gaussians, resolution_scales = [1], create_from_hier=True, shuffle=True)
     print(f"Hierarchy bounding sphere divergence: {hierarchy_scene.gaussians.compute_bounding_sphere_divergence()}")
+    
+    #debug_utils.generate_some_flat_scene_images(hierarchy_scene, pipeline_params, output_dir, 4, indices=torch.cat((hierarchy_scene.gaussians.get_skybox_indices(), torch.where(hierarchy_scene.gaussians.nodes[:, 2] == 0)[0].cpu())))
+    
     hierarchy_scene.dump_gaussians("Dump", only_leaves=True)
     #debug_utils.render_depth_slices(hierarchy_scene, pipeline_params, output_dir)
     #debug_utils.render_level_slices(hierarchy_scene, pipeline_params, output_dir)
@@ -182,16 +187,42 @@ if __name__ == '__main__':
     optimization_params.exposure_lr_delay_steps=5000
     optimization_params.exposure_lr_delay_mult=0.001
     optimization_params.percent_dense=0.001
-    optimization_params.iterations=15000 
+    optimization_params.iterations=30000 
     optimization_params.lambda_dssim=0.2
-    optimization_params.densification_interval=250
+    optimization_params.densification_interval=500
     optimization_params.opacity_reset_interval=3000
-    optimization_params.densify_from_iter=100
-    optimization_params.densify_until_iter=15000
+    optimization_params.densify_from_iter=1
+    optimization_params.densify_until_iter=25000
     #optimization_params.densify_grad_threshold=0.015
-    optimization_params.densify_grad_threshold=0.0015
+    optimization_params.densify_grad_threshold=0.015
     optimization_params.depth_l1_weight_init=1.0
     optimization_params.depth_l1_weight_final=0.01
+
+    
+    #Standard 3DGS training parameters
+    optimization_params.iterations = 30_000
+    optimization_params.position_lr_init = 0.00016
+    optimization_params.position_lr_final = 0.0000016
+    optimization_params.position_lr_delay_mult = 0.01
+    optimization_params.position_lr_max_steps = 30_000
+    optimization_params.feature_lr = 0.0025
+    optimization_params.opacity_lr = 0.025
+    optimization_params.scaling_lr = 0.005
+    optimization_params.rotation_lr = 0.001
+    optimization_params.exposure_lr_init = 0.01
+    optimization_params.exposure_lr_final = 0.001
+    optimization_params.exposure_lr_delay_steps = 0
+    optimization_params.exposure_lr_delay_mult = 0.0
+    optimization_params.percent_dense = 0.01
+    optimization_params.lambda_dssim = 0.2
+    optimization_params.densification_interval = 500
+    optimization_params.opacity_reset_interval = 3000
+    optimization_params.densify_from_iter = 0
+    optimization_params.densify_until_iter = 5_000
+    optimization_params.densify_grad_threshold = 0.15
+    optimization_params.depth_l1_weight_init = 1.0
+    optimization_params.depth_l1_weight_final = 0.01
+
 
     train_post.training(model_params, optimization_params, pipeline_params, [], [], [], [])
     

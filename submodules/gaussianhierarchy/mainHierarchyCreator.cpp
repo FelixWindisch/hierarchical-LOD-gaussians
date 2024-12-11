@@ -163,8 +163,8 @@ int main(int argc, char* argv[])
 	ClusterMerger merger;
 	merger.merge(root, gaussians);
 
-	//std::cout << "Fixing rotations" << std::endl;
-	//RotationAligner::align(root, gaussians);
+	std::cout << "Fixing rotations" << std::endl;
+	RotationAligner::align(root, gaussians);
 //
 	//std::cout << "Filtering" << std::endl;
 	//float limit = 0.0005f;

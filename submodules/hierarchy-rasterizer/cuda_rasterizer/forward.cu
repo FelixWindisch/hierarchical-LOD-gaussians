@@ -219,8 +219,8 @@ template<int C>
 __global__ void preprocessCUDA(int P, int D, int M,
 	const int* indices,
 	const int* parent_indices,
-	const float* ts,
-	const float* orig_points,
+	const float* ts, //=interpolation weights
+	const float* orig_points, //=means3D?
 	const glm::vec3* scales,
 	const float scale_modifier,
 	const glm::vec4* rotations,
@@ -237,18 +237,18 @@ __global__ void preprocessCUDA(int P, int D, int M,
 	const float tan_fovx, float tan_fovy,
 	const float focal_x, float focal_y,
 	int* radii,
-	float2* points_xy_image,
-	float* depths,
+	float2* points_xy_image, // xy of projected mean
+	float* depths, // z coordinate of projected mean
 	float* cov3Ds,
-	float* rgb,
-	float4* conic_opacity,
+	float* rgb, // return interpolated SH final color here
+	float4* conic_opacity, // inverse 2D covariance + opacity
 	const dim3 grid,
-	uint32_t* tiles_touched,
+	uint32_t* tiles_touched, // return the number of tiles that are touched by each gaussians
 	bool prefiltered,
-	int2* rects,
-	float3 boxmin,
-	float3 boxmax,
-	int skyboxnum,
+	int2* rects, // return/receive bounding rectangle for projected gaussians
+	float3 boxmin, // for frustum culling
+	float3 boxmax, // for frustum culling
+	int skyboxnum, // ???
 	float biglimit,
 	MatMat viewmats,
 	MatMat projmats, 
@@ -264,11 +264,14 @@ __global__ void preprocessCUDA(int P, int D, int M,
 	if (t_idx >= P)
 		return;
 
-	bool sky = t_idx >= (P - skyboxnum);
+	//bool sky = t_idx >= (P - skyboxnum);
+	bool sky = t_idx < skyboxnum;
 	int r_idx;
 	if (sky)
 	{
-		r_idx = -(t_idx - (P - skyboxnum)) - 1;
+		// what is this doing?
+		//r_idx = -(t_idx - (P - skyboxnum)) - 1;
+		r_idx = -t_idx - 1;
 		parent_indices = nullptr; //Sky has no parents
 	}
 	else
@@ -287,6 +290,7 @@ __global__ void preprocessCUDA(int P, int D, int M,
 	// Perform near culling, quit if outside.
 	float3 p_orig = { orig_points[3 * r_idx], orig_points[3 * r_idx + 1], orig_points[3 * r_idx + 2] };
 
+	// set t to the interpolation index
 	if (parent_indices != nullptr)
 	{
 		p_idx = parent_indices[t_idx];
@@ -296,6 +300,7 @@ __global__ void preprocessCUDA(int P, int D, int M,
 			t = ts[t_idx];
 	}
 
+	// set p_orig to the interpolated mean3D with its parent
 	if (parent_indices != nullptr)
 	{
 		float3 pa_orig = { orig_points[3 * p_idx], orig_points[3 * p_idx + 1], orig_points[3 * p_idx + 2] };
@@ -313,16 +318,17 @@ __global__ void preprocessCUDA(int P, int D, int M,
 	float3 p_proj = { p_hom.x * p_w, p_hom.y * p_w, p_hom.z * p_w };
 	float3 p_view = transformPoint4x3(p_orig, viewmatrix);
 
+	//near culling?
 	if (p_view.z <= 0.2f)
 		return;
 
+	//Frustum Culling?
 	if (p_orig.x < boxmin.x || p_orig.y < boxmin.y || p_orig.z < boxmin.z ||
 		p_orig.x > boxmax.x || p_orig.y > boxmax.y || p_orig.z > boxmax.z)
 		return;
 
 	// If 3D covariance matrix is precomputed, use it, otherwise compute
 	// from scaling and rotation parameters. 
-
 	float* cov3D;
 	
 	if (cov3D_precomp == nullptr)
@@ -368,6 +374,7 @@ __global__ void preprocessCUDA(int P, int D, int M,
 	if (det == 0.0f)
 		return;
 	float det_inv = 1.f / det;
+	// conic = inverse 2D covariance
 	float3 conic = { cov.z * det_inv, -cov.y * det_inv, cov.x * det_inv };
 
 	// Compute extent in screen space (by finding eigenvalues of
@@ -379,9 +386,11 @@ __global__ void preprocessCUDA(int P, int D, int M,
 	float lambda1 = mid + sqrt(max(0.1f, mid * mid - det));
 	float lambda2 = mid - sqrt(max(0.1f, mid * mid - det));
 	float my_radius = ceil(3.f * sqrt(max(lambda1, lambda2)));
+	// point in the image plane
 	float2 point_image = { ndc2Pix(p_proj.x, W), ndc2Pix(p_proj.y, H) };
 	uint2 rect_min, rect_max;
 
+	// rects are the 2D bounding rectangles
 	if (rects == nullptr) 	// More conservative
 	{
 		getRect(point_image, my_radius, rect_min, rect_max, grid);
@@ -393,6 +402,7 @@ __global__ void preprocessCUDA(int P, int D, int M,
 		getRect(point_image, my_rect, rect_min, rect_max, grid);
 	}
 
+	// more culling
 	if ((rect_max.x - rect_min.x) * (rect_max.y - rect_min.y) == 0)
 		return;
 
@@ -421,6 +431,7 @@ __global__ void preprocessCUDA(int P, int D, int M,
 	points_xy_image[t_idx] = point_image;
 	// Inverse 2D covariance and opacity neatly pack into one float4
 	float opacity = opacities[r_idx];
+	// interpolate opacities
 	if (parent_indices != nullptr)
 		opacity = t * opacity + (1.0f - t) * opacities[p_idx];
 
