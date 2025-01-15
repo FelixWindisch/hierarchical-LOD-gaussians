@@ -14,6 +14,7 @@
 #include <cstdio>
 #include <sstream>
 #include <iostream>
+#include "cuda_rasterizer/utils.h"
 #include <tuple>
 #include <stdio.h>
 #include <cuda_runtime_api.h>
@@ -62,7 +63,8 @@ RasterizeGaussiansCUDA(
   if (means3D.ndimension() != 2 || means3D.size(1) != 3) {
     AT_ERROR("means3D must have dimensions (num_points, 3)");
   }
-  
+
+
   const int P = indices.size(0) == 0 ? means3D.size(0) : indices.size(0);
   const int H = image_height;
   const int W = image_width;
@@ -238,4 +240,30 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Te
   }
 
   return std::make_tuple(dL_dmeans2D, dL_dcolors, dL_dopacity, dL_dmeans3D, dL_dcov3D, dL_dsh, dL_dscales, dL_drotations);
+}
+
+// MCMC
+std::tuple<torch::Tensor, torch::Tensor> ComputeRelocationCUDA(
+	torch::Tensor& opacity_old,
+	torch::Tensor& scale_old,
+	torch::Tensor& N,
+	torch::Tensor& binoms,
+	const int n_max)
+{
+	const int P = opacity_old.size(0);
+  
+	torch::Tensor final_opacity = torch::full({P}, 0, opacity_old.options().dtype(torch::kFloat32));
+	torch::Tensor final_scale = torch::full({3 * P}, 0, scale_old.options().dtype(torch::kFloat32));
+	if(P != 0)
+	{
+		UTILS::ComputeRelocation(P,
+			opacity_old.contiguous().data<float>(),
+			scale_old.contiguous().data<float>(),
+			N.contiguous().data<int>(),
+			binoms.contiguous().data<float>(),
+			n_max,
+			final_opacity.contiguous().data<float>(),
+			final_scale.contiguous().data<float>());
+	}
+	return std::make_tuple(final_opacity, final_scale);
 }

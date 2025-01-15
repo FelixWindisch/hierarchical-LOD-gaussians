@@ -117,20 +117,25 @@ if __name__ == '__main__':
             
     model_params.source_path = colmap_dir #os.path.join(colmap_dir, "../rectified/")
     model_params.images = images_dir
-    gaussians = GaussianModel(1)
-    gaussians.load_ply(os.path.join(output_dir, "scaffold/point_cloud/iteration_30000/point_cloud.ply"))
-    scaffold_scene = Scene(model_params, gaussians)
-    print(f"Number of Gaussians in Scaffold : {len(scaffold_scene.gaussians._xyz)}")
-    #debug_utils.generate_some_flat_scene_images(scaffold_scene, pipeline_params, output_dir)
-            
-    #if not os.path.isabs(images_dir):
-    #    images_dir = os.path.join("../", images_dir)
-    #if not os.path.isabs(depths_dir):
-    #    depths_dir = os.path.join("../", depths_dir)
-    #if masks_dir != "" and not os.path.isabs(masks_dir):
-    #    masks_dir = os.path.join("../", masks_dir)
-        
     
+    
+    # Randomize Initialization
+    #gaussians = GaussianModel(1)
+    #gaussians.load_ply(os.path.join(output_dir, "scaffold/point_cloud/iteration_30000/point_cloud.ply"))
+    #with torch.no_grad():
+    #    gaussians._features_dc[:100000] = torch.rand_like(gaussians._features_dc[:100000]) * (torch.max(gaussians._features_dc[:100000]) - torch.min(gaussians._features_dc[:100000])) + torch.min(gaussians._features_dc[:100000])
+    #    gaussians._scaling[:100000] = torch.rand_like(gaussians._scaling[:100000]) * (torch.max(gaussians._scaling[:100000]) - torch.min(gaussians._scaling[:100000])) + torch.min(gaussians._scaling[:100000])
+    #    gaussians._opacity[:100000] = torch.rand_like(gaussians._opacity[:100000]) * (torch.max(gaussians._opacity[:100000]) - torch.min(gaussians._opacity[:100000])) + torch.min(gaussians._opacity[:100000])
+#
+    #    gaussians._features_dc[100000:] = torch.rand_like(gaussians._features_dc[100000:]) * (torch.max(gaussians._features_dc[100000:]) - torch.min(gaussians._features_dc[100000:])) + torch.min(gaussians._features_dc[100000:])
+    #    gaussians._scaling[100000:] = torch.rand_like(gaussians._scaling[100000:]) * (torch.max(gaussians._scaling[100000:]) - torch.min(gaussians._scaling[100000:])) + torch.min(gaussians._scaling[100000:]) 
+    #    gaussians._scaling[100000:] += 3
+    #    gaussians._opacity[100000:] = torch.rand_like(gaussians._opacity[100000:]) * (torch.max(gaussians._opacity[100000:]) - torch.min(gaussians._opacity[100000:])) + torch.min(gaussians._opacity[100000:])
+    #    gaussians._xyz[100000:] = torch.rand_like(gaussians._xyz[100000:]) * (torch.max(gaussians._xyz[100000:]) - torch.min(gaussians._xyz[100000:])) + torch.min(gaussians._xyz[100000:])
+    #gaussians.inverse_opacity_activation = lambda x:x
+    #gaussians.save_ply(os.path.join(output_dir, "scaffold/point_cloud/iteration_30000/point_cloud_random.ply"))
+    # Randomize Initialization
+
 
         
     # ==================================== Scaffold finished ==============================
@@ -154,20 +159,20 @@ if __name__ == '__main__':
     # ==================================== Hierarchy finished ==============================
     
     
-    gaussians = GaussianModel(1)
+    #gaussians = GaussianModel(1)
     model_params.hierarchy = os.path.join(output_dir, "scaffold/point_cloud/iteration_30000/", "hierarchy.dhier")
     model_params.model_path = output_dir
     model_params.scaffold_file = os.path.join(output_dir, "scaffold/point_cloud/iteration_30000/")
-    hierarchy_scene = Scene(model_params, gaussians, resolution_scales = [1], create_from_hier=True, shuffle=True)
-    print(f"Hierarchy bounding sphere divergence: {hierarchy_scene.gaussians.compute_bounding_sphere_divergence()}")
+    #hierarchy_scene = Scene(model_params, gaussians, resolution_scales = [1], create_from_hier=True, shuffle=True)
+    #print(f"Hierarchy bounding sphere divergence: {hierarchy_scene.gaussians.compute_bounding_sphere_divergence()}")
     
     #debug_utils.generate_some_flat_scene_images(hierarchy_scene, pipeline_params, output_dir, 4, indices=torch.cat((hierarchy_scene.gaussians.get_skybox_indices(), torch.where(hierarchy_scene.gaussians.nodes[:, 2] == 0)[0].cpu())))
     
-    hierarchy_scene.dump_gaussians("Dump", only_leaves=True)
+    #hierarchy_scene.dump_gaussians("Dump", only_leaves=True)
     #debug_utils.render_depth_slices(hierarchy_scene, pipeline_params, output_dir)
     #debug_utils.render_level_slices(hierarchy_scene, pipeline_params, output_dir)
-    print(f"Number of hierarchy leaf nodes: {hierarchy_scene.gaussians.get_number_of_leaf_nodes()}")
-    print(f"Number of hierarchy nodes: {len(hierarchy_scene.gaussians._xyz)}")
+    #print(f"Number of hierarchy leaf nodes: {hierarchy_scene.gaussians.get_number_of_leaf_nodes()}")
+    #print(f"Number of hierarchy nodes: {len(hierarchy_scene.gaussians._xyz)}")
     #debug_utils.generate_some_flat_scene_images(hierarchy_scene, pipeline_params, output_dir)
 
     #debug_utils.generate_some_hierarchy_scene_images_dynamic(hierarchy_scene, pipeline_params, output_dir, limit=0.0000001, no_images=3)
@@ -200,8 +205,9 @@ if __name__ == '__main__':
 
     
     #Standard 3DGS training parameters
-    optimization_params.iterations = 30_000
+    optimization_params.iterations = 50_000
     optimization_params.position_lr_init = 0.00016
+    #optimization_params.position_lr_init = 0.016
     optimization_params.position_lr_final = 0.0000016
     optimization_params.position_lr_delay_mult = 0.01
     optimization_params.position_lr_max_steps = 30_000
@@ -218,7 +224,7 @@ if __name__ == '__main__':
     optimization_params.densification_interval = 500
     optimization_params.opacity_reset_interval = 3000
     optimization_params.densify_from_iter = 0
-    optimization_params.densify_until_iter = 5_000
+    optimization_params.densify_until_iter = 50_000
     optimization_params.densify_grad_threshold = 0.15
     optimization_params.depth_l1_weight_init = 1.0
     optimization_params.depth_l1_weight_final = 0.01

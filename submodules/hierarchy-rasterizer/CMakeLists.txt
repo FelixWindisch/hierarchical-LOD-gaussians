@@ -28,6 +28,8 @@ add_library(CudaDiffRasterizer
 	cuda_rasterizer/rasterizer_impl.cu
 	cuda_rasterizer/rasterizer_impl.h
 	cuda_rasterizer/rasterizer.h
+  cuda_rasterizer/utils.h
+  cuda_rasterizer/utils.cu
 )
 set_target_properties(CudaDiffRasterizer PROPERTIES CUDA_ARCHITECTURES "70;75;86")
 target_include_directories(CudaDiffRasterizer PRIVATE third_party/glm ${CMAKE_CUDA_TOOLKIT_INCLUDE_DIRECTORIES})

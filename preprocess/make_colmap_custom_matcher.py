@@ -24,20 +24,24 @@ def decimal_coords(coords, ref):
     return decimal_degrees
 
 def image_coordinates(image_name):
-    with open(os.path.join(args.image_path, image_name), 'rb') as src:
-        img = Image(src)
-    if img.has_exif:
-        try:
-            img.gps_longitude
-            coords = [
-                decimal_coords(img.gps_latitude, img.gps_latitude_ref),
-                decimal_coords(img.gps_longitude, img.gps_longitude_ref)
-            ]
-            return coords
-        except AttributeError:
-            return None
+    # only jpg images have exif data
+    if image_name.endswith(".jpg"):
+        with open(os.path.join(args.image_path, image_name), 'rb') as src:
+            img = Image(src)
+        if img.has_exif:
+            try:
+                img.gps_longitude
+                coords = [
+                    decimal_coords(img.gps_latitude, img.gps_latitude_ref),
+                    decimal_coords(img.gps_longitude, img.gps_longitude_ref)
+                ]
+                return coords
+            except AttributeError:
+                return None
+        else:
+            return None   
     else:
-        return None    
+        return None
     
 def get_matches(img_name, cam_center, cam_nbrs, img_names_gps):
     _, indices = cam_nbrs.kneighbors(cam_center[None])

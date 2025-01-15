@@ -14,15 +14,15 @@ import os
 import torch
 from random import randint
 from utils.loss_utils import ssim
+from utils.image_utils import psnr
+from lpipsPyTorch import lpips
 from gaussian_renderer import render_post
 import sys
 from scene import Scene, GaussianModel
 from tqdm import tqdm
-from utils.image_utils import psnr
 from argparse import ArgumentParser
 from arguments import ModelParams, PipelineParams, OptimizationParams
 import torchvision
-from lpipsPyTorch import lpips
 
 from gaussian_hierarchy._C import expand_to_size, get_interpolation_weights
 

@@ -21,9 +21,11 @@ from utils.sh_utils import RGB2SH
 from simple_knn._C import distCUDA2
 from utils.graphics_utils import BasicPointCloud
 from utils.general_utils import strip_symmetric, build_scaling_rotation
-from gaussian_hierarchy._C import load_hierarchy, write_hierarchy, load_dynamic_hierarchy
+from gaussian_hierarchy._C import load_hierarchy, write_hierarchy, load_dynamic_hierarchy, write_dynamic_hierarchy, get_morton_indices
 from scene.OurAdam import Adam
+from utils.reloc_utils import compute_relocation_cuda
 import random
+import math
 hierarchy_node_depth = 0
 hierarchy_node_parent = 1
 hierarchy_node_child_count = 2
@@ -34,6 +36,74 @@ hierarchy_node_max_side_length = 5
 
 class GaussianModel:
     
+    
+    def get_random_cut(self, p):
+        
+        cut = torch.zeros(len(self.nodes))
+        current_set = torch.where(self.nodes[:, hierarchy_node_child_count] == 0)[0]
+        cut[current_set] = 1
+        subset_size = int(math.floor(len(current_set)/16))
+        subset = torch.randperm(len(self.nodes))[:subset_size]
+        while(subset):
+            first_children = subset[self.nodes[subset, hierarchy_node_next_sibling] > 0]
+            siblings = self.nodes[first_children, hierarchy_node_next_sibling]
+            
+            siblings_are_cut = cut[siblings]
+            first_children = first_children[siblings]
+            parents = self.nodes[first_children, hierarchy_node_parent]
+            cut[parents] = 1
+            cut[first_children] = 0
+            cut[siblings] = 0
+            
+            
+        
+        
+    def recompute_weights(self):
+        ellipse_surface = self.get_scaling[self.skybox_points:, 0] * self.get_scaling[self.skybox_points:, 1] + self.get_scaling[self.skybox_points:, 0] * self.get_scaling[self.skybox_points:, 2] + self.get_scaling[self.skybox_points:, 1] * self.get_scaling[self.skybox_points:, 2]
+        self.weights = ellipse_surface * self.get_opacity.squeeze()[self.skybox_points:]
+        first_children = self.nodes[self.skybox_points:, hierarchy_node_first_child]
+        first_children = first_children[first_children != 0]
+        siblings = self.nodes[first_children, hierarchy_node_next_sibling]
+        # TODO: Update for non-binary trees
+        normalization = self.weights[siblings-self.skybox_points] + self.weights[first_children-self.skybox_points]
+        self.weights[first_children-self.skybox_points] /= normalization
+        self.weights[siblings-self.skybox_points] /= normalization
+        self.weights[0] = 1
+        self.weights = torch.cat((torch.full([self.skybox_points], -99).cuda(), self.weights))
+        
+    def sort_morton(self):
+        #pass
+        xyz = self._xyz[self.skybox_points:]
+        codes = torch.zeros_like(xyz[:, 0], dtype=torch.int64)
+        get_morton_indices(xyz, torch.min(self._xyz[self.skybox_points:], dim=0)[0], torch.max(self._xyz[self.skybox_points:], dim=0)[0], codes)
+        indices = torch.argsort(codes)
+        indices = indices.to(torch.int)
+        # Make sure the root node stays in place
+        root_index = torch.where(indices==0)[0][0]
+        indices[root_index] = indices[0]
+        indices[0] = 0
+        
+        indices += self.skybox_points
+        with torch.no_grad():
+            self._opacity[indices] = self._opacity[self.skybox_points:].clone().detach().requires_grad_(True)
+            self._xyz[indices] = self._xyz[self.skybox_points:].clone().detach().requires_grad_(True)
+            self._scaling[indices] = self._scaling[self.skybox_points:].clone().detach().requires_grad_(True)
+            self._rotation[indices] = self._rotation[self.skybox_points:].clone().detach().requires_grad_(True)
+            self._features_dc[indices] = self._features_dc[self.skybox_points:].clone().detach().requires_grad_(True)
+            self._features_rest[indices] = self._features_rest[self.skybox_points:].clone().detach().requires_grad_(True)
+            self.nodes[self.skybox_points:, hierarchy_node_parent] = indices[self.nodes[self.skybox_points:, hierarchy_node_parent] - self.skybox_points]
+            sibling_mask = self.nodes[:, hierarchy_node_next_sibling] > 0
+            #sibling_mask_with_skybox = torch.cat((torch.zeros(self.skybox_points, dtype=torch.bool), sibling_mask))
+            self.nodes[sibling_mask, hierarchy_node_next_sibling] = indices[self.nodes[sibling_mask, hierarchy_node_next_sibling] - self.skybox_points]
+            child_mask = self.nodes[:, hierarchy_node_first_child] > 0
+            #child_mask_with_skybox = torch.cat((torch.zeros(self.skybox_points, dtype=torch.bool), child_mask))
+            self.nodes[child_mask, hierarchy_node_first_child] = indices[self.nodes[child_mask, hierarchy_node_first_child]- self.skybox_points]
+            self.nodes[self.skybox_points, hierarchy_node_parent] = -1
+            self.nodes[self.skybox_points, hierarchy_node_next_sibling] = 0
+            self.nodes[indices] = self.nodes.clone()[self.skybox_points:]
+            pass
+            
+        
     def merge_gaussians(self, indices):
         ellipse_surface  = lambda scale: scale[0] * scale[1] + scale[0] * scale[2] + scale[1] * scale[2]
         weights = []
@@ -43,8 +113,6 @@ class GaussianModel:
         new_position = self._xyz[indices]*weights
         new_features_dc = self._features_dc[indices]*weights
         new_features_rest = self._features_rest[indices]*weights
-        
-        
         pos_differences = self._xyz[indices] - new_position
         
 
@@ -99,7 +167,7 @@ class GaussianModel:
                 #    print(f"Warning: Child has max scale {torch.prod(self.get_scaling[child]).item()}, but parent has max scale {torch.prod(self.get_scaling[node]).item()}")
                 sanity_check_rec(child)
                 
-        sanity_check_rec(0)
+        sanity_check_rec(self.skybox_points)
         if self.sanity_counter != len(self._xyz):
             print(f"Error: Reached {self.sanity_counter} out of {len(self._xyz)} nodes by recursion")
         print(f"Finished Sanity Check of Hierarchy ( {self.sanity_counter} / {len(self._xyz)} nodes)")
@@ -151,8 +219,14 @@ class GaussianModel:
 
         self.setup_functions()
 
+    def get_skybox_indices(self):
+        return torch.arange(0, self.skybox_points)
+    
     def get_number_of_leaf_nodes(self):
         return torch.sum(self.nodes[:, hierarchy_node_child_count] == 0).item()
+    
+    def get_number_of_levels(self):
+        return torch.max(self.nodes[:, hierarchy_node_depth]).item()
     
     def capture(self):
         return (
@@ -405,6 +479,10 @@ class GaussianModel:
 
         return xyz, features_dc, features_extra, opacities, scales, rots
 
+
+        
+        
+    
     # scaffold file is only required for number of skybox points
     def create_from_hier(self, path, spatial_lr_scale : float, scaffold_file : str):
         
@@ -413,7 +491,9 @@ class GaussianModel:
         print(path)
         #xyz, shs_all, alpha, scales, rots, nodes, boxes = load_hierarchy(path)
         xyz, shs_all, alpha, scales, rots, nodes = load_dynamic_hierarchy(path)
-        #alpha = torch.log(alpha)
+        # set first child to 0 for all nodes that do not have children (because this is fucked up in some hierarchy files)
+        #alpha = torch.sigmoid((alpha))
+        #alpha = torch.sigmoid(alpha)
         #scales = torch.log(scales)
 
         base = os.path.dirname(path)
@@ -440,36 +520,48 @@ class GaussianModel:
             print(f"No exposure to be loaded at {exposure_file}")
             self.pretrained_exposures = None
 
-        #retrieve skybox
-        self.skybox_points = 0         
-        if scaffold_file != "":
-            scaffold_xyz, features_dc_scaffold, features_extra_scaffold, opacities_scaffold, scales_scaffold, rots_scaffold = self.load_ply_file(scaffold_file + "/point_cloud.ply", 1)
-            scaffold_xyz = torch.from_numpy(scaffold_xyz).float()
-            features_dc_scaffold = torch.from_numpy(features_dc_scaffold).permute(0, 2, 1).float()
-            features_extra_scaffold = torch.from_numpy(features_extra_scaffold).permute(0, 2, 1).float()
-            opacities_scaffold = torch.from_numpy(opacities_scaffold).float()
-            scales_scaffold = torch.from_numpy(scales_scaffold).float()
-            rots_scaffold = torch.from_numpy(rots_scaffold).float()
-
-            with open(scaffold_file + "/pc_info.txt") as f:
-                    skybox_points = int(f.readline())
-
-            self.skybox_points = skybox_points
-
-        if self.skybox_points > 0:
+        
+        if scaffold_file:
+            #retrieve skybox
+            skybox_points = 100_000
+            self.skybox_points = 100_000
             if scaffold_file != "":
-                skybox_xyz, features_dc_sky, features_rest_sky, opacities_sky, scales_sky, rots_sky = scaffold_xyz[:skybox_points], features_dc_scaffold[:skybox_points], features_extra_scaffold[:skybox_points], opacities_scaffold[:skybox_points], scales_scaffold[:skybox_points], rots_scaffold[:skybox_points]
+                scaffold_xyz, features_dc_scaffold, features_extra_scaffold, opacities_scaffold, scales_scaffold, rots_scaffold = self.load_ply_file(scaffold_file + "/point_cloud.ply", 1)
+                scaffold_xyz = torch.from_numpy(scaffold_xyz).float()
+                features_dc_scaffold = torch.from_numpy(features_dc_scaffold).permute(0, 2, 1).float()
+                features_extra_scaffold = torch.from_numpy(features_extra_scaffold).permute(0, 2, 1).float()
+                opacities_scaffold = torch.from_numpy(opacities_scaffold).float()
+                scales_scaffold = torch.from_numpy(scales_scaffold).float()
+                rots_scaffold = torch.from_numpy(rots_scaffold).float()
+                skybox_points = 100_000
+                with open(scaffold_file + "/pc_info.txt") as f:
+                    skybox_points = int(f.readline())
+                    
+                self.skybox_points = skybox_points
+    
+            # add skybox points to the front of array
+            if self.skybox_points > 0:
+                if scaffold_file != "":
+                    skybox_xyz, features_dc_sky, features_rest_sky, opacities_sky, scales_sky, rots_sky = scaffold_xyz[:skybox_points], features_dc_scaffold[:skybox_points], features_extra_scaffold[:skybox_points], opacities_scaffold[:skybox_points], scales_scaffold[:skybox_points], rots_scaffold[:skybox_points]
+    
+                opacities_sky = torch.sigmoid(opacities_sky)
+                xyz = torch.cat((skybox_xyz, xyz))
+                alpha = torch.cat((opacities_sky, alpha))
+                scales = torch.cat((scales_sky, scales))
+                rots = torch.cat((rots_sky, rots))
+                filler = torch.zeros(features_dc_sky.size(0), 16, 3)
+                filler[:, :1, :] = features_dc_sky
+                filler[:, 1:4, :] = features_rest_sky
+                shs_all = torch.cat((filler, shs_all))
+            nodes[:, hierarchy_node_first_child] += self.skybox_points
+            nodes[:, hierarchy_node_parent] += self.skybox_points
+            
+            nodes[nodes[:,hierarchy_node_next_sibling]>0, hierarchy_node_next_sibling] += self.skybox_points
+            nodes[0, hierarchy_node_parent] = -1
+            nodes = torch.cat((torch.full((self.skybox_points, 6), -99, dtype=torch.int32), nodes)) 
+            nodes[skybox_points:, 3] = torch.where(nodes[skybox_points:, 2]==2, nodes[skybox_points:, 3], torch.zeros_like(nodes[skybox_points:,3]))
 
-            opacities_sky = torch.sigmoid(opacities_sky)
-            xyz = torch.cat((xyz, skybox_xyz))
-            alpha = torch.cat((alpha, opacities_sky))
-            scales = torch.cat((scales, scales_sky))
-            rots = torch.cat((rots, rots_sky))
-            filler = torch.zeros(features_dc_sky.size(0), 16, 3)
-            filler[:, :1, :] = features_dc_sky
-            filler[:, 1:4, :] = features_rest_sky
-            shs_all = torch.cat((shs_all, filler))
-
+        
         self._xyz = nn.Parameter(xyz.cuda().requires_grad_(True))
         self._features_dc = nn.Parameter(shs_all.cuda()[:,:1,:].requires_grad_(True))
         self._features_rest = nn.Parameter(shs_all.cuda()[:,1:16,:].requires_grad_(True))
@@ -478,11 +570,11 @@ class GaussianModel:
         self._rotation = nn.Parameter(rots.cuda().requires_grad_(True))
         self.max_radii2D = torch.zeros((self.get_xyz.shape[0]), device="cuda")
 
-        self.opacity_activation = torch.abs
-        self.inverse_opacity_activation = torch.abs
-
+        #self.opacity_activation = torch.abs
+        #self.inverse_opacity_activation = torch.abs
+        self.opacity_activation = torch.sigmoid
+        self.inverse_opacity_activation = inverse_sigmoid
         self.hierarchy_path = path
-
         self.nodes = nodes.cuda()
         #self.boxes = boxes.cuda()
 
@@ -505,14 +597,14 @@ class GaussianModel:
         self.max_radii2D = torch.zeros((self.get_xyz.shape[0]), device="cuda")
 
     def save_hier(self):
-        write_hierarchy(self.hierarchy_path + "_opt",
+        print(f"Result hierarchy written to {self.hierarchy_path}_opt")
+        write_dynamic_hierarchy(self.hierarchy_path + "_opt",
                         self._xyz,
                         torch.cat((self._features_dc, self._features_rest), 1),
                         self.opacity_activation(self._opacity),
                         self._scaling,
                         self._rotation,
-                        self.nodes,
-                        self.boxes)
+                        self.nodes)
 
     def update_learning_rate(self, iteration):
         ''' Learning rate scheduling per step '''
@@ -582,7 +674,7 @@ class GaussianModel:
             mask = self.nodes[:, hierarchy_node_child_count] == 0
         else:
             # all true mask
-            mask = self.nodes[:, hierarchy_node_child_count] != 1000000000000
+            mask = torch.ones(len(self._opacity), dtype=torch.bool)
         xyz = self._xyz[mask].detach().cpu().numpy()
         normals = np.zeros_like(xyz)
         f_dc = self._features_dc[mask].detach().transpose(1, 2).flatten(start_dim=1).contiguous().cpu().numpy()
@@ -700,8 +792,9 @@ class GaussianModel:
                 optimizable_tensors[group["name"]] = group["params"][0]
 
         return optimizable_tensors
-
-    def densification_postfix(self, new_xyz, new_features_dc, new_features_rest, new_opacities, new_scaling, new_rotation):
+    
+    # reset_params is from MCMC
+    def densification_postfix(self, new_xyz, new_features_dc, new_features_rest, new_opacities, new_scaling, new_rotation, reset_params=True):
         d = {"xyz": new_xyz,
         "f_dc": new_features_dc,
         "f_rest": new_features_rest,
@@ -716,10 +809,10 @@ class GaussianModel:
         self._opacity = optimizable_tensors["opacity"]
         self._scaling = optimizable_tensors["scaling"]
         self._rotation = optimizable_tensors["rotation"]
-
-        self.xyz_gradient_accum = torch.zeros((self.get_xyz.shape[0], 1), device="cuda")
-        self.denom = torch.zeros((self.get_xyz.shape[0], 1), device="cuda")
-        self.max_radii2D = torch.cat((self.max_radii2D, torch.zeros((new_xyz.shape[0]), device="cuda")))
+        if reset_params:
+            self.xyz_gradient_accum = torch.zeros((self.get_xyz.shape[0], 1), device="cuda")
+            self.denom = torch.zeros((self.get_xyz.shape[0], 1), device="cuda")
+            self.max_radii2D = torch.zeros((self.get_xyz.shape[0]), device="cuda")
         #self.max_radii2D = torch.zeros((self.get_xyz.shape[0]), device="cuda")
 
     def densify_and_split(self, grads, grad_threshold, scene_extent, N=2):
@@ -844,15 +937,16 @@ class GaussianModel:
             selected_pts_mask[:self.scaffold_points] = False
         # Only densify leaf nodes
         selected_pts_mask = torch.logical_and(selected_pts_mask, self.nodes[:,hierarchy_node_child_count] == 0)
-
+        
+        #selected_pts_mask = torch.logical_and(selected_pts_mask, torch.min(self._scaling, dim=1)[0] > -10)
         
         print(f"Densify {len(torch.where(selected_pts_mask)[0])} points")
         new_xyz = self._xyz[selected_pts_mask].repeat_interleave(repeats=N,dim=0)
         new_scaling = self.scaling_inverse_activation(self.get_scaling[selected_pts_mask].repeat_interleave(repeats=N,dim=0) / (0.8*N))
         new_features_dc = self._features_dc[selected_pts_mask].repeat_interleave(repeats=N,dim=0)
         new_features_rest = self._features_rest[selected_pts_mask].repeat_interleave(repeats=N,dim=0)
-        new_opacities = self._opacity[selected_pts_mask].repeat_interleave(repeats=N,dim=0)
-        
+        #new_opacities = self._opacity[selected_pts_mask].repeat_interleave(repeats=N,dim=0)
+        new_opacities = self.inverse_opacity_activation(self.get_opacity[selected_pts_mask].repeat_interleave(repeats=N,dim=0) / (0.8*N))
         new_rotation = self._rotation[selected_pts_mask].repeat_interleave(repeats=N,dim=0)
 
 
@@ -896,13 +990,207 @@ class GaussianModel:
 
         torch.cuda.empty_cache()
 
-    def add_densification_stats(self, viewspace_point_tensor, update_filter, indices):
+    def add_densification_stats(self, viewspace_point_tensor, update_filter, indices, skybox_points = 100000):
         update_filter_indices = torch.where(update_filter)[0]
         update_indices = indices[update_filter_indices]
-        
         #self.xyz_gradient_accum[update_indices] = torch.max(torch.norm(viewspace_point_tensor.grad[indices][update_filter,:2], dim=-1, keepdim=True), self.xyz_gradient_accum[update_indices])
         # I use xyz gradients here instead of screen space gradients
-        self.xyz_gradient_accum[update_indices] = torch.max(torch.norm(self._xyz.grad[indices][update_filter,:2], dim=-1, keepdim=True), self.xyz_gradient_accum[update_indices])
+        self.xyz_gradient_accum[indices] = torch.max(torch.norm(viewspace_point_tensor.grad[skybox_points:skybox_points+len(indices)][:,:2], dim=-1, keepdim=True), self.xyz_gradient_accum[indices])
         #print(torch.sum(torch.abs(torch.max(torch.norm(viewspace_point_tensor.grad[indices][update_filter,:2], dim=-1, keepdim=True), self.xyz_gradient_accum[update_indices]))))
         #print(torch.max((self.xyz_gradient_accum[update_indices])))
-        self.denom[update_indices] += 1
+        self.denom[indices] += 1
+        
+
+
+#region MCMC
+    def replace_tensors_to_optimizer(self, inds=None):
+        tensors_dict = {"xyz": self._xyz,
+            "f_dc": self._features_dc,
+            "f_rest": self._features_rest,
+            "opacity": self._opacity,
+            "scaling" : self._scaling,
+            "rotation" : self._rotation}
+        optimizable_tensors = {}
+        for group in self.optimizer.param_groups:
+            assert len(group["params"]) == 1
+            tensor = tensors_dict[group["name"]]
+            stored_state = self.optimizer.state.get(group['params'][0], None)
+            
+            if inds is not None:
+                stored_state["exp_avg"][inds] = 0
+                stored_state["exp_avg_sq"][inds] = 0
+            else:
+                stored_state["exp_avg"] = torch.zeros_like(tensor)
+                stored_state["exp_avg_sq"] = torch.zeros_like(tensor)
+            del self.optimizer.state[group['params'][0]]
+            group["params"][0] = nn.Parameter(tensor.requires_grad_(True))
+            self.optimizer.state[group['params'][0]] = stored_state
+            optimizable_tensors[group["name"]] = group["params"][0]
+        self._xyz = optimizable_tensors["xyz"]
+        self._features_dc = optimizable_tensors["f_dc"]
+        self._features_rest = optimizable_tensors["f_rest"]
+        self._opacity = optimizable_tensors["opacity"]
+        self._scaling = optimizable_tensors["scaling"]
+        self._rotation = optimizable_tensors["rotation"] 
+        # Thomas Bug
+        torch.cuda.empty_cache()
+        return optimizable_tensors
+    
+    def _update_params(self, idxs, ratio):
+        new_opacity, new_scaling = compute_relocation_cuda(
+            opacity_old=self.get_opacity[idxs, 0],
+            scale_old=self.get_scaling[idxs],
+            N=ratio[idxs, 0] + 1
+        )
+        new_opacity = torch.clamp(new_opacity.unsqueeze(-1), max=1.0 - torch.finfo(torch.float32).eps, min=0.005)
+        new_opacity = self.inverse_opacity_activation(new_opacity)
+        new_scaling = self.scaling_inverse_activation(new_scaling.reshape(-1, 3))
+        return self._xyz[idxs], self._features_dc[idxs], self._features_rest[idxs], new_opacity, new_scaling, self._rotation[idxs]
+    
+    def _sample_alives(self, probs, num, alive_indices=None):
+        probs = probs / (probs.sum() + torch.finfo(torch.float32).eps)
+        sampled_idxs = torch.multinomial(probs, num, replacement=True)
+        if alive_indices is not None:
+            sampled_idxs = alive_indices[sampled_idxs]
+        ratio = torch.bincount(sampled_idxs).unsqueeze(-1)
+        return sampled_idxs, ratio
+    
+    def relocate_gs(self, dead_mask=None):
+        if dead_mask.sum() == 0:
+            return
+        alive_mask = ~dead_mask 
+        dead_indices = dead_mask.nonzero(as_tuple=True)[0]
+        alive_mask = torch.logical_and(alive_mask, self.nodes[:, hierarchy_node_child_count] == 0)
+        alive_indices = alive_mask.nonzero(as_tuple=True)[0]
+        
+        if alive_indices.shape[0] <= 0:
+            return
+        # sample from alive ones based on opacity
+        probs = (self.get_opacity[alive_indices, 0]) 
+        
+        remove_siblings = self.nodes[dead_indices, hierarchy_node_next_sibling]
+        dead_indices = dead_indices[~torch.isin(dead_indices, remove_siblings)]
+        # get_sibling cannot be vectorized :(
+        next_sibling_mask = self.nodes[dead_indices, hierarchy_node_next_sibling] > 0
+        sibling_indices = torch.zeros_like(dead_indices, dtype=torch.int32)
+        sibling_indices[next_sibling_mask] = self.nodes[dead_indices[next_sibling_mask], hierarchy_node_next_sibling]
+        sibling_indices[~next_sibling_mask] = self.nodes[self.nodes[dead_indices[~next_sibling_mask], hierarchy_node_parent], hierarchy_node_first_child]
+
+        
+        reinit_idx, ratio = self._sample_alives(alive_indices=alive_indices, probs=probs, num=dead_indices.shape[0])
+        (
+            self._xyz[dead_indices], 
+            self._features_dc[dead_indices],
+            self._features_rest[dead_indices],
+            self._opacity[dead_indices],
+            self._scaling[dead_indices],
+            self._rotation[dead_indices] 
+        ) = self._update_params(reinit_idx, ratio=ratio)
+        
+        
+        
+        
+        
+        
+        def get_sibling(node):
+            if self.nodes[node, hierarchy_node_next_sibling] > 0:
+                return self.nodes[node, hierarchy_node_next_sibling]
+            else: 
+                return self.nodes[self.nodes[node, hierarchy_node_parent], hierarchy_node_first_child]
+        
+        
+        # propogate the not-dead sibling to parent
+        parent_indices = self.nodes[dead_indices, hierarchy_node_parent]
+        
+        self._xyz[parent_indices] = self._xyz[sibling_indices]
+        self._opacity[parent_indices] = self._opacity[sibling_indices]
+        self._features_dc[parent_indices] = self._features_dc[sibling_indices]
+        self._features_rest[parent_indices] = self._features_rest[sibling_indices]
+        self._scaling[parent_indices] = self._scaling[sibling_indices]
+        self._rotation[parent_indices] = self._rotation[sibling_indices]
+        
+        self.nodes[parent_indices, hierarchy_node_child_count] = 0
+        self.nodes[parent_indices, hierarchy_node_first_child] = -1
+
+        
+        # respawn nodes now have 2 children
+        self.nodes[reinit_idx, hierarchy_node_child_count] = 2
+        self.nodes[reinit_idx, hierarchy_node_first_child] = dead_indices.to(torch.int32)
+        
+        # dead nodes get new parents from leaf nodes
+        self.nodes[dead_indices, hierarchy_node_depth] = self.nodes[reinit_idx, 0] + 1
+        self.nodes[dead_indices, hierarchy_node_parent] = reinit_idx.to(torch.int32)
+        self.nodes[dead_indices, hierarchy_node_child_count] = 0
+        self.nodes[dead_indices, hierarchy_node_first_child] = -1
+        self.nodes[dead_indices, hierarchy_node_next_sibling] = sibling_indices
+        
+        self.nodes[sibling_indices, hierarchy_node_depth] = self.nodes[reinit_idx, 0] + 1
+        self.nodes[sibling_indices, hierarchy_node_parent] = reinit_idx.to(torch.int32)
+        self.nodes[sibling_indices, hierarchy_node_child_count] = 0
+        self.nodes[sibling_indices, hierarchy_node_first_child] = -1
+        self.nodes[sibling_indices, hierarchy_node_next_sibling] = 0
+        
+        self._xyz[sibling_indices] = self._xyz[dead_indices]
+        self._opacity[sibling_indices] = self._opacity[dead_indices]
+        self._features_dc[sibling_indices] = self._features_dc[dead_indices]
+        self._opacity[sibling_indices] = self._opacity[dead_indices]
+        self._scaling[sibling_indices] = self._scaling[dead_indices]
+        self.replace_tensors_to_optimizer(inds=sibling_indices)
+         
+        
+    def add_new_gs(self, cap_max):
+        current_num_points = self._opacity.shape[0]
+        target_num = min(cap_max, int(1.05 * current_num_points))
+        num_gs = max(0, target_num - current_num_points)
+        if num_gs <= 0:
+            return 0
+        print(f"Spawn {num_gs} new Gaussians")
+        alive_indices=torch.where(self.nodes[:, hierarchy_node_child_count] == 0)[0]
+        probs = self.get_opacity.squeeze(-1)[alive_indices]
+        
+        add_idx, ratio = self._sample_alives(probs=probs, num=num_gs, alive_indices=alive_indices)
+        add_idx = torch.where(ratio == 1)[0]
+        ratio = torch.zeros_like(ratio)
+        ratio[add_idx] = 1
+        (
+            new_xyz, 
+            new_features_dc,
+            new_features_rest,
+            new_opacity,
+            new_scaling,
+            new_rotation 
+        ) = self._update_params(add_idx, ratio=ratio)
+        
+        
+        new_xyz = new_xyz.repeat_interleave(repeats=2, dim=0)
+        new_features_dc = new_features_dc.repeat_interleave(repeats=2, dim=0)
+        new_features_rest = new_features_rest.repeat_interleave(repeats=2, dim=0)
+        new_opacity = new_opacity.repeat_interleave(repeats=2, dim=0)
+        new_scaling = new_scaling.repeat_interleave(repeats=2, dim=0)
+        new_rotation = new_rotation.repeat_interleave(repeats=2, dim=0)
+        
+        
+        new_nodes = torch.zeros((len(new_xyz), 6), dtype=torch.int32)        
+        for index, node in enumerate(add_idx):
+            full_index = len(self._xyz) + index*2
+            self.nodes[node][hierarchy_node_child_count] = 2
+            self.nodes[node][hierarchy_node_first_child] = full_index
+
+
+            new_nodes[index*2][hierarchy_node_depth] = self.nodes[node][hierarchy_node_depth] + 1
+            new_nodes[index*2][hierarchy_node_parent] = node
+            new_nodes[index*2][hierarchy_node_child_count] = 0
+            new_nodes[index*2][hierarchy_node_first_child] = -1
+            new_nodes[index*2][hierarchy_node_next_sibling] = full_index + 1
+
+            new_nodes[index*2+1][hierarchy_node_depth] = self.nodes[node][hierarchy_node_depth] + 1
+            new_nodes[index*2+1][hierarchy_node_parent] = node
+            new_nodes[index*2+1][hierarchy_node_child_count] = 0
+            new_nodes[index*2+1][hierarchy_node_first_child] = -1
+            new_nodes[index*2+1][hierarchy_node_next_sibling] = 0
+        self.nodes = torch.cat((self.nodes, new_nodes.to('cuda')))        
+        
+
+        self.densification_postfix(new_xyz, new_features_dc, new_features_rest, new_opacity, new_scaling, new_rotation, reset_params=False)
+        return num_gs
+#endregion

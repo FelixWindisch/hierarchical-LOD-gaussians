@@ -231,6 +231,7 @@ def readColmapSceneInfo(path, images, masks, depths, eval, train_test_exp, llffh
         pcd = fetchPly(ply_path)
 
     if eval:
+        llffhold = 10
         if "360" in path:
             llffhold = 8
         if llffhold:

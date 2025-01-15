@@ -3,6 +3,7 @@
 #include "../hierarchy_writer.h"
 #include "../traversal.h"
 #include "../runtime_switching.h"
+#include "../morton.h"
 
 std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor>
 LoadHierarchy(std::string filename)
@@ -95,6 +96,34 @@ void WriteHierarchy(
 		(Eigen::Vector4f*)rotations.cpu().contiguous().data_ptr<float>(),
 		(Node*)nodes.cpu().contiguous().data_ptr<int>(),
 		(Box*)boxes.cpu().contiguous().data_ptr<float>()
+	);
+}
+
+
+void WriteDynamicHierarchy(
+					std::string filename,
+					torch::Tensor& pos,
+					torch::Tensor& shs,
+					torch::Tensor& opacities,
+					torch::Tensor& log_scales,
+					torch::Tensor& rotations,
+					torch::Tensor& nodes)
+{
+	HierarchyWriter writer;
+	
+	int allP = pos.size(0);
+	int allN = nodes.size(0);
+	
+	writer.writeDynamic(
+		filename.c_str(),
+		allP,
+		allN,
+		(Eigen::Vector3f*)pos.cpu().contiguous().data_ptr<float>(),
+		(SHs*)shs.cpu().contiguous().data_ptr<float>(),
+		opacities.cpu().contiguous().data_ptr<float>(),
+		(Eigen::Vector3f*)log_scales.cpu().contiguous().data_ptr<float>(),
+		(Eigen::Vector4f*)rotations.cpu().contiguous().data_ptr<float>(),
+		(HierarchyNode*)nodes.cpu().contiguous().data_ptr<int>()
 	);
 }
 
@@ -202,4 +231,20 @@ torch::Tensor& num_kids)
 	viewdir.data_ptr<float>()[0], viewdir.data_ptr<float>()[1], viewdir.data_ptr<float>()[2],
 	ts.contiguous().data_ptr<float>(),
 	num_kids.contiguous().data_ptr<int>(), 0);
+}
+
+void GetMortonCode(torch::Tensor& xyz, torch::Tensor& min, torch::Tensor& max, torch::Tensor& code)
+{
+	
+	int P = xyz.sizes()[0];
+	std::cout << P <<"WTF\n";
+	MORTON::getMortonCode
+	(
+		xyz.contiguous().data_ptr<float>(),
+		min.contiguous().data_ptr<float>(),
+		max.contiguous().data_ptr<float>(),
+		code.contiguous().data_ptr<int64_t>(), 
+		P
+	);
+	
 }

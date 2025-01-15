@@ -1,6 +1,7 @@
 ext.cpp
 hierarchy_loader.cpp
 hierarchy_writer.cpp
+morton.cu
 runtime_switching.cu
 setup.py
 traversal.cpp

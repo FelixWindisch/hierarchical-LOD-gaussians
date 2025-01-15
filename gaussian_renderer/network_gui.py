@@ -27,7 +27,8 @@ def init(wish_host, wish_port):
     global host, port, listener
     host = wish_host
     port = wish_port
-    listener.bind((host, port))
+    listener.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 30_000_000)
+    listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     listener.listen()
     listener.settimeout(0)
 
@@ -71,6 +72,7 @@ def receive():
             do_rot_scale_python = bool(message["rot_scale_python"])
             keep_alive = bool(message["keep_alive"])
             scaling_modifier = message["scaling_modifier"]
+            slider = message["slider"]
             world_view_transform = torch.reshape(torch.tensor(message["view_matrix"]), (4, 4)).cuda()
             world_view_transform[:,1] = -world_view_transform[:,1]
             world_view_transform[:,2] = -world_view_transform[:,2]
@@ -81,6 +83,6 @@ def receive():
             print("")
             traceback.print_exc()
             raise e
-        return custom_cam, do_training, do_shs_python, do_rot_scale_python, keep_alive, scaling_modifier
+        return custom_cam, do_training, keep_alive, scaling_modifier, slider
     else:
         return None, None, None, None, None, None

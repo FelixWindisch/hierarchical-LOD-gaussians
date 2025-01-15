@@ -34,6 +34,7 @@ add_library (GaussianHierarchy
  half.hpp
  types.h)
 target_include_directories(GaussianHierarchy PRIVATE dependencies/eigen)
+target_include_directories(GaussianHierarchy PRIVATE dependencies/glm ${CMAKE_CUDA_TOOLKIT_INCLUDE_DIRECTORIES})
 
 set_property(TARGET GaussianHierarchy PROPERTY CXX_STANDARD 17)
 set_target_properties(GaussianHierarchy PROPERTIES CUDA_ARCHITECTURES "70;75;86")
@@ -65,9 +66,11 @@ add_executable (GaussianHierarchyMerger
 )
 
 target_include_directories(GaussianHierarchyCreator PRIVATE dependencies/eigen)
+target_include_directories(GaussianHierarchyCreator PRIVATE dependencies/glm ${CMAKE_CUDA_TOOLKIT_INCLUDE_DIRECTORIES})
 set_property(TARGET GaussianHierarchyCreator PROPERTY CXX_STANDARD 17)
 target_link_libraries(GaussianHierarchyCreator PUBLIC GaussianHierarchy)
 
 target_include_directories(GaussianHierarchyMerger PRIVATE dependencies/eigen)
+target_include_directories(GaussianHierarchyMerger PRIVATE dependencies/glm ${CMAKE_CUDA_TOOLKIT_INCLUDE_DIRECTORIES})
 set_property(TARGET GaussianHierarchyMerger PROPERTY CXX_STANDARD 17)
 target_link_libraries(GaussianHierarchyMerger PUBLIC GaussianHierarchy)

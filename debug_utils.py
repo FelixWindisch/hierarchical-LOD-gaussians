@@ -14,11 +14,52 @@ import math
 import torchvision
 from gaussian_renderer import render_coarse, render, render_post
 from matplotlib import colormaps
+from scene import cameras
+
 from gaussian_hierarchy._C import expand_to_size, get_interpolation_weights, expand_to_size_dynamic, get_interpolation_weights_dynamic
 
 def direct_collate(x):
     return x
 
+
+def get_gaussians_per_limit_normalized(scene, min_limit, max_limit, steps, no_images):
+    gaussians = scene.gaussians
+    result = torch.zeros((steps, no_images))
+    render_indices = torch.zeros(gaussians._xyz.size(0)).int().cuda()
+    parent_indices = torch.zeros(gaussians._xyz.size(0)).int().cuda()
+    nodes_for_render_indices = torch.zeros(gaussians._xyz.size(0)).int().cuda()
+    number_of_leaf_nodes = gaussians.get_number_of_leaf_nodes()
+    n = 0
+    limits = torch.linspace(min_limit, max_limit, steps)
+    training_generator = DataLoader(scene.getTrainCameras(), num_workers = 8, prefetch_factor = 1, persistent_workers = True, collate_fn=direct_collate)
+    for viewpoint_batch in training_generator:
+        for viewpoint_cam in viewpoint_batch: 
+            for index, limit in enumerate(limits):
+                viewpoint_cam.world_view_transform = viewpoint_cam.world_view_transform.cuda()
+                viewpoint_cam.projection_matrix = viewpoint_cam.projection_matrix.cuda()
+                viewpoint_cam.full_proj_transform = viewpoint_cam.full_proj_transform.cuda()
+                viewpoint_cam.camera_center = viewpoint_cam.camera_center.cuda()
+
+                camera_direction = torch.tensor([0.0, 0.0, 1.0])
+                camera_direction = torch.matmul(torch.from_numpy(viewpoint_cam.R).to(torch.float32), camera_direction)
+
+
+                to_render = expand_to_size_dynamic(
+                        gaussians.nodes,
+                        gaussians._xyz,
+                        gaussians.get_scaling,
+                        limit,
+                        viewpoint_cam.camera_center,
+                        camera_direction,
+                        render_indices,
+                        parent_indices,
+                        nodes_for_render_indices)
+                result[index, n] = to_render
+            #result[:, n] /= result[0, n]
+            n += 1
+            if n >= no_images:
+                return result
+            
 
 def generate_some_flat_scene_images(scene : Scene, pipe : PipelineParams, output_dir,  no_images = 10, indices = None):
     with torch.no_grad():
@@ -46,6 +87,92 @@ def generate_some_flat_scene_images(scene : Scene, pipe : PipelineParams, output
                 n += 1
                 if n > no_images:
                     return None
+
+def generate_hierarchy_scene_image(viewpoint_cam, scene : Scene, pipe : PipelineParams, limit = 0.05, show_depth=False):
+    with torch.no_grad():
+        bg_color = [0, 0, 0]
+        background = torch.tensor(bg_color, dtype=torch.float32, device="cuda")
+        gaussians : GaussianModel = scene.gaussians
+        #if show_depth:
+        #    gaussians._opacity += 1
+        render_indices = torch.zeros(gaussians._xyz.size(0)).int().cuda()
+        parent_indices = torch.zeros(gaussians._xyz.size(0)).int().cuda()
+        nodes_for_render_indices = torch.zeros(gaussians._xyz.size(0)).int().cuda()
+        interpolation_weights = torch.zeros(gaussians._xyz.size(0)).float().cuda()
+        num_siblings = torch.zeros(gaussians._xyz.size(0)).int().cuda()
+        to_render = 0
+        
+        n = 0
+        if show_depth:
+            # the depth value is stored at index 0
+            #depth_colors = [[gaussians.nodes[i][0].item(), gaussians.nodes[i][0].item(), gaussians.nodes[i][0].item()] for i in range(len(gaussians.nodes))]
+            depth_colors= torch.transpose(torch.stack((gaussians.nodes[:, 0],gaussians.nodes[:, 0],gaussians.nodes[:, 0]), dim=0), 0, 1)
+            override_colors = (torch.tensor(depth_colors, dtype=torch.float32, device="cuda"))/torch.max(gaussians.nodes[:, 0])
+        else: 
+            override_colors = None
+                    
+        viewpoint_cam.world_view_transform = viewpoint_cam.world_view_transform.cuda()
+        viewpoint_cam.projection_matrix = cameras.getProjectionMatrix(   
+                                                              znear=viewpoint_cam.znear, 
+                                                              zfar=viewpoint_cam.zfar, 
+                                                              fovX=viewpoint_cam.FoVx, 
+                                                              fovY=viewpoint_cam.FoVy, 
+                                                              primx = 0.5, primy=0.5).transpose(0,1).cuda()
+        
+        viewpoint_cam.full_proj_transform = viewpoint_cam.full_proj_transform.cuda()
+        viewpoint_cam.camera_center = viewpoint_cam.camera_center.cuda()
+
+        R  = viewpoint_cam.world_view_transform[:3, :3].cuda()
+        #viewpoint_cam.T  = viewpoint_cam.world_view_transform[3, :]
+        camera_direction = torch.tensor([0.0, 0.0, 1.0])
+        camera_direction = torch.matmul(R.to(torch.float32).cpu(), camera_direction)
+        # output : render_indices, parent_indices, nodes_for_render_indices
+        to_render = expand_to_size_dynamic(
+                    gaussians.nodes,
+                    gaussians._xyz,
+                    gaussians.get_scaling,
+                    limit,
+                    viewpoint_cam.camera_center,
+                    camera_direction,
+                    render_indices,
+                    parent_indices,
+                    nodes_for_render_indices)
+                #to_render = min(to_render, 569200)
+               
+                # indices == nodes_for_render_indices !
+        indices = render_indices[:to_render].int()
+        node_indices = nodes_for_render_indices[:to_render]
+
+
+        # parent indices contains as many elements as indices
+
+        get_interpolation_weights_dynamic(
+            node_indices,
+            limit,
+            gaussians.nodes,
+            gaussians._xyz,
+            gaussians._scaling,
+            viewpoint_cam.camera_center.cpu(),
+            camera_direction,
+            interpolation_weights,
+            num_siblings
+        )
+
+        # num siblings always includes the node itself
+        render_pkg = render_post(
+            viewpoint_cam, 
+            gaussians, 
+            pipe, 
+            background, 
+            render_indices=indices,
+            parent_indices = parent_indices,
+            interpolation_weights = interpolation_weights,
+            num_node_siblings = num_siblings,
+            use_trained_exp=True, iteration=0,
+            override_color=override_colors
+            )
+        image = render_pkg["render"]
+        return image
 
 def generate_some_hierarchy_scene_images(scene : Scene, pipe : PipelineParams, output_dir, limit = 0.05, no_images = 10, show_depth=False):
     with torch.no_grad():

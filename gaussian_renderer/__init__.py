@@ -159,7 +159,7 @@ def render_post(
         # number of siblings
         num_node_siblings = torch.Tensor([]).int(),
         interp_python = True,
-        use_trained_exp = False):
+        use_trained_exp = False, iteration=0):
     """
     Render the scene from a hierarchy.  
     
@@ -171,7 +171,7 @@ def render_post(
     try:
         screenspace_points.retain_grad()
     except:
-        print("screenspace_points do not retain grad???")
+        #print("screenspace_points do not retain grad???")
         pass
 
     # Set up rasterization configuration
@@ -210,7 +210,6 @@ def render_post(
         colors_precomp = override_color
 
     # Rasterize visible Gaussians to image, obtain their radii (on screen).
-        
     if render_indices.size(0) != 0:
         render_inds = render_indices.long()
         if interp_python:
@@ -267,7 +266,8 @@ def render_post(
 
         render_indices = torch.Tensor([]).int()
         parent_indices = torch.Tensor([]).int()
-        
+        interpolation_weights = torch.Tensor([]).float()
+    pipe.debug = True
     raster_settings = GaussianRasterizationSettings(
         image_height=int(viewpoint_camera.image_height),
         image_width=int(viewpoint_camera.image_width),

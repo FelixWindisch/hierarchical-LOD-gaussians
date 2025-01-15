@@ -25,6 +25,7 @@ setup(
             "traversal.cpp",
             "runtime_switching.cu",
             "torch/torch_interface.cpp",
+            "morton.cu",
             "ext.cpp"],
             extra_compile_args={"cxx": ["-I" + os.path.join(os.path.dirname(os.path.abspath(__file__)), "dependencies/eigen/")]}
             )
