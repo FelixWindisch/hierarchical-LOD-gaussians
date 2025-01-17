@@ -74,5 +74,13 @@ torch::Tensor& viewdir,
 torch::Tensor& ts,
 torch::Tensor& num_kids);
 
+int GetHierarchyCut(
+torch::Tensor& nodes, 
+torch::Tensor& positions,
+torch::Tensor& scales, 
+float size, 
+torch::Tensor& viewpoint, 
+torch::Tensor& viewdir, 
+torch::Tensor& render_indices);
 
 void GetMortonCode(torch::Tensor& xyz, torch::Tensor& min, torch::Tensor& max, torch::Tensor& codes);

@@ -25,19 +25,33 @@ from arguments import ModelParams, PipelineParams, OptimizationParams
 from utils.general_utils import strip_symmetric, build_scaling_rotation
 import math
 import torchvision
+import random
 from torch.utils.tensorboard import SummaryWriter
 from gaussian_hierarchy._C import expand_to_size, get_interpolation_weights, expand_to_size_dynamic, get_interpolation_weights_dynamic
-  
+import time
 
+clock_start = True
+clock_time = time.time()
+def clock():
+    global clock_start
+    global clock_time
+    if clock_start:
+        clock_start = False
+        clock_time = time.time()
+    else:
+        clock_start = True
+        return time.time()-clock_time
 
 
 def direct_collate(x):
     return x
 
+Max_Cap = 15_000_000
+Random_Hierarchy_Cut = False
 Only_Noise_Visible = True
 MCMC_Densification = True
 Gaussian_Interpolation = False
-Gradient_Propagation = True
+Gradient_Propagation = False
 Propagation_Strength = 1.0
 lambda_hierarchy = 0.01
 
@@ -75,6 +89,7 @@ def training(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoin
     indices = None
 
     iteration = first_iter
+    # Dataloader loads data from disk
     training_generator = DataLoader(scene.getTrainCameras(), num_workers = 8, prefetch_factor = 1, persistent_workers = True, collate_fn=direct_collate, shuffle=True)
 
     limit = 0.001
@@ -140,26 +155,32 @@ def training(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoin
                 if iteration % 1000 == 0:
                     gaussians.oneupSHdegree()
 
+                clock()
                 camera_direction = torch.tensor([0.0, 0.0, 1.0])
                 camera_direction = torch.matmul(torch.from_numpy(viewpoint_cam.R).to(torch.float32), camera_direction)
-
-                to_render = expand_to_size_dynamic(
-                    gaussians.nodes,
-                    gaussians._xyz,
-                    gaussians.get_scaling,
-                    limit * scale,
-                    viewpoint_cam.camera_center,
-                    camera_direction,
-                    render_indices,
-                    parent_indices,
-                    nodes_for_render_indices)
-
+                if Random_Hierarchy_Cut:
+                    detail_level = random.uniform(0.00001, 0.5)
+                    render_indices = gaussians.get_random_cut(detail_level)
+                    to_render = len(render_indices)
+                else:
+                    # render indices do no include skybox points
+                    to_render = expand_to_size_dynamic(
+                        gaussians.nodes,
+                        gaussians._xyz,
+                        gaussians.get_scaling,
+                        limit * scale,
+                        viewpoint_cam.camera_center,
+                        camera_direction,
+                        render_indices,
+                        parent_indices,
+                        nodes_for_render_indices)
+                
                 #print(f"render {to_render} Gaussians out of {gaussians.get_number_of_leaf_nodes()}")
-
                 # indices == nodes_for_render_indices !
                 indices = render_indices[:to_render].int()
                 node_indices = nodes_for_render_indices[:to_render]
-                
+                cut_time = clock()
+                clock()
                 # parent indices contains as many elements as indices
                 interpolation_weights = torch.zeros(gaussians._xyz.size(0)).float().cuda()
                 if Gaussian_Interpolation:
@@ -180,7 +201,8 @@ def training(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoin
                 # Render
                 if (iteration - 1) == debug_from:
                     pipe.debug = True
-
+                interpolation_weights_time = clock()
+                clock()
                 # num siblings always includes the node itself
                 render_pkg = render_post(
                     viewpoint_cam, 
@@ -201,7 +223,8 @@ def training(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoin
                 #    indices=indices
                 #    )
                 image, viewspace_point_tensor, visibility_filter, radii = render_pkg["render"], render_pkg["viewspace_points"], render_pkg["visibility_filter"], render_pkg["radii"]
-
+                render_time = clock()
+                writer.add_scalars('Timing', {"Hierarchy Cut": cut_time, "Interpolation Weights": interpolation_weights_time, "Render": render_time}, iteration)                
                 if iteration % 250 == 0:
                     torchvision.utils.save_image(image, os.path.join(scene.model_path, str(iteration) + ".png"))
                     writer.add_image('images', image, iteration)
@@ -218,6 +241,7 @@ def training(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoin
                 parents = gaussians.nodes[indices, 1]
                 hierarchy_loss = torch.sum(torch.clamp_min(torch.max(torch.abs(gaussians.get_scaling[indices]), dim=-1)[0] - torch.max(torch.abs(gaussians.get_scaling[parents]), dim=-1)[0], 0)) / len(indices)
                 loss = loss + lambda_hierarchy * hierarchy_loss
+                writer.add_scalar('Hierarchy Loss', hierarchy_loss, iteration)
                 #MCMC
                 if MCMC_Densification:
                     # 0.01 = args.opacity_reg/scale_reg
@@ -229,7 +253,7 @@ def training(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoin
                     loss = loss + 0.1 * opacity_loss
                     scaling_loss = torch.sum(torch.sum(torch.abs(gaussians.get_scaling[all_indices]), dim=-1) * interpolation_weights[all_indices]) / (3*len(all_indices))
                     loss = loss + 0.01 * scaling_loss
-                    writer.add_scalar('Hierarchy Loss', hierarchy_loss, iteration)
+                    
                     writer.add_scalar('Opacity Loss', opacity_loss, iteration)
                     writer.add_scalar('Scaling Loss', scaling_loss, iteration)
                 #MCMC
@@ -300,10 +324,11 @@ def training(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoin
                         dead_mask = torch.logical_and(dead_mask, gaussians.nodes[:, 2] == 0)
                         print(f"Respawn {torch.sum(dead_mask)} Gaussians")
                         gaussians.relocate_gs(dead_mask=dead_mask)
-                        gaussians.add_new_gs(cap_max=3_000_000)   
+                        gaussians.add_new_gs(cap_max=Max_Cap)   
                         if Gradient_Propagation:
                             gaussians.recompute_weights()
                     elif iteration < opt.iterations:
+                        
                         #print(f"Opacity Grad Sum: {torch.sum(gaussians._opacity.grad)}")
                         if gaussians._xyz.grad != None:
                             if gaussians.skybox_points != 0 and gaussians.skybox_locked: #No post-opt for skybox

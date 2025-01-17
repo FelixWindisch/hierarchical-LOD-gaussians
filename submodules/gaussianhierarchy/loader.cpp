@@ -106,7 +106,6 @@ void Loader::loadPly(const char* filename, std::vector<Gaussian>& gaussians, int
 	{
 		Gaussian& g = gaussians[i];
 		POINT_TYPE& p = points[skyboxpoints + i];
-
 		g.opacity = sigmoid(p.opacity);
 		g.position = p.position;
 		g.rotation = Eigen::Vector4f(p.rotation[0], p.rotation[1], p.rotation[2], p.rotation[3]).normalized();

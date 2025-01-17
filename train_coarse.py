@@ -129,8 +129,9 @@ def training(dataset, opt, pipe, saving_iterations, checkpoint_iterations, check
                         return
 
                     # Optimizer step
-
                     if iteration < opt.iterations:
+                        gaussians.exposure_optimizer.step()
+                        gaussians.exposure_optimizer.zero_grad(set_to_none = True)
                         gaussians._scaling.grad[:gaussians.skybox_points,:] = 0
                         relevant = (gaussians._opacity.grad != 0).nonzero()
                         gaussians.optimizer.step(relevant)

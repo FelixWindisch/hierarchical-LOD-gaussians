@@ -3,7 +3,8 @@
 #include "../hierarchy_writer.h"
 #include "../traversal.h"
 #include "../runtime_switching.h"
-#include "../morton.h"
+#include "../runtime_switching.h"
+#include "../HierarchyCut.h"
 
 std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor>
 LoadHierarchy(std::string filename)
@@ -187,6 +188,10 @@ torch::Tensor& nodes_for_render_indices)
 	nodes_for_render_indices.contiguous().data_ptr<int>());
 }
 
+
+
+
+
 void GetTsIndexed(
 torch::Tensor& indices,
 float size,
@@ -247,4 +252,28 @@ void GetMortonCode(torch::Tensor& xyz, torch::Tensor& min, torch::Tensor& max, t
 		P
 	);
 	
+}
+
+
+int GetHierarchyCut(
+torch::Tensor& nodes, 
+torch::Tensor& positions,
+torch::Tensor& scales, 
+float size, 
+torch::Tensor& viewpoint, 
+torch::Tensor& viewdir, 
+torch::Tensor& render_indices)
+{
+	return HierarchyCut::getHierarchyCut(
+	nodes.size(0), 
+	size,
+	nodes.contiguous().data_ptr<int>(), 
+	positions.contiguous().data_ptr<float>(),
+	scales.contiguous().data_ptr<float>(),
+	viewpoint.contiguous().data_ptr<float>(),
+	viewdir.data_ptr<float>()[0], viewdir.data_ptr<float>()[1], viewdir.data_ptr<float>()[2],
+	render_indices.contiguous().data_ptr<int>(),
+	nullptr,
+	parent_indices.contiguous().data_ptr<int>(),
+	nodes_for_render_indices.contiguous().data_ptr<int>());
 }

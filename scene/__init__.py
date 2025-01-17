@@ -110,6 +110,8 @@ class Scene:
             if self.gaussians._xyz.size(0) > 8_000_000:
                 self.gaussians.save_pt(point_cloud_path)
             else:
+                print("save PLY")
+                print(self.model_path)
                 self.gaussians.save_ply(os.path.join(point_cloud_path, "point_cloud.ply"))
 
             exposure_dict = {

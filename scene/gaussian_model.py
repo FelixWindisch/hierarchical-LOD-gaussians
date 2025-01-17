@@ -35,25 +35,41 @@ hierarchy_node_max_side_length = 5
 
 
 class GaussianModel:
-    
-    
-    def get_random_cut(self, p):
+    # give every leaf node a random number and set their parents to the sum of the two numbers. 
+    # if it exceeds a threshold, the node will be part of the cut.
+    def get_random_cut_2(self, p):
+        current_set = torch.where(torch.logical_and(self.nodes[:, hierarchy_node_child_count] == 0, self.nodes[:, hierarchy_node_next_sibling] > 0))[0]
+        parents = self.nodes[current_set, hierarchy_node_parent]
         
-        cut = torch.zeros(len(self.nodes))
+    
+    # Start with a leaf cut and select a random subset of the leaf nodes. Then, it goes from the bottom level
+    # upward, pushing the cut of all nodes in the random subset to the next level upward 
+    # (but only if its sibling is also in the subset). 
+    def get_random_cut(self, p):
+        number_gaussians = len(self.nodes)-self.skybox_points
+        cut = torch.zeros(len(self.nodes)).cuda()
         current_set = torch.where(self.nodes[:, hierarchy_node_child_count] == 0)[0]
         cut[current_set] = 1
-        subset_size = int(math.floor(len(current_set)/16))
-        subset = torch.randperm(len(self.nodes))[:subset_size]
-        while(subset):
-            first_children = subset[self.nodes[subset, hierarchy_node_next_sibling] > 0]
+        subset_size = int(math.floor(len(current_set)*p))
+        subset = current_set[(torch.randperm(len(current_set))[:subset_size])]
+        current_depth = torch.max(self.nodes[subset, hierarchy_node_depth])
+        while(len(subset) > 0):
+            depth_subset = subset[self.nodes[subset, hierarchy_node_depth] == current_depth]
+            first_children = depth_subset[self.nodes[depth_subset, hierarchy_node_next_sibling] > 0]
             siblings = self.nodes[first_children, hierarchy_node_next_sibling]
             
-            siblings_are_cut = cut[siblings]
-            first_children = first_children[siblings]
+            siblings_are_cut = cut[siblings] == 1
+            first_children = first_children[siblings_are_cut]
+            siblings = siblings[siblings_are_cut]
+            
             parents = self.nodes[first_children, hierarchy_node_parent]
             cut[parents] = 1
             cut[first_children] = 0
             cut[siblings] = 0
+            subset = torch.cat((parents, subset[self.nodes[subset, hierarchy_node_depth] < current_depth]))
+            current_depth -= 1
+        return torch.where(cut == 1)[0]
+            
             
             
         
@@ -435,6 +451,7 @@ class GaussianModel:
             self.optimizer = Adam(l, lr=0.0, eps=1e-15)
         else:
             self.optimizer = torch.optim.Adam(l, lr=0.0, eps=1e-15)
+            
         if self.pretrained_exposures is None:
             self.exposure_optimizer = torch.optim.Adam([self._exposure])
         self.xyz_scheduler_args = get_expon_lr_func(lr_init=training_args.position_lr_init*self.spatial_lr_scale,
@@ -485,7 +502,8 @@ class GaussianModel:
     
     # scaffold file is only required for number of skybox points
     def create_from_hier(self, path, spatial_lr_scale : float, scaffold_file : str):
-        
+        self.opacity_activation = torch.sigmoid
+        self.inverse_opacity_activation = inverse_sigmoid
         self.is_hierarchy = True
         self.spatial_lr_scale = spatial_lr_scale
         print(path)
@@ -510,7 +528,7 @@ class GaussianModel:
             self.anchors = torch.Tensor([]).long()
 
         #retrieve exposure
-        exposure_file = os.path.join(base, "exposure.json")
+        exposure_file = os.path.join(base, "../../exposure.json")
         if os.path.exists(exposure_file):
             with open(exposure_file, "r") as f:
                 exposures = json.load(f)
@@ -572,8 +590,7 @@ class GaussianModel:
 
         #self.opacity_activation = torch.abs
         #self.inverse_opacity_activation = torch.abs
-        self.opacity_activation = torch.sigmoid
-        self.inverse_opacity_activation = inverse_sigmoid
+        
         self.hierarchy_path = path
         self.nodes = nodes.cuda()
         #self.boxes = boxes.cuda()
@@ -679,7 +696,8 @@ class GaussianModel:
         normals = np.zeros_like(xyz)
         f_dc = self._features_dc[mask].detach().transpose(1, 2).flatten(start_dim=1).contiguous().cpu().numpy()
         f_rest = self._features_rest[mask].detach().transpose(1, 2).flatten(start_dim=1).contiguous().cpu().numpy()
-        opacities = self.inverse_opacity_activation(self._opacity[mask]).detach().cpu().numpy()
+        #opacities = self.inverse_opacity_activation(self._opacity[mask]).detach().cpu().numpy()
+        opacities = (self._opacity[mask]).detach().cpu().numpy()
         scale = self._scaling[mask].detach().cpu().numpy()
         rotation = self._rotation[mask].detach().cpu().numpy()
 
