@@ -125,7 +125,8 @@ class Adam(Optimizer):
             max_exp_avg_sqs = []
             state_steps = []
             beta1, beta2 = group['betas']
-
+            
+            # Why?
             if True:
                 for p in group['params']:
                     if p.grad is not None:
@@ -212,6 +213,7 @@ def adam(params: List[Tensor],
         func = _multi_tensor_adam
     else:
         if relevant.size(0) == 0:
+            # use this if a relevant mask is given
                 _single_tensor_adam2(params,
                                         grads,
                                         exp_avgs,
@@ -245,22 +247,37 @@ def adam(params: List[Tensor],
 
 
 
-
-def _single_tensor_adam(params: List[Tensor],
+# use this if you only want to apply it to *relevant* elements
+def _single_tensor_adam(# the tensor to optimize
+                        params: List[Tensor],
+                        # gradients for each param
                         grads: List[Tensor],
+                        # velocity
                         exp_avgs: List[Tensor],
+                        # momentum
                         exp_avg_sqs: List[Tensor],
+                        # only used for AMSGrad
                         max_exp_avg_sqs: List[Tensor],
+                        # Just a step count that is incremented?
                         state_steps: List[Tensor],
+                        # WTF?
                         *,
+                        # Whether to use max_exp_avg_sqs for better optimization
                         amsgrad: bool,
+                        # momentum decay
                         beta1: float,
+                        # velocity decay
                         beta2: float,
+                        #learning rate of param
                         lr: float,
+                        # elements for which to step
                         relevant: Tensor,
                         weight_decay: float,
+                        # 
                         eps: float,
+                        # whether to maximize or minimize
                         maximize: bool,
+                        # Whether it is safe to capture in CUDA graph. Deafult to False if you are not capturing
                         capturable: bool):
 
     for i, parami in enumerate(params):
@@ -336,13 +353,22 @@ def _single_tensor_adam(params: List[Tensor],
 
             parami[relevant] = param
 
-def _single_tensor_adam2(params: List[Tensor],
-                        grads: List[Tensor],
-                        exp_avgs: List[Tensor],
-                        exp_avg_sqs: List[Tensor],
-                        max_exp_avg_sqs: List[Tensor],
-                        state_steps: List[Tensor],
-                        *,
+# use this if you want to step *all elements*
+def _single_tensor_adam2(
+    # 
+    params: List[Tensor],
+    # gradients for each param
+    grads: List[Tensor],
+    # velocity
+    exp_avgs: List[Tensor],
+    # momentum
+    exp_avg_sqs: List[Tensor],
+    # only used for AMSGrad
+    max_exp_avg_sqs: List[Tensor],
+    
+    state_steps: List[Tensor],
+    # WTF?
+    *,
                         amsgrad: bool,
                         beta1: float,
                         beta2: float,

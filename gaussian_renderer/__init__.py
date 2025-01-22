@@ -10,6 +10,7 @@
 #
 
 import torch
+from torch import nn
 import math
 from diff_gaussian_rasterization import GaussianRasterizationSettings, GaussianRasterizer
 from scene.gaussian_model import GaussianModel
@@ -145,6 +146,78 @@ def render(
             "visibility_filter" : vis_filter.nonzero().flatten().long(),
             "radii": radii[subfilter]}
 
+def render_on_disk(
+    viewpoint_camera, 
+        means3D,
+        opacity,
+        scales, 
+        rotations,
+        shs,
+        pipe, 
+        bg_color : torch.Tensor, 
+        scaling_modifier = 1.0, 
+        override_color = None,
+        sh_degree = 3
+        ):
+    tanfovx = math.tan(viewpoint_camera.FoVx * 0.5)
+    tanfovy = math.tan(viewpoint_camera.FoVy * 0.5)
+    
+    screenspace_points = torch.zeros_like(means3D, dtype=torch.float32, requires_grad=False, device="cuda") + 0
+    means2D = nn.Parameter(screenspace_points)
+
+    render_indices = torch.empty(0).int().cuda()
+    parent_indices = torch.empty(0).int().cuda()
+    interpolation_weights = torch.empty(0).float().cuda()
+    num_node_siblings = torch.empty(0).int().cuda()
+    colors_precomp = None
+    cov3D_precomp = None
+    
+    pipe.debug = True
+    raster_settings = GaussianRasterizationSettings(
+        image_height=int(viewpoint_camera.image_height),
+        image_width=int(viewpoint_camera.image_width),
+        tanfovx=tanfovx,
+        tanfovy=tanfovy,
+        bg=bg_color,
+        scale_modifier= scaling_modifier,
+        viewmatrix=viewpoint_camera.world_view_transform,
+        projmatrix=viewpoint_camera.full_proj_transform,
+        sh_degree=int(sh_degree),
+        campos=viewpoint_camera.camera_center,
+        prefiltered=False,
+        debug=pipe.debug,
+        render_indices=render_indices,
+        parent_indices=parent_indices,
+        interpolation_weights=interpolation_weights,
+        num_node_kids=num_node_siblings,
+        do_depth=False
+    )
+
+    rasterizer = GaussianRasterizer(raster_settings=raster_settings)
+
+    
+    
+    rendered_image, radii, _ = rasterizer(
+        means3D = means3D,
+        means2D = means2D,
+        shs = shs,
+        colors_precomp = colors_precomp,
+        opacities = opacity,
+        scales = scales,
+        rotations = rotations,
+        cov3D_precomp = cov3D_precomp)
+    
+    rendered_image = rendered_image.clamp(0, 1)
+    radii = radii[100000:]
+    vis_filter = radii > 0
+
+    # Those Gaussians that were frustum culled or had a radius of 0 were not visible.
+    # They will be excluded from value updates used in the splitting criteria.
+    return {"render": rendered_image,
+            "viewspace_points": screenspace_points,
+            "visibility_filter" : vis_filter,
+            "radii": radii[vis_filter]}
+
 # render with hierarchy, interpolate Gaussians with their parent nodes beforehand
 def render_post(
         viewpoint_camera, 
@@ -159,13 +232,19 @@ def render_post(
         # number of siblings
         num_node_siblings = torch.Tensor([]).int(),
         interp_python = True,
+        on_disk = True,
         use_trained_exp = False, iteration=0):
     """
     Render the scene from a hierarchy.  
     
     Background tensor (bg_color) must be on GPU!
     """
- 
+    
+    # Set up rasterization configuration
+    tanfovx = math.tan(viewpoint_camera.FoVx * 0.5)
+    tanfovy = math.tan(viewpoint_camera.FoVy * 0.5)
+    
+    
     # Create zero tensor. We will use it to make pytorch return gradients of the 2D (screen-space) means
     screenspace_points = torch.zeros_like(gaussians.get_xyz, dtype=gaussians.get_xyz.dtype, requires_grad=True, device="cuda") + 0
     try:
@@ -173,15 +252,10 @@ def render_post(
     except:
         #print("screenspace_points do not retain grad???")
         pass
-
-    # Set up rasterization configuration
-    tanfovx = math.tan(viewpoint_camera.FoVx * 0.5)
-    tanfovy = math.tan(viewpoint_camera.FoVy * 0.5)
-
+    
     means3D = gaussians.get_xyz
     means2D = screenspace_points
     opacity = gaussians.get_opacity
-
     # If precomputed 3d covariance is provided, use it. If not, then it will be computed from
     # scaling / rotation by the rasterizer.
     scales = None
@@ -192,7 +266,6 @@ def render_post(
     else:
         scales = gaussians.get_scaling
         rotations = gaussians.get_rotation
-
     shs = None
     colors_precomp = None
     if override_color is None:
@@ -208,37 +281,30 @@ def render_post(
         # Technically, we don't need the SHs if we precompute color, maybe remove?
         #shs = pc.get_features
         colors_precomp = override_color
-
     # Rasterize visible Gaussians to image, obtain their radii (on screen).
     if render_indices.size(0) != 0:
         render_inds = render_indices.long()
         if interp_python:
             num_entries = render_indices.size(0)
-
             interps = interpolation_weights[:num_entries].unsqueeze(1)
             interps_inv = (1 - interpolation_weights[:num_entries]).unsqueeze(1)
             parent_inds = parent_indices[:num_entries].long()
-
             means3D_base = (interps * means3D[render_inds] + interps_inv * means3D[parent_inds]).contiguous()
             scales_base = (interps * scales[render_inds] + interps_inv * scales[parent_inds]).contiguous()
             if override_color is None:
                 shs_base = (interps.unsqueeze(2) * shs[render_inds] + interps_inv.unsqueeze(2) * shs[parent_inds]).contiguous()
-            
             parents = rotations[parent_inds]
             rots = rotations[render_inds]
             dots = torch.bmm(rots.unsqueeze(1), parents.unsqueeze(2)).flatten()
             parents[dots < 0] *= -1
             rotations_base = ((interps * rots) + interps_inv * parents).contiguous()
-            
             opacity_base = (interps * opacity[render_inds] + interps_inv * opacity[parent_inds]).contiguous()
-
             if gaussians.skybox_points == 0:
                 skybox_inds = torch.Tensor([]).long()
             else:
                 # The end index is fucking inclusive
                 skybox_inds = torch.range(0, gaussians.skybox_points-1, device="cuda").long()
                 # skybox_inds = torch.range(pc._xyz.size(0) - pc.skybox_points, pc._xyz.size(0)-1, device="cuda").long()
-
             means3D = torch.cat((means3D[skybox_inds], means3D_base)).contiguous() 
             if override_color is None: 
                 shs = torch.cat((shs[skybox_inds], shs_base)).contiguous() 
@@ -246,15 +312,12 @@ def render_post(
             rotations = torch.cat((rotations[skybox_inds], rotations_base )).contiguous()    
             means2D = means2D[:(gaussians.skybox_points + num_entries)].contiguous()     
             scales = torch.cat((scales[skybox_inds], scales_base)).contiguous()  
-
             interpolation_weights = interpolation_weights.clone().detach()
             # Skybox Points are not interpolated
             interpolation_weights = torch.cat((torch.ones(gaussians.skybox_points, device='cuda', dtype=torch.int32), interpolation_weights[:-gaussians.skybox_points]))
             num_node_siblings = torch.cat((torch.ones(gaussians.skybox_points, device='cuda', dtype=torch.int32), num_node_siblings[:-gaussians.skybox_points]))
-
             #interpolation_weights[0:pc.skybox_points] = 1.0 
             #num_node_siblings[0:pc.skybox_points] = 1 
-        
         else:
             means3D = means3D[render_inds].contiguous()
             means2D = means2D[render_inds].contiguous()
@@ -263,7 +326,6 @@ def render_post(
             opacity = opacity[render_inds].contiguous()
             scales = scales[render_inds].contiguous()
             rotations = rotations[render_inds].contiguous() 
-
         render_indices = torch.Tensor([]).int()
         parent_indices = torch.Tensor([]).int()
         interpolation_weights = torch.Tensor([]).float()

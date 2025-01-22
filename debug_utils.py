@@ -13,9 +13,13 @@ from arguments import ModelParams, PipelineParams, OptimizationParams
 import math
 import torchvision
 from gaussian_renderer import render_coarse, render, render_post
+import matplotlib
 from matplotlib import colormaps
 from scene import cameras
-
+from mpl_toolkits.mplot3d import Axes3D
+import matplotlib.pyplot as plt
+import numpy as np
+matplotlib.use('TkAgg')
 from gaussian_hierarchy._C import expand_to_size, get_interpolation_weights, expand_to_size_dynamic, get_interpolation_weights_dynamic
 
 def direct_collate(x):
@@ -60,6 +64,27 @@ def get_gaussians_per_limit_normalized(scene, min_limit, max_limit, steps, no_im
             if n >= no_images:
                 return result
             
+
+def plot_path_to_root(nodes, node, xyz):
+    points = []
+    n = node
+    while(nodes[n, 1] != -1):
+        points.append(xyz[n].cpu().detach().numpy())
+        n = nodes[n, 1]
+    points = np.array(points)
+    x = points[:, 0]
+    y = points[:, 1]
+    z = points[:, 2]
+    fig = plt.figure()
+    ax = fig.add_subplot(111, projection='3d')
+    ax.scatter(x, y, z, color='red', label='Points')
+
+    ax.plot(x, y, z, color='blue', label='Line')
+    ax.set_xlabel('X')
+    ax.set_ylabel('Y')
+    ax.set_zlabel('Z')
+    plt.show()
+    
 
 def generate_some_flat_scene_images(scene : Scene, pipe : PipelineParams, output_dir,  no_images = 10, indices = None):
     with torch.no_grad():

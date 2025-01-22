@@ -20,13 +20,17 @@ from gaussian_hierarchy._C import expand_to_size, get_interpolation_weights, exp
 def render_dynamic(dataset, pipe):
     network_gui.init("127.0.0.1", 6009)
     gaussians = GaussianModel(dataset.sh_degree)
+    gaussians.on_disk = False
     gaussians.active_sh_degree = dataset.sh_degree
     gaussians.scaffold_points = None
     dataset.source_path = "/home/felix-windisch/Datasets/example_dataset_LOD/example_dataset/camera_calibration/aligned"
-    dataset.hierarchy="/home/felix-windisch/Datasets/example_dataset_LOD/example_dataset/output/scaffold/point_cloud/iteration_30000/Alpha.dhier"
+    dataset.hierarchy="/home/felix-windisch/Datasets/example_dataset_LOD/example_dataset/output/scaffold/point_cloud/iteration_30000/Bravo.dhier"
     dataset.scaffold_file=""
     scene = Scene(dataset, gaussians, resolution_scales = [1], create_from_hier=True)
     gaussians._opacity = gaussians.inverse_opacity_activation(gaussians._opacity)
+    
+    debug_utils.plot_path_to_root(gaussians.nodes, len(gaussians._xyz)-1, gaussians._xyz)
+    return
     #debug_utils.render_level_slices(scene, pipe, "/home/felix-windisch/Datasets/example_dataset_LOD/example_dataset/output/")
     while True:
         if network_gui.conn == None:

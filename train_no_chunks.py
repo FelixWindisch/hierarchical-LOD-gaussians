@@ -221,7 +221,7 @@ if __name__ == '__main__':
     optimization_params.exposure_lr_delay_mult = 0.0
     optimization_params.percent_dense = 0.01
     optimization_params.lambda_dssim = 0.2
-    optimization_params.densification_interval = 500
+    optimization_params.densification_interval = 50
     optimization_params.opacity_reset_interval = 3000
     optimization_params.densify_from_iter = 0
     optimization_params.densify_until_iter = 50_000
