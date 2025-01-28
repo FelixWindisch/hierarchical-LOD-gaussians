@@ -211,8 +211,6 @@ __device__ float computeSizeGPU(Box& box, Point viewpoint, Point zdir)
 
 __device__ float computeSizeGPUDynamic(float3& position, float3& scale, Point viewpoint, Point zdir)
 {
-	//TODO: DO FRUSTUM CULLING
-
 	//if (inboxCUDA(box, viewpoint))
 	//	return FLT_MAX;
 	// This is not taking view direction into account

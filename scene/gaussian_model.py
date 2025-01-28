@@ -32,61 +32,264 @@ hierarchy_node_child_count = 2
 hierarchy_node_first_child = 3
 hierarchy_node_next_sibling = 4
 hierarchy_node_max_side_length = 5
-
+SPT_index = 0
+SPT_min_distance = 1
+SPT_max_distance = 2
 
 class GaussianModel:
     
-    def generate_hierarchical_SPT(self):
-        upper_tree_indices, cut_indices = self.cut_hierarchy(30, device='cpu')
-        self.upper_tree_nodes = self.nodes[upper_tree_indices].cuda()
-        self.upper_tree_xyz = self._xyz[upper_tree_indices].cuda()
-        self.upper_tree_scaling = self._scaling[upper_tree_indices].cuda()
+    
+    
+    def frustum_cull(self, points, scales, camera_pos, view_dir, up_dir, fov, aspect_ratio, near_plane, far_plane):
+        """
+        Perform frustum culling on a set of points.
+
+        Parameters:
+        - points: torch array of shape (N, 3) representing 3D points
+        - scales: torch array of shape (N, 3) representing 3D scales
+        - camera_pos: torch array of shape (3,) representing camera position
+        - view_dir: torch array of shape (3,) representing camera view direction
+        - up_dir: torch array of shape (3,) representing camera up direction
+        - fov: field of view angle in degrees
+        - aspect_ratio: width/height of the view frustum
+        - near_plane: distance to the near clipping plane
+        - far_plane: distance to the far clipping plane
+        """
+        #return torch.ones(len(points), dtype=torch.bool)
+        # Normalize directions
+        view_dir = view_dir / torch.linalg.norm(view_dir)
+        up_dir = up_dir / torch.linalg.norm(up_dir)
+
+        # Calculate right vector
+        right_dir = torch.cross(view_dir, up_dir)
+        right_dir = right_dir / torch.linalg.norm(right_dir)
+
+        # Calculate frustum planes
+        half_vfov = np.radians(fov / 2)
+        half_hfov = np.arctan(np.tan(half_vfov) * aspect_ratio)
+
+        # Top, bottom, left, right, near, and far plane equations
+        planes = []
+
+        # Near and far planes
+        planes.append((view_dir, -torch.dot(camera_pos + view_dir * near_plane, view_dir)))
+        planes.append((-view_dir, torch.dot(camera_pos + view_dir * far_plane, view_dir)))
+
+        # Side planes
+        top_vec = np.cos(half_vfov) * view_dir + np.sin(half_vfov) * up_dir
+        bottom_vec = np.cos(half_vfov) * view_dir - np.sin(half_vfov) * up_dir
+        left_vec = np.cos(half_hfov) * view_dir - np.sin(half_hfov) * right_dir
+        right_vec = np.cos(half_hfov) * view_dir + np.sin(half_hfov) * right_dir
+
+        planes.append((top_vec, torch.dot(camera_pos, top_vec)))
+        planes.append((bottom_vec, torch.dot(camera_pos, bottom_vec)))
+        planes.append((left_vec, torch.dot(camera_pos, left_vec)))
+        planes.append((right_vec, torch.dot(camera_pos, right_vec)))
+
+        # Check point visibility
+        visible = torch.ones(len(points), dtype=torch.bool)
+        for plane_normal, plane_dist in planes:
+            # dot product of each row
+            dist = torch.sum((points - camera_pos) * plane_normal, dim=-1)
+            dist += scales
+            visible[dist < -plane_dist] = False
+        return visible
+    
+    def get_SPT_cut(self, camera_position, camera_direction, camera_up, target_granularity):
+        # Scale factor decides strictness of frustum culling
+        max_scales = self.scaling_activation(torch.max(self.upper_tree_scaling, dim=-1)[0]) * 5.0
+        cull = lambda indices : self.frustum_cull(self.upper_tree_xyz[indices], 
+                                                  max_scales[indices], 
+                                                  camera_position.cuda(), 
+                                                  camera_direction.cuda(), up_dir=camera_up.cuda(), 
+                                                    fov=60, aspect_ratio=1.33, near_plane=0.01, far_plane=200000000)
+        coarse_cut = self.cut_hierarchy_on_condition(self.upper_tree_nodes, cull, include_in_cut_where_condition_is_false=False, return_upper_tree=False, root_node=0)
+        leaf_mask = self.upper_tree_nodes[coarse_cut, hierarchy_node_child_count] == 0
+        leaf_nodes = coarse_cut[leaf_mask]
         
-        self.upper_tree_nodes[cut_indices, hierarchy_node_child_count] = 0
-        self.upper_tree_nodes[cut_indices, hierarchy_node_first_child] = 0
+        SPT_indices = self.upper_tree_nodes[leaf_nodes][self.upper_tree_nodes[leaf_nodes, hierarchy_node_first_child] >= 0, hierarchy_node_first_child]
+        print(f"Cut {len(SPT_indices)} out of {len(self.SPT)} SPTs")
+        cut_indices = [self.upper_tree_nodes[coarse_cut[~leaf_mask], hierarchy_node_max_side_length]]
+        for spt_index, leaf_node in zip(SPT_indices, leaf_nodes):
+            spt = self.SPT[spt_index]
+            spt_center_distance = (self.upper_tree_xyz[leaf_node] - camera_position).pow(2).sum(0).sqrt()
+            # Binary search for the first element in SPT the max distance is greater than center_distance
+            min_index = 0
+            max_index = len(spt)
+            pivot = math.floor(max_index/2)
+            while max_index-min_index > 1:
+                if spt[pivot, 2] > spt_center_distance:
+                    min_index = pivot
+                else:
+                    max_index = pivot
+                pivot = min_index + math.floor((max_index-min_index)/2) 
+            # TODO: Which way?
+            cut = torch.where(spt[:max_index, 1] < spt_center_distance)[0]
+            cut_indices.append(spt[cut, 0].to(torch.int32))
+        return torch.cat(cut_indices)
+        
+        
+        
+        
+        
+        
+    
+    
+    def build_hierarchical_SPT(self):
+        target_granularity = 0.0001
+        SPT_scale = 10
+        
+        
+        condition = lambda indices : torch.prod(self.scaling_activation(self._scaling[indices]), dim=-1) > SPT_scale
+        upper_tree_indices, cut_indices = self.cut_hierarchy_on_condition(self.nodes, condition)
+        
         
         self.SPT = []
-        
+        SPT_indices = []
+        leaf_spt_children = []
         for cut_node in cut_indices:
+            # do not build SPTs with only one element
+            if self.nodes[cut_node, hierarchy_node_child_count] == 0:
+                #leaf_spt_children.append(-1)
+                continue
             #create SPT
-            min_dist = self.get_min_distance(cut_node)
+            SPT_center = self._xyz[cut_node]
+            SPT = torch.zeros(1, 3, device='cpu')
+            SPT[0, 0] = cut_node
+            SPT[0, 1] = self.get_min_distance(cut_node, target_granularity)
+            SPT[0, 2] = 1000000000000
             stack = torch.zeros(1, dtype=torch.int32, device = 'cpu')
             stack[0] = cut_node
+            max_distances = torch.zeros(1)
+            max_distances[0] = SPT[0,1]
             while len(stack) > 0:
-                first_children = self.nodes[stack, hierarchy_node_first_child]
-
+                
+                first_children = self.nodes[stack.cpu(), hierarchy_node_first_child]
                 second_children = self.nodes[first_children, hierarchy_node_next_sibling]
 
                 stack = torch.cat((first_children, second_children)) 
                 stack = stack[stack > 0]
                 
-            
-            
+                if len(stack) == 0:
+                    break
+                
+                center_distances = torch.sqrt(torch.sum((self._xyz[stack] - SPT_center) ** 2, dim=1))
+                
+                max_distances = max_distances[first_children > 0]
+                stack_SPT = torch.zeros(len(stack), 3)
+                stack_SPT[:, 0] = stack
+                min_distances = self.get_min_distance(stack, target_granularity) + center_distances
+                max_distances = torch.cat((max_distances, max_distances))
+                stack_SPT[:, 1] = torch.where(min_distances < max_distances, min_distances, max_distances)
+                stack_SPT[:, 2] = max_distances
+                max_distances = stack_SPT[:, 1].clone()
+                SPT = torch.cat((SPT, stack_SPT))
+            if len(SPT) > 100: 
+                SPT = SPT.cuda()
+                # Why the fuck is sorting along the last dimension -2?
+                SPT, indices = torch.sort(SPT, dim = -2, descending=True)
+                leaf_spt_children.append(len(self.SPT))
+                self.SPT.append(SPT)
+                SPT_indices.append(cut_node)
+            else:
+                upper_tree_indices = torch.cat((upper_tree_indices, SPT[:, 0].to(torch.int32)[1:]))
         
-    def get_min_distance(int):
+        
+
+        upper_tree_indices = torch.sort(upper_tree_indices)[0]
+        # make it contiguous for searchsorted()
+        upper_tree_indices = upper_tree_indices.contiguous()
+        self.upper_tree_nodes = self.nodes[upper_tree_indices].clone().cuda()
+
+        cut_SPT_indices = torch.searchsorted(upper_tree_indices, torch.tensor(SPT_indices))
+        
+        # SPT Leaves store the SPT index in first_child
+        self.upper_tree_nodes[cut_SPT_indices, hierarchy_node_child_count] = 0
+        #self.upper_tree_nodes[cut_SPT_indices, hierarchy_node_first_child] = 0
+        self.upper_tree_nodes[cut_SPT_indices, hierarchy_node_first_child] = torch.tensor(leaf_spt_children, dtype = torch.int32, device='cuda')
+
+        self.upper_tree_xyz = self._xyz[upper_tree_indices].cuda()
+        # unactivated!
+        self.upper_tree_scaling = self._scaling[upper_tree_indices].cuda()
+        
+        self.upper_tree_nodes[:, hierarchy_node_max_side_length] = upper_tree_indices
+        self.upper_tree_nodes[:, hierarchy_node_parent] = torch.searchsorted(upper_tree_indices.cuda(), self.upper_tree_nodes[:, hierarchy_node_parent])
+        self.upper_tree_nodes[0, hierarchy_node_parent] = -1
+        # Dont modify SPT leaves
+        non_leaf = ~torch.isin(torch.range(0, len(self.upper_tree_nodes)-1), torch.tensor(cut_SPT_indices))
+        # if it is a normal leaf node without SPT, set child to -1, otherwise translate the first_child from self.nodes to self.upper_tree_nodes index
+        self.upper_tree_nodes[non_leaf, hierarchy_node_first_child] = torch.where(self.upper_tree_nodes[non_leaf, hierarchy_node_first_child] == 0, -1, torch.searchsorted(upper_tree_indices.cuda(), self.upper_tree_nodes[non_leaf, hierarchy_node_first_child]).to(torch.int32))
+        
+        
+        first_sibling = self.upper_tree_nodes[:, hierarchy_node_next_sibling] > 0
+        self.upper_tree_nodes[first_sibling, hierarchy_node_next_sibling] = torch.searchsorted(upper_tree_indices.cuda(), self.upper_tree_nodes[first_sibling, hierarchy_node_next_sibling]).to(torch.int32)
+        
+
+        visited = torch.tensor(self.sanity_check_hierarchy(self.upper_tree_nodes, root=0))
         pass
+
         
         
         
-    def cut_hierarchy(self, scale_threshold, device):
-        stack = torch.zeros(1, dtype=torch.int32, device = device)
-        stack[0] = self.skybox_points
-        visited = 1
-        upper_tree = stack.clone() 
-        cut = torch.empty(0)
-        while len(stack) > 0:
-            first_children = self.nodes[stack, hierarchy_node_first_child]
+        
+        #self.upper_tree_nodes[upper_tree_cut_indices, hierarchy_node_first_child] = torch.range(0, len(upper_tree_cut_indices)-1, dtype=torch.int32, device='cuda')
+        
+        
+                
             
-            second_children = self.nodes[first_children, hierarchy_node_next_sibling]
+            
+        
+    def get_min_distance(self, nodes, target_granularity):
+        if nodes.numel() == 1:
+            if self.nodes[nodes, hierarchy_node_child_count] == 0:
+                return -1000000
+            scales = self.scaling_activation(self._scaling[nodes])
+            return (scales[ 0] * scales[ 1] + scales[0] * scales[2] + scales[1] * scales[2])/target_granularity
+            
+        leaves = self.nodes[nodes, hierarchy_node_child_count] == 0
+        #return self.scaling_activation(torch.max(self._scaling[nodes], dim=-1)[0])/target_granularity
+        scales = self.scaling_activation(self._scaling[nodes])
+        #ellipse surface
+        
+        min_distances = (scales[:, 0] * scales[:, 1] + scales[:, 0] * scales[:, 2] + scales[:, 1] * scales[:, 2])/target_granularity
+        min_distances[leaves] = -1000000000
+        return min_distances
+        
+        
+    def is_hierarchy_cut(self, hierarchy, cut_indices):
+        _, cut = self.cut_hierarchy_on_condition( hierarchy, lambda indices : torch.isin(indices, cut_indices))
+        return len(cut) == len(cut_indices)
+    
+    def cut_hierarchy_on_condition(self, hierarchy, condition, include_in_cut_where_condition_is_false = True, return_upper_tree= True, root_node = 100000):
+        
+        device = hierarchy.device
+        
+        stack = torch.zeros(1, dtype=torch.int32, device = device)
+        stack[0] = root_node
+        visited = 1
+        if return_upper_tree:
+            upper_tree = torch.empty(0, dtype=torch.int32)#stack.clone() 
+        cut = torch.empty(0, dtype=torch.int32, device = device)
+        while len(stack) > 0:
+            if return_upper_tree:
+                upper_tree = torch.cat((upper_tree, stack), dim=-1)
+            cut = torch.cat((cut, stack[hierarchy[stack, hierarchy_node_child_count] == 0]))
+            stack = stack[hierarchy[stack, hierarchy_node_child_count] > 0]
+            
+            cut_mask = condition(stack)
+            if include_in_cut_where_condition_is_false:
+                cut = torch.cat((cut, stack[~cut_mask]))
+            stack = stack[cut_mask]
+            
+            first_children = hierarchy[stack, hierarchy_node_first_child]
+            second_children = hierarchy[first_children, hierarchy_node_next_sibling]
             
             stack = torch.cat((first_children, second_children)) 
-            stack = stack[stack > 0]
-            cut_mask = torch.prod(self.get_scaling[stack], dim=-1) > scale_threshold
-            
-            stack = stack[cut_mask]
-            upper_tree = torch.cat((upper_tree, stack), dim=-1)
+                        
             visited += len(stack)
-        return upper_tree, cut
+        if return_upper_tree:
+            return upper_tree, cut
+        return cut
     
     def get_leaf_cut(self):
         return torch.nonzero(self.nodes[:self.size, hierarchy_node_child_count] == 0, as_tuple=False).squeeze()
@@ -272,41 +475,45 @@ class GaussianModel:
         return diverged/(100*samples)
         
     
-    def sanity_check_hierarchy(self):
+    def sanity_check_hierarchy(self, hierarchy = None, root=100000):
+        visited=[]
+        if hierarchy is None:
+            hierarchy = self.nodes
         print("Commencing Sanity Check of Hierarchy")
         self.sanity_counter = 0
         def sanity_check_rec(node):
+            visited.append(node)
             self.sanity_counter += 1
             if self.sanity_counter > len(self._xyz):
                 print("Infinite Recursion")
-            if self.nodes[node][hierarchy_node_child_count] == 0:
+            if hierarchy[node][hierarchy_node_child_count] == 0:
                 return
-            child_iterator = self.nodes[node][hierarchy_node_first_child]
+            child_iterator = hierarchy[node][hierarchy_node_first_child]
             children = [child_iterator]
-            while(self.nodes[child_iterator][hierarchy_node_next_sibling] != 0):
-                child_iterator = self.nodes[child_iterator][hierarchy_node_next_sibling]
+            while(hierarchy[child_iterator][hierarchy_node_next_sibling] != 0):
+                child_iterator = hierarchy[child_iterator][hierarchy_node_next_sibling]
                 children.append(child_iterator)
             if len(children) == 1:
                 print(f"Error: Node {node} has single child")
-            if len(children) > self.nodes[node][hierarchy_node_child_count]:
-                print(f"Error: Parent has more children ({len(children)}) than expected ({self.nodes[node][hierarchy_node_child_count]})")
-            if len(children) < self.nodes[node][hierarchy_node_child_count]:
-                print(f"Error: Parent has less children ({len(children)}) than expected ({self.nodes[node][hierarchy_node_child_count]})")
+            if len(children) > hierarchy[node][hierarchy_node_child_count]:
+                print(f"Error: Parent has more children ({len(children)}) than expected ({hierarchy[node][hierarchy_node_child_count]})")
+            if len(children) < hierarchy[node][hierarchy_node_child_count]:
+                print(f"Error: Parent has less children ({len(children)}) than expected ({hierarchy[node][hierarchy_node_child_count]})")
             
             for child in children:
-                if self.nodes[child][hierarchy_node_parent] != node:
-                    print(f"Error: Siblings have different parents ({self.nodes[child][hierarchy_node_parent]} instead of {node})")
-                if self.nodes[child][hierarchy_node_depth] != self.nodes[node][hierarchy_node_depth]+1:
-                    print(f"Error: Child has depth {self.nodes[child][hierarchy_node_depth]}, but parent has depth {self.nodes[node][hierarchy_node_depth]}")
+                if hierarchy[child][hierarchy_node_parent] != node:
+                    print(f"Error: Siblings have different parents ({hierarchy[child][hierarchy_node_parent]} instead of {node})")
+                if hierarchy[child][hierarchy_node_depth] != hierarchy[node][hierarchy_node_depth]+1:
+                    print(f"Error: Child has depth {hierarchy[child][hierarchy_node_depth]}, but parent has depth {hierarchy[node][hierarchy_node_depth]}")
                 #if torch.prod(self.get_scaling[child]).item() > (torch.prod(self.get_scaling[node]).item() * 1.1):
                 #    print(f"Warning: Child has max scale {torch.prod(self.get_scaling[child]).item()}, but parent has max scale {torch.prod(self.get_scaling[node]).item()}")
                 sanity_check_rec(child)
                 
-        sanity_check_rec(self.skybox_points)
-        if self.sanity_counter != len(self._xyz):
+        sanity_check_rec(root)
+        if self.sanity_counter != len(hierarchy):
             print(f"Error: Reached {self.sanity_counter} out of {len(self._xyz)} nodes by recursion")
         print(f"Finished Sanity Check of Hierarchy ( {self.sanity_counter} / {len(self._xyz)} nodes)")
-
+        return visited
 
     def setup_functions(self):
         def build_covariance_from_scaling_rotation(scaling, scaling_modifier, rotation):
@@ -1266,13 +1473,13 @@ class GaussianModel:
         self.nodes[dead_indices, hierarchy_node_depth] = self.nodes[reinit_idx, 0] + 1
         self.nodes[dead_indices, hierarchy_node_parent] = reinit_idx.to(torch.int32)
         self.nodes[dead_indices, hierarchy_node_child_count] = 0
-        self.nodes[dead_indices, hierarchy_node_first_child] = -1
+        self.nodes[dead_indices, hierarchy_node_first_child] = 0
         self.nodes[dead_indices, hierarchy_node_next_sibling] = sibling_indices
         
         self.nodes[sibling_indices, hierarchy_node_depth] = self.nodes[reinit_idx, 0] + 1
         self.nodes[sibling_indices, hierarchy_node_parent] = reinit_idx.to(torch.int32)
         self.nodes[sibling_indices, hierarchy_node_child_count] = 0
-        self.nodes[sibling_indices, hierarchy_node_first_child] = -1
+        self.nodes[sibling_indices, hierarchy_node_first_child] = 0
         self.nodes[sibling_indices, hierarchy_node_next_sibling] = 0
         
         self._xyz[sibling_indices] = self._xyz[dead_indices]
@@ -1331,13 +1538,13 @@ class GaussianModel:
             new_nodes[index*2][hierarchy_node_depth] = self.nodes[node][hierarchy_node_depth] + 1
             new_nodes[index*2][hierarchy_node_parent] = node
             new_nodes[index*2][hierarchy_node_child_count] = 0
-            new_nodes[index*2][hierarchy_node_first_child] = -1
+            new_nodes[index*2][hierarchy_node_first_child] = 0
             new_nodes[index*2][hierarchy_node_next_sibling] = full_index + 1
 
             new_nodes[index*2+1][hierarchy_node_depth] = self.nodes[node][hierarchy_node_depth] + 1
             new_nodes[index*2+1][hierarchy_node_parent] = node
             new_nodes[index*2+1][hierarchy_node_child_count] = 0
-            new_nodes[index*2+1][hierarchy_node_first_child] = -1
+            new_nodes[index*2+1][hierarchy_node_first_child] = 0
             new_nodes[index*2+1][hierarchy_node_next_sibling] = 0
         if On_Disk:
             self.nodes[size:size+new_nodes.size()[0]] = new_nodes

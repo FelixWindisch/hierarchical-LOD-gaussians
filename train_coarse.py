@@ -61,7 +61,6 @@ def training(dataset, opt, pipe, saving_iterations, checkpoint_iterations, check
         for viewpoint_batch in training_generator:
             for viewpoint_cam in viewpoint_batch:
                 background = torch.rand((3), dtype=torch.float32, device="cuda")
-
                 viewpoint_cam.world_view_transform = viewpoint_cam.world_view_transform.cuda()
                 viewpoint_cam.projection_matrix = viewpoint_cam.projection_matrix.cuda()
                 viewpoint_cam.full_proj_transform = viewpoint_cam.full_proj_transform.cuda()

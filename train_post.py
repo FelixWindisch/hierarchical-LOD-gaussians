@@ -49,7 +49,7 @@ def clock():
 def direct_collate(x):
     return x
 
-Max_Cap = 18_000_000
+Max_Cap = 14_000_000
 Random_Hierarchy_Cut = True
 Only_Noise_Visible = True
 MCMC_Densification = True
@@ -73,9 +73,9 @@ def training(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoin
     
     dataset.eval = True
     scene = Scene(dataset, gaussians, resolution_scales = [1], create_from_hier=True)
-    size, cut = gaussians.cut_hierarchy(30, 'cuda')
-    print(size)
-    exit()
+    #size, cut = gaussians.cut_hierarchy(30, 'cuda')
+    #print(size)
+    #exit()
     #gaussians.sort_morton()
     #with torch.no_grad():
     #    gaussians._opacity.sigmoid_()
@@ -92,12 +92,11 @@ def training(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoin
     num_siblings = torch.zeros(gaussians._xyz.size(0)).int().cuda()
     
     if (On_Disk):
-        optimizer_state = gaussians.move_to_disk(20_000_000)
+        optimizer_state = gaussians.move_to_disk(14_000_000)
         #if True:
             #gaussians.size = len(gaussians._xyz)
             #gaussians.move_to_cpu()
-    
-    
+    gaussians.build_hierarchical_SPT()
     
     bg_color = [1, 1, 1] if dataset.white_background else [0, 0, 0]
     background = torch.tensor(bg_color, dtype=torch.float32, device="cuda")
@@ -129,6 +128,9 @@ def training(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoin
     while iteration < opt.iterations + 1:
         for viewpoint_batch in training_generator:
             for viewpoint_cam in viewpoint_batch:
+                camera_direction = torch.tensor(viewpoint_cam.R[:, 2], dtype=torch.float32)
+                camera_up = torch.tensor(viewpoint_cam.R[:, 1], dtype=torch.float32)
+                
                 if network_gui.conn == None:
                     network_gui.try_connect()
                 while network_gui.conn != None:
@@ -176,33 +178,39 @@ def training(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoin
                     gaussians.oneupSHdegree()
 
                 clock()
-                camera_direction = torch.tensor([0.0, 0.0, 1.0])
-                camera_direction = torch.matmul(torch.from_numpy(viewpoint_cam.R).to(torch.float32), camera_direction)
                 if Random_Hierarchy_Cut:
                     if On_Disk:
-                        render_indices = torch.randperm(gaussians.size)[:200000]
+                        #if iteration % 500 == 0:
+                        #    gaussians.build_hierarchical_SPT()
+                        #render_indices = gaussians.get_leaf_cut()
+                        #render_indices = torch.randperm(gaussians.size)[:200000]
+                        render_indices = gaussians.get_SPT_cut(viewpoint_cam.camera_center.cuda(), camera_direction, camera_up, 0)
+                        
                         to_render = len(render_indices)
-                        means3D = nn.Parameter(gaussians._xyz[render_indices].cuda())
-                        opacity = nn.Parameter(gaussians._opacity[render_indices].cuda())
-                        scales = nn.Parameter(gaussians._scaling[render_indices].cuda())
-                        rotations = nn.Parameter(gaussians._rotation[render_indices].cuda())
-                        features_dc = nn.Parameter(gaussians._features_dc[render_indices].cuda())
-                        features_rest = nn.Parameter(gaussians._features_rest[render_indices].cuda())
+                        render_indices_cpu = render_indices.cpu()
+                        #print(gaussians.is_hierarchy_cut(gaussians.nodes, render_indices_cpu))
+                        indices = render_indices_cpu
+                        means3D = nn.Parameter(gaussians._xyz[render_indices_cpu].cuda())
+                        opacity = nn.Parameter(gaussians._opacity[render_indices_cpu].cuda())
+                        scales = nn.Parameter(gaussians._scaling[render_indices_cpu].cuda())
+                        rotations = nn.Parameter(gaussians._rotation[render_indices_cpu].cuda())
+                        features_dc = nn.Parameter(gaussians._features_dc[render_indices_cpu].cuda())
+                        features_rest = nn.Parameter(gaussians._features_rest[render_indices_cpu].cuda())
                         shs = torch.cat((features_dc, features_rest), dim=1)
                         
                         parameters = [
                             {'params': [means3D], 'lr': opt.position_lr_init * gaussians.spatial_lr_scale, "name": "xyz", 
-                             "exp_avgs" : optimizer_state["xyz"]["exp_avgs"][render_indices].cuda(), "exp_avgs_sqs" : optimizer_state["xyz"]["exp_avgs_sqs"][render_indices].cuda()},
+                             "exp_avgs" : optimizer_state["xyz"]["exp_avgs"][render_indices_cpu].cuda(), "exp_avgs_sqs" : optimizer_state["xyz"]["exp_avgs_sqs"][render_indices_cpu].cuda()},
                             {'params': [features_dc], 'lr': opt.feature_lr, "name": "f_dc",
-                            "exp_avgs" : optimizer_state["f_dc"]["exp_avgs"][render_indices].cuda(), "exp_avgs_sqs" : optimizer_state["f_dc"]["exp_avgs_sqs"][render_indices].cuda()},
+                            "exp_avgs" : optimizer_state["f_dc"]["exp_avgs"][render_indices_cpu].cuda(), "exp_avgs_sqs" : optimizer_state["f_dc"]["exp_avgs_sqs"][render_indices_cpu].cuda()},
                             {'params': [features_rest], 'lr': opt.feature_lr / 20.0, "name": "f_rest",
-                            "exp_avgs" : optimizer_state["f_rest"]["exp_avgs"][render_indices].cuda(), "exp_avgs_sqs" : optimizer_state["f_rest"]["exp_avgs_sqs"][render_indices].cuda()},
+                            "exp_avgs" : optimizer_state["f_rest"]["exp_avgs"][render_indices_cpu].cuda(), "exp_avgs_sqs" : optimizer_state["f_rest"]["exp_avgs_sqs"][render_indices_cpu].cuda()},
                             {'params': [opacity], 'lr': opt.opacity_lr, "name": "opacity",
-                            "exp_avgs" : optimizer_state["opacity"]["exp_avgs"][render_indices].cuda(), "exp_avgs_sqs" : optimizer_state["opacity"]["exp_avgs_sqs"][render_indices].cuda()},
+                            "exp_avgs" : optimizer_state["opacity"]["exp_avgs"][render_indices_cpu].cuda(), "exp_avgs_sqs" : optimizer_state["opacity"]["exp_avgs_sqs"][render_indices_cpu].cuda()},
                             {'params': [scales], 'lr': opt.scaling_lr, "name": "scaling",
-                             "exp_avgs" : optimizer_state["scaling"]["exp_avgs"][render_indices].cuda(), "exp_avgs_sqs" : optimizer_state["scaling"]["exp_avgs_sqs"][render_indices].cuda()},
+                             "exp_avgs" : optimizer_state["scaling"]["exp_avgs"][render_indices_cpu].cuda(), "exp_avgs_sqs" : optimizer_state["scaling"]["exp_avgs_sqs"][render_indices_cpu].cuda()},
                             {'params': [rotations], 'lr': opt.rotation_lr, "name": "rotation",
-                             "exp_avgs" : optimizer_state["rotation"]["exp_avgs"][render_indices].cuda(), "exp_avgs_sqs" : optimizer_state["rotation"]["exp_avgs_sqs"][render_indices].cuda()},
+                             "exp_avgs" : optimizer_state["rotation"]["exp_avgs"][render_indices_cpu].cuda(), "exp_avgs_sqs" : optimizer_state["rotation"]["exp_avgs_sqs"][render_indices_cpu].cuda()},
                         ]
                     else:
                         detail_level = random.uniform(0.00001, 0.5)
@@ -220,10 +228,11 @@ def training(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoin
                         render_indices,
                         parent_indices,
                         nodes_for_render_indices)
+                    indices = render_indices[:to_render].int()
                 
                 print(f"render {to_render} Gaussians")# out of {gaussians.get_number_of_leaf_nodes()}")
                 # indices == nodes_for_render_indices !
-                indices = render_indices[:to_render].int()
+                
                 node_indices = nodes_for_render_indices[:to_render]
                 cut_time = clock()
                 clock()
@@ -387,6 +396,7 @@ def training(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoin
                         print(f"Respawn {torch.sum(dead_mask)} Gaussians")
                         gaussians.relocate_gs(dead_mask=dead_mask, size=size, On_Disk=On_Disk)
                         gaussians.add_new_gs(cap_max=Max_Cap, size=size, On_Disk=On_Disk)   
+                        gaussians.build_hierarchical_SPT()
                         if Gradient_Propagation:
                             gaussians.recompute_weights()
                             
@@ -420,19 +430,37 @@ def training(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoin
                                                             eps=1e-8, 
                                                             maximize=False, 
                                                             capturable=False)
+                                # write momentum changes back to disk
+                                optimizer_state[param["name"]]["exp_avgs"][render_indices_cpu] = param["exp_avgs"].cpu()
+                                optimizer_state[param["name"]]["exp_avgs_sqs"][render_indices_cpu] = param["exp_avgs_sqs"].cpu()
 
                             render_indices_cpu = render_indices.cpu()
+                            # write Gaussian changes back to disk
                             gaussians._xyz[render_indices_cpu] = means3D.cpu()
                             gaussians._features_dc[render_indices_cpu] = features_dc.cpu()
                             gaussians._features_rest[render_indices_cpu] = features_rest.cpu()
                             gaussians._opacity[render_indices_cpu] = opacity.cpu()
                             gaussians._scaling[render_indices_cpu] = scales.cpu()
                             gaussians._rotation[render_indices_cpu] = rotations.cpu()
-                                
+                            
+                            
                             
                             
                         
-                            
+                            parameters = [
+                            {'params': [means3D], 'lr': opt.position_lr_init * gaussians.spatial_lr_scale, "name": "xyz", 
+                             "exp_avgs" : optimizer_state["xyz"]["exp_avgs"][render_indices_cpu].cuda(), "exp_avgs_sqs" : optimizer_state["xyz"]["exp_avgs_sqs"][render_indices_cpu].cuda()},
+                            {'params': [features_dc], 'lr': opt.feature_lr, "name": "f_dc",
+                            "exp_avgs" : optimizer_state["f_dc"]["exp_avgs"][render_indices_cpu].cuda(), "exp_avgs_sqs" : optimizer_state["f_dc"]["exp_avgs_sqs"][render_indices_cpu].cuda()},
+                            {'params': [features_rest], 'lr': opt.feature_lr / 20.0, "name": "f_rest",
+                            "exp_avgs" : optimizer_state["f_rest"]["exp_avgs"][render_indices_cpu].cuda(), "exp_avgs_sqs" : optimizer_state["f_rest"]["exp_avgs_sqs"][render_indices_cpu].cuda()},
+                            {'params': [opacity], 'lr': opt.opacity_lr, "name": "opacity",
+                            "exp_avgs" : optimizer_state["opacity"]["exp_avgs"][render_indices_cpu].cuda(), "exp_avgs_sqs" : optimizer_state["opacity"]["exp_avgs_sqs"][render_indices_cpu].cuda()},
+                            {'params': [scales], 'lr': opt.scaling_lr, "name": "scaling",
+                             "exp_avgs" : optimizer_state["scaling"]["exp_avgs"][render_indices_cpu].cuda(), "exp_avgs_sqs" : optimizer_state["scaling"]["exp_avgs_sqs"][render_indices_cpu].cuda()},
+                            {'params': [rotations], 'lr': opt.rotation_lr, "name": "rotation",
+                             "exp_avgs" : optimizer_state["rotation"]["exp_avgs"][render_indices_cpu].cuda(), "exp_avgs_sqs" : optimizer_state["rotation"]["exp_avgs_sqs"][render_indices_cpu].cuda()},
+                        ]
                         
                         #gaussians.optimizer.step()
                         #gaussians.optimizer.zero_grad(set_to_none = True)
