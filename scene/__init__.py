@@ -59,9 +59,9 @@ class Scene:
             with open(os.path.join(self.model_path, "cameras.json"), 'w') as file:
                 json.dump(json_cams, file)
 
-        if shuffle:
-            random.shuffle(scene_info.train_cameras)  # Multi-res consistent random shuffling
-            random.shuffle(scene_info.test_cameras)  # Multi-res consistent random shuffling
+        #if shuffle:
+        #    random.shuffle(scene_info.train_cameras)  # Multi-res consistent random shuffling
+        #    random.shuffle(scene_info.test_cameras)  # Multi-res consistent random shuffling
 
         self.cameras_extent = scene_info.nerf_normalization["radius"]
 
@@ -91,11 +91,11 @@ class Scene:
                                            args.skybox_locked)
 
 
-    def dump_gaussians(self, folder_name, only_leaves=False, file_name = "point_cloud.ply"):
+    def dump_gaussians(self, folder_name, only_leaves=False, file_name = "point_cloud.ply", indices = None):
         point_cloud_path = os.path.join(self.model_path, "point_cloud/{}".format(folder_name))
         mkdir_p(point_cloud_path)
         print(f"Dumped Gaussians at {point_cloud_path}")
-        self.gaussians.save_ply(os.path.join(point_cloud_path, file_name), only_leaves)
+        self.gaussians.save_ply(os.path.join(point_cloud_path, file_name), only_leaves, indices = indices)
         
         
     def save(self, iteration):

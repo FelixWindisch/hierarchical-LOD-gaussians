@@ -21,11 +21,13 @@ from utils.sh_utils import RGB2SH
 from simple_knn._C import distCUDA2
 from utils.graphics_utils import BasicPointCloud
 from utils.general_utils import strip_symmetric, build_scaling_rotation
-from gaussian_hierarchy._C import load_hierarchy, write_hierarchy, load_dynamic_hierarchy, write_dynamic_hierarchy, get_morton_indices
+from gaussian_hierarchy._C import load_hierarchy, write_hierarchy, load_dynamic_hierarchy, write_dynamic_hierarchy, get_morton_indices, get_spt_cut_cuda
 from scene.OurAdam import Adam
 from utils.reloc_utils import compute_relocation_cuda
 import random
 import math
+import time
+from gaussian_renderer import occlusion_cull
 hierarchy_node_depth = 0
 hierarchy_node_parent = 1
 hierarchy_node_child_count = 2
@@ -36,81 +38,122 @@ SPT_index = 0
 SPT_min_distance = 1
 SPT_max_distance = 2
 
+
+clock_start = True
+clock_time = time.time()
+def clock():
+    global clock_start
+    global clock_time
+    if clock_start:
+        clock_start = False
+        clock_time = time.time()
+    else:
+        clock_start = True
+        return time.time()-clock_time
+
+
 class GaussianModel:
-    
-    
-    
-    def frustum_cull(self, points, scales, camera_pos, view_dir, up_dir, fov, aspect_ratio, near_plane, far_plane):
+    def extract_frustum_planes(self, view_proj_matrix):
         """
-        Perform frustum culling on a set of points.
+        Extract six frustum planes from the view-projection matrix.
 
-        Parameters:
-        - points: torch array of shape (N, 3) representing 3D points
-        - scales: torch array of shape (N, 3) representing 3D scales
-        - camera_pos: torch array of shape (3,) representing camera position
-        - view_dir: torch array of shape (3,) representing camera view direction
-        - up_dir: torch array of shape (3,) representing camera up direction
-        - fov: field of view angle in degrees
-        - aspect_ratio: width/height of the view frustum
-        - near_plane: distance to the near clipping plane
-        - far_plane: distance to the far clipping plane
+        Args:
+            view_proj_matrix (torch.Tensor): (4,4) matrix
+
+        Returns:
+            torch.Tensor: (6, 4) tensor where each row is a plane (nx, ny, nz, d)
         """
-        #return torch.ones(len(points), dtype=torch.bool)
-        # Normalize directions
-        view_dir = view_dir / torch.linalg.norm(view_dir)
-        up_dir = up_dir / torch.linalg.norm(up_dir)
+        m = view_proj_matrix.T
+        planes = torch.stack([
+            m[3] + m[0],  # Left
+            m[3] - m[0],  # Right
+            m[3] + m[1],  # Bottom
+            m[3] - m[1],  # Top
+            #m[3] + m[2],  # Near
+            #m[3] - m[2]   # Far
+        ])
 
-        # Calculate right vector
-        right_dir = torch.cross(view_dir, up_dir)
-        right_dir = right_dir / torch.linalg.norm(right_dir)
+        # Normalize planes (avoid issues with unnormalized normals)
+        planes /= torch.norm(planes[:, :3], dim=1, keepdim=True)
 
-        # Calculate frustum planes
-        half_vfov = np.radians(fov / 2)
-        half_hfov = np.arctan(np.tan(half_vfov) * aspect_ratio)
+        return planes  # (6, 4)
 
-        # Top, bottom, left, right, near, and far plane equations
-        planes = []
+    def frustum_cull_spheres(self, points, radii, planes):
+        """
+            centers (torch.Tensor): (N, 3) tensor of sphere centers.
+            radii (torch.Tensor): (N,) tensor of sphere radii.
+            view_proj_matrix (torch.Tensor): (4,4) view-projection matrix.
+        """
+        
+        normals = planes[:, :3]  # (6, 3)
+        distances = planes[:, 3]  # (6,)
+        visible = torch.ones(len(points), dtype = torch.bool)
+        # Compute signed distance from sphere centers to each plane
+        #TODO: Replace this for loop by pytorch
+        for normal, distance in zip(normals, distances):
+            signed_distances = torch.sum(points  * normal, dim=1) + distance
+            visible[signed_distances + radii < 0] = False
+        #signed_distances = torch.einsum("ij,kj->ik", normals, centers).transpose(0, 1) + distances  # (N, 6)
 
-        # Near and far planes
-        planes.append((view_dir, -torch.dot(camera_pos + view_dir * near_plane, view_dir)))
-        planes.append((-view_dir, torch.dot(camera_pos + view_dir * far_plane, view_dir)))
+        # Check if any part of the sphere is inside or touching a plane
+        #intersects = signed_distances >= 0 #-radii[:, None]  # (N, 6) boolean array
 
-        # Side planes
-        top_vec = np.cos(half_vfov) * view_dir + np.sin(half_vfov) * up_dir
-        bottom_vec = np.cos(half_vfov) * view_dir - np.sin(half_vfov) * up_dir
-        left_vec = np.cos(half_hfov) * view_dir - np.sin(half_hfov) * right_dir
-        right_vec = np.cos(half_hfov) * view_dir + np.sin(half_hfov) * right_dir
+        # A sphere is visible if it intersects at least one frustum plane
+        #visible = intersects.all(dim=1)  # (N,) boolean array
 
-        planes.append((top_vec, torch.dot(camera_pos, top_vec)))
-        planes.append((bottom_vec, torch.dot(camera_pos, bottom_vec)))
-        planes.append((left_vec, torch.dot(camera_pos, left_vec)))
-        planes.append((right_vec, torch.dot(camera_pos, right_vec)))
-
-        # Check point visibility
-        visible = torch.ones(len(points), dtype=torch.bool)
-        for plane_normal, plane_dist in planes:
-            # dot product of each row
-            dist = torch.sum((points - camera_pos) * plane_normal, dim=-1)
-            dist += scales
-            visible[dist < -plane_dist] = False
         return visible
     
-    def get_SPT_cut(self, camera_position, camera_direction, camera_up, target_granularity):
+    
+    
+    
+    
+    def get_SPT_cut(self, camera_position, full_proj_transform, target_granularity, camera, pipe):
         # Scale factor decides strictness of frustum culling
-        max_scales = self.scaling_activation(torch.max(self.upper_tree_scaling, dim=-1)[0]) * 5.0
-        cull = lambda indices : self.frustum_cull(self.upper_tree_xyz[indices], 
-                                                  max_scales[indices], 
-                                                  camera_position.cuda(), 
-                                                  camera_direction.cuda(), up_dir=camera_up.cuda(), 
-                                                    fov=60, aspect_ratio=1.33, near_plane=0.01, far_plane=200000000)
-        coarse_cut = self.cut_hierarchy_on_condition(self.upper_tree_nodes, cull, include_in_cut_where_condition_is_false=False, return_upper_tree=False, root_node=0)
+        #max_scales = self.scaling_activation(torch.max(self.upper_tree_scaling, dim=-1)[0]) * 3.0
+        planes = self.extract_frustum_planes(full_proj_transform)
+        #visible = gaussians.frustum_cull_spheres(gaussians._xyz[render_indices].cuda(), max_scales, planes)
+        cull = lambda indices : self.frustum_cull_spheres(self.upper_tree_xyz[indices], self.bounding_sphere_radii[indices], planes)
+        # Detail level is sufficient (return 0 for cut) to cut if the closest distance at which we can view the Gaussian is less than the distance to camera
+        LOD_detail_cut = lambda indices : self.min_distance_squared[indices] > (camera_position - self.upper_tree_xyz[indices]).square().sum()
+        LOD_detail_cut = lambda indices : torch.ones_like(indices, dtype=torch.bool)
+        coarse_cut = self.cut_hierarchy_on_condition(self.upper_tree_nodes, LOD_detail_cut, return_upper_tree=False, root_node=0, leave_out_of_cut_condition=cull)
+
+        # occlusion cull
+        #bg_color = [0, 0, 0]
+        #background = torch.tensor(bg_color, dtype=torch.float32, device="cuda")
+        #temp = len(coarse_cut)
+        #occlusion_indices = self.upper_tree_nodes[coarse_cut, hierarchy_node_max_side_length]
+        #occlusion_mask = occlusion_cull(occlusion_indices.cpu(), self, camera, pipe, background).cuda()
+        #coarse_cut = coarse_cut[occlusion_mask]
+        #print(f"Occlusion Cull {temp - len(coarse_cut)} out of {temp} upper tree gaussians")
+        
+        
         leaf_mask = self.upper_tree_nodes[coarse_cut, hierarchy_node_child_count] == 0
         leaf_nodes = coarse_cut[leaf_mask]
         
         SPT_indices = self.upper_tree_nodes[leaf_nodes][self.upper_tree_nodes[leaf_nodes, hierarchy_node_first_child] >= 0, hierarchy_node_first_child]
+        
+        SPT_node_indices = leaf_nodes[self.upper_tree_nodes[leaf_nodes, hierarchy_node_first_child] >= 0]
+        
         print(f"Cut {len(SPT_indices)} out of {len(self.SPT)} SPTs")
-        cut_indices = [self.upper_tree_nodes[coarse_cut[~leaf_mask], hierarchy_node_max_side_length]]
-        for spt_index, leaf_node in zip(SPT_indices, leaf_nodes):
+        #clock()
+        cut_indices = [torch.arange(0, self.skybox_points, device='cuda', dtype=torch.int32)]
+        #
+        SPT_distances = (self.upper_tree_xyz[SPT_node_indices] - camera_position).pow(2).sum(1).sqrt()
+        
+        dabadu, SPT_counts = get_spt_cut_cuda(len(SPT_indices), self.SPT_gaussian_indices, self.SPT_starts, self.SPT_max, self.SPT_min, SPT_indices, SPT_distances)
+            #torch.cuda.empty_cache()
+        cut_indices.append(dabadu)
+        cut_indices.append(self.upper_tree_nodes[coarse_cut[~leaf_mask], hierarchy_node_max_side_length])
+        return torch.cat(cut_indices), self.upper_tree_nodes[SPT_node_indices, hierarchy_node_max_side_length], SPT_distances
+        #print(f"CUDA TIME: {clock()}")
+        #clock()
+        binary_search_indices=[]
+        
+        # Skybox is always rendered, as are hierarchy leafs that are not SPTS
+        cut_indices = [torch.arange(0, self.skybox_points, device='cuda', dtype=torch.int32), 
+                       self.upper_tree_nodes[coarse_cut[~leaf_mask], hierarchy_node_max_side_length]]
+        for spt_index, leaf_node in zip(SPT_indices, SPT_node_indices):
             spt = self.SPT[spt_index]
             spt_center_distance = (self.upper_tree_xyz[leaf_node] - camera_position).pow(2).sum(0).sqrt()
             # Binary search for the first element in SPT the max distance is greater than center_distance
@@ -122,39 +165,44 @@ class GaussianModel:
                     min_index = pivot
                 else:
                     max_index = pivot
-                pivot = min_index + math.floor((max_index-min_index)/2) 
-            # TODO: Which way?
+                pivot = math.floor((max_index+min_index)/2) 
+            binary_search_indices.append(max_index)
             cut = torch.where(spt[:max_index, 1] < spt_center_distance)[0]
             cut_indices.append(spt[cut, 0].to(torch.int32))
-        return torch.cat(cut_indices)
+        result = torch.cat(cut_indices)
+        return result, None, None
         
-        
-        
-        
-        
-        
-    
-    
-    def build_hierarchical_SPT(self):
-        target_granularity = 0.0001
-        SPT_scale = 10
+
+    def build_hierarchical_SPT(self, SPT_Root_Volume, target_granularity):
+        SPT_scale = SPT_Root_Volume
         
         
         condition = lambda indices : torch.prod(self.scaling_activation(self._scaling[indices]), dim=-1) > SPT_scale
         upper_tree_indices, cut_indices = self.cut_hierarchy_on_condition(self.nodes, condition)
         
         
+        
+        bounding_sphere_radii = [] #torch.zeros_like(upper_tree_indices)
+        self.SPT_starts = torch.zeros(1, device='cuda', dtype=torch.int32)
+        self.SPT_min = torch.empty(0, device='cuda', dtype=torch.float32)
+        self.SPT_max = torch.empty(0, device='cuda', dtype=torch.float32)
+        self.SPT_gaussian_indices = torch.empty(0, device='cuda', dtype=torch.int32)
+
         self.SPT = []
         SPT_indices = []
         leaf_spt_children = []
-        for cut_node in cut_indices:
+        
+        # indices of SPT roots in global hierarchy
+        SPT_root_hierarchy_indices = []
+        
+        for index, cut_node in enumerate(cut_indices):
             # do not build SPTs with only one element
             if self.nodes[cut_node, hierarchy_node_child_count] == 0:
-                #leaf_spt_children.append(-1)
                 continue
             #create SPT
             SPT_center = self._xyz[cut_node]
             SPT = torch.zeros(1, 3, device='cpu')
+            SPT.requires_grad_(False)
             SPT[0, 0] = cut_node
             SPT[0, 1] = self.get_min_distance(cut_node, target_granularity)
             SPT[0, 2] = 1000000000000
@@ -162,6 +210,8 @@ class GaussianModel:
             stack[0] = cut_node
             max_distances = torch.zeros(1)
             max_distances[0] = SPT[0,1]
+            bounding_sphere_radius = torch.max(self.scaling_activation(self._scaling[cut_node]), dim=-1)[0].item() * 3.0
+            temp_additional_indices = torch.empty(0, dtype=torch.int32)
             while len(stack) > 0:
                 
                 first_children = self.nodes[stack.cpu(), hierarchy_node_first_child]
@@ -174,7 +224,8 @@ class GaussianModel:
                     break
                 
                 center_distances = torch.sqrt(torch.sum((self._xyz[stack] - SPT_center) ** 2, dim=1))
-                
+                max_center_distances = torch.max(center_distances + torch.max(self.scaling_activation(self._scaling[stack]), dim=-1)[0] * 3).item()
+                bounding_sphere_radius = max(bounding_sphere_radius, max_center_distances)
                 max_distances = max_distances[first_children > 0]
                 stack_SPT = torch.zeros(len(stack), 3)
                 stack_SPT[:, 0] = stack
@@ -184,18 +235,28 @@ class GaussianModel:
                 stack_SPT[:, 2] = max_distances
                 max_distances = stack_SPT[:, 1].clone()
                 SPT = torch.cat((SPT, stack_SPT))
+                temp_additional_indices = torch.cat((temp_additional_indices, stack))
             if len(SPT) > 100: 
+                
+                bounding_sphere_radii.append(bounding_sphere_radius)
                 SPT = SPT.cuda()
-                # Why the fuck is sorting along the last dimension -2?
-                SPT, indices = torch.sort(SPT, dim = -2, descending=True)
+                sort_indices = SPT[:,-1].argsort(dim=0, descending=True)
+                SPT = SPT[sort_indices]
+                
                 leaf_spt_children.append(len(self.SPT))
                 self.SPT.append(SPT)
                 SPT_indices.append(cut_node)
+                
+                self.SPT_starts = torch.cat((self.SPT_starts, (self.SPT_starts[-1] + len(SPT)).unsqueeze(0)))
+                self.SPT_max = torch.cat((self.SPT_max, SPT[:, 2]))
+                self.SPT_min = torch.cat((self.SPT_min, SPT[:, 1]))
+                self.SPT_gaussian_indices = torch.cat((self.SPT_gaussian_indices, SPT[:, 0].to(torch.int32)))
+                SPT_root_hierarchy_indices.append(cut_node)
+                #self.SPT_centers.append(torch.mean(self._xyz[SPT[:,0]].to(torch.int32)))
             else:
-                upper_tree_indices = torch.cat((upper_tree_indices, SPT[:, 0].to(torch.int32)[1:]))
+                upper_tree_indices = torch.cat((upper_tree_indices, temp_additional_indices)) # SPT[:, 0].to(torch.int32)[1:]))
         
-        
-
+        self.bounding_sphere_radii = torch.zeros_like(upper_tree_indices, device='cuda', dtype=torch.float32)
         upper_tree_indices = torch.sort(upper_tree_indices)[0]
         # make it contiguous for searchsorted()
         upper_tree_indices = upper_tree_indices.contiguous()
@@ -207,7 +268,7 @@ class GaussianModel:
         self.upper_tree_nodes[cut_SPT_indices, hierarchy_node_child_count] = 0
         #self.upper_tree_nodes[cut_SPT_indices, hierarchy_node_first_child] = 0
         self.upper_tree_nodes[cut_SPT_indices, hierarchy_node_first_child] = torch.tensor(leaf_spt_children, dtype = torch.int32, device='cuda')
-
+        
         self.upper_tree_xyz = self._xyz[upper_tree_indices].cuda()
         # unactivated!
         self.upper_tree_scaling = self._scaling[upper_tree_indices].cuda()
@@ -224,11 +285,29 @@ class GaussianModel:
         first_sibling = self.upper_tree_nodes[:, hierarchy_node_next_sibling] > 0
         self.upper_tree_nodes[first_sibling, hierarchy_node_next_sibling] = torch.searchsorted(upper_tree_indices.cuda(), self.upper_tree_nodes[first_sibling, hierarchy_node_next_sibling]).to(torch.int32)
         
-
-        visited = torch.tensor(self.sanity_check_hierarchy(self.upper_tree_nodes, root=0))
-        pass
-
+        # The squared min distance in the upper tree is used for granularity cutting the upper tree
+        self.min_distance_squared = self.get_min_distance(self.upper_tree_nodes[:, hierarchy_node_max_side_length].cpu(), target_granularity).square().cuda()
         
+        
+        leaf_indices = torch.where(self.upper_tree_nodes[:, hierarchy_node_first_child] == -1)[0]
+        self.bounding_sphere_radii[leaf_indices] = torch.max(self.scaling_activation(self.upper_tree_scaling[leaf_indices]), dim=-1)[0] * 3
+        self.bounding_sphere_radii[cut_SPT_indices] = torch.tensor(bounding_sphere_radii, device ='cuda')
+        # upward propagating bounding sphere radii
+        level_indices = torch.where(self.upper_tree_nodes[:, hierarchy_node_child_count] == 0)[0]
+        while level_indices.numel():
+            parents = self.upper_tree_nodes[level_indices, hierarchy_node_parent]
+            parents = parents[parents >= 0]
+            first_children = self.upper_tree_nodes[parents, hierarchy_node_first_child]
+            second_children = self.upper_tree_nodes[first_children, hierarchy_node_next_sibling]
+            first_children_distance = (self.upper_tree_xyz[parents] - self.upper_tree_xyz[first_children]).square().sum(1).sqrt()
+            second_children_distance = (self.upper_tree_xyz[parents] - self.upper_tree_xyz[second_children]).square().sum(1).sqrt()
+            self.bounding_sphere_radii[parents] = torch.maximum(self.bounding_sphere_radii[first_children] + first_children_distance, self.bounding_sphere_radii[second_children] + second_children_distance)
+            level_indices = parents
+            
+            
+        self.bounding_sphere_radii = self.bounding_sphere_radii.cuda()
+        
+        return torch.tensor(SPT_root_hierarchy_indices)
         
         
         
@@ -244,14 +323,14 @@ class GaussianModel:
             if self.nodes[nodes, hierarchy_node_child_count] == 0:
                 return -1000000
             scales = self.scaling_activation(self._scaling[nodes])
-            return (scales[ 0] * scales[ 1] + scales[0] * scales[2] + scales[1] * scales[2])/target_granularity
+            return torch.sqrt((scales[ 0] * scales[ 1] + scales[0] * scales[2] + scales[1] * scales[2]))/target_granularity
             
         leaves = self.nodes[nodes, hierarchy_node_child_count] == 0
         #return self.scaling_activation(torch.max(self._scaling[nodes], dim=-1)[0])/target_granularity
         scales = self.scaling_activation(self._scaling[nodes])
         #ellipse surface
         
-        min_distances = (scales[:, 0] * scales[:, 1] + scales[:, 0] * scales[:, 2] + scales[:, 1] * scales[:, 2])/target_granularity
+        min_distances = torch.sqrt(scales[:, 0] * scales[:, 1] + scales[:, 0] * scales[:, 2] + scales[:, 1] * scales[:, 2])/target_granularity
         min_distances[leaves] = -1000000000
         return min_distances
         
@@ -260,7 +339,9 @@ class GaussianModel:
         _, cut = self.cut_hierarchy_on_condition( hierarchy, lambda indices : torch.isin(indices, cut_indices))
         return len(cut) == len(cut_indices)
     
-    def cut_hierarchy_on_condition(self, hierarchy, condition, include_in_cut_where_condition_is_false = True, return_upper_tree= True, root_node = 100000):
+    
+    # Where condition
+    def cut_hierarchy_on_condition(self, hierarchy, condition, return_upper_tree= True, root_node = 100000, leave_out_of_cut_condition = None):
         
         device = hierarchy.device
         
@@ -276,10 +357,19 @@ class GaussianModel:
             cut = torch.cat((cut, stack[hierarchy[stack, hierarchy_node_child_count] == 0]))
             stack = stack[hierarchy[stack, hierarchy_node_child_count] > 0]
             
+            if leave_out_of_cut_condition is not None:
+                leave_out_mask = leave_out_of_cut_condition(stack)
+                stack = stack[leave_out_mask]
+            
             cut_mask = condition(stack)
-            if include_in_cut_where_condition_is_false:
-                cut = torch.cat((cut, stack[~cut_mask]))
+            cut = torch.cat((cut, stack[~cut_mask]))
             stack = stack[cut_mask]
+            
+            
+                
+            #if include_in_cut_where_condition_is_false:
+            #    cut = torch.cat((cut, stack[~cut_mask]))
+            #stack = stack[cut_mask]
             
             first_children = hierarchy[stack, hierarchy_node_first_child]
             second_children = hierarchy[first_children, hierarchy_node_next_sibling]
@@ -323,45 +413,36 @@ class GaussianModel:
         
         
         return optimizer_state
-    
-        xyz = torch.from_numpy(np.memmap("xyz.bin", dtype=np.float32, mode="w+", shape=(max_number_of_gaussians, 3)))
-        xyz[:len(self._xyz)] = self._xyz
-        self._xyz = xyz
-        
-        features_dc = torch.from_numpy(np.memmap("features_dc.bin", dtype=np.float32, mode="w+", shape=(max_number_of_gaussians, 1, 3)))
-        features_dc[:len(self._features_dc)] = self._features_dc
-        self._features_dc = features_dc
-        
-        scaling = torch.from_numpy(np.memmap("scaling.bin", dtype=np.float32, mode="w+", shape=(max_number_of_gaussians, 3)))
-        scaling[:len(self._scaling)] = self._scaling
-        self._scaling = scaling
-        
-        rotation = torch.from_numpy(np.memmap("rotation.bin", dtype=np.float32, mode="w+", shape=(max_number_of_gaussians, 4)))
-        rotation[:len(self._rotation)] = self._rotation
-        self._rotation = rotation
-        
-        opacity = torch.from_numpy(np.memmap("opacity.bin", dtype=np.float32, mode="w+", shape=(max_number_of_gaussians, 1)))
-        opacity[:len(self._opacity)] = self._opacity
-        self._opacity = opacity
-        
-        features_rest = torch.from_numpy(np.memmap("features_rest.bin", dtype=np.float32, mode="w+", shape=(max_number_of_gaussians, 15, 3)))
-        features_rest[:len(self._features_rest)] = self._features_rest
-        self._features_rest = features_rest
-        
-        nodes = torch.from_numpy(np.memmap("nodes.bin", dtype=np.int32, mode="w+", shape=(max_number_of_gaussians, 6)))
-        nodes[:len(self.nodes)] = self.nodes
-        self.nodes = nodes
-        
         
     
-    def move_to_cpu(self):
-        self._xyz = self._xyz.to(device='cpu')
-        self._features_dc = self._features_dc.to(device='cpu')
-        self._scaling = self._scaling.to(device='cpu')
-        self._rotation = self._rotation.to(device='cpu')
-        self._opacity = self._opacity.to(device='cpu')
-        self._features_rest = self._features_rest.to(device='cpu')
-        self.nodes = self.nodes.to(device='cpu')
+    def move_to_cpu(self, max_number_of_gaussians):
+        self.size = len(self._xyz)
+        
+        names = ["xyz", "f_dc", "scaling", "rotation", "opacity", "f_rest", "nodes"]
+        new_tensors = []
+        optimizer_state = {}
+        tensors = [self._xyz, self._features_dc, self._scaling, self._rotation, self._opacity, self._features_rest, self.nodes]
+        for name, tensor in zip(names, tensors):
+            shape = list(tensor.size())
+            shape[0] = max_number_of_gaussians
+            shape = torch.Size(shape)
+            file = torch.zeros(shape, dtype=tensor.cpu().dtype )
+            file[:len(tensor)] = tensor
+            new_tensors.append(file)
+            # Can we reduce the 
+            exp_avgs = torch.zeros(shape, dtype=torch.float32)
+            exp_avgs_sqs = torch.zeros(shape, dtype=torch.float32)
+            optimizer_state[name] = {"exp_avgs" : exp_avgs, "exp_avgs_sqs" : exp_avgs_sqs}
+        self._xyz = new_tensors[0]
+        self._features_dc = new_tensors[1]
+        self._scaling = new_tensors[2]
+        self._rotation = new_tensors[3]
+        self._opacity = new_tensors[4]
+        self._features_rest = new_tensors[5]
+        self.nodes = new_tensors[6]
+        
+        
+        return optimizer_state
         
     
     # Start with a leaf cut and select a random subset of the leaf nodes. Then, it goes from the bottom level
@@ -925,6 +1006,8 @@ class GaussianModel:
         #self.inverse_opacity_activation = torch.abs
         
         self.hierarchy_path = path
+        # zero out the last column
+        nodes[:, -1] = 0
         self.nodes = nodes.cuda()
         #self.boxes = boxes.cuda()
 
@@ -1018,10 +1101,12 @@ class GaussianModel:
             f.write(rotation.numpy().tobytes())
 
 
-    def save_ply(self, path, only_leaves=False):
+    def save_ply(self, path, only_leaves=False, indices=None):
         mkdir_p(os.path.dirname(path))
         if only_leaves:
             mask = self.nodes[:, hierarchy_node_child_count] == 0
+        elif indices is not None:
+            mask = indices
         else:
             # all true mask
             mask = torch.ones(len(self._opacity), dtype=torch.bool)
@@ -1423,20 +1508,34 @@ class GaussianModel:
         alive_mask = torch.logical_and(alive_mask, self.nodes[:size, hierarchy_node_child_count] == 0)
         alive_indices = alive_mask.nonzero(as_tuple=True)[0]
         
-        if alive_indices.shape[0] <= 0:
-            return
         # sample from alive ones based on opacity
-        probs = (self.opacity_activation(self._opacity[alive_indices, 0])) 
+        # If a node and its sibling want to die, prevent one sibling from dying
         remove_siblings = self.nodes[dead_indices, hierarchy_node_next_sibling]
         dead_indices = dead_indices[~torch.isin(dead_indices, remove_siblings)]
-        # get_sibling cannot be vectorized :(
-        next_sibling_mask = self.nodes[dead_indices, hierarchy_node_next_sibling] > 0
-        sibling_indices = torch.zeros_like(dead_indices, dtype=torch.int32)
-        sibling_indices[next_sibling_mask] = self.nodes[dead_indices[next_sibling_mask], hierarchy_node_next_sibling]
-        sibling_indices[~next_sibling_mask] = self.nodes[self.nodes[dead_indices[~next_sibling_mask], hierarchy_node_parent], hierarchy_node_first_child]
 
+        first_child_mask = self.nodes[dead_indices, hierarchy_node_next_sibling] > 0
+        sibling_indices = torch.zeros_like(dead_indices, dtype=torch.int32)
+        # if the dead node is the first child, write next sibling 
+        sibling_indices[first_child_mask] = self.nodes[dead_indices[first_child_mask], hierarchy_node_next_sibling]
+        # if the dead node is a second child, its sibling is the first child of the parent
+        sibling_indices[~first_child_mask] = self.nodes[self.nodes[dead_indices[~first_child_mask], hierarchy_node_parent], hierarchy_node_first_child]
+
+
+
+        alive_indices = alive_indices[~torch.isin(alive_indices, sibling_indices)]
+        probs = (self.opacity_activation(self._opacity[alive_indices, 0])) 
+
+        if 0 in sibling_indices:
+            print("Found 0 Sibling!")
+        # reinit_idx are the Gaussians where the dead Gaussians are respawned
+        reinit_idx, ratio = self._sample_alives(alive_indices=alive_indices, probs=probs, num=dead_indices.shape[0]*2)
+        reinit_idx = reinit_idx.unique()
+        reinit_idx = reinit_idx[torch.randperm(len(reinit_idx))[:len(dead_indices)]]
+        if len(reinit_idx) < len(dead_indices):
+            print(f"Could only respawn {len(reinit_idx)} out of {len(dead_indices)} Gaussians")
+            dead_indices = dead_indices[:len(reinit_idx)]
+            sibling_indices = sibling_indices[:len(reinit_idx)]
         
-        reinit_idx, ratio = self._sample_alives(alive_indices=alive_indices, probs=probs, num=dead_indices.shape[0])
         (
             self._xyz[dead_indices], 
             self._features_dc[dead_indices],
@@ -1451,20 +1550,33 @@ class GaussianModel:
             new_scaling = new_scaling.cpu()
         self._opacity[dead_indices] = new_opacity
         self._scaling[dead_indices] = new_scaling
+        
         # propogate the not-dead sibling to parent
         parent_indices = self.nodes[dead_indices, hierarchy_node_parent]
+        for depth in range(torch.max(self.nodes[self.skybox_points:self.size, hierarchy_node_depth]), 0, -1):
+            depth_mask = self.nodes[sibling_indices, hierarchy_node_depth] == depth
+            sibling_depth = sibling_indices[depth_mask]
+            parent_depth = parent_indices[depth_mask]
+            self._xyz[parent_depth] = self._xyz[sibling_depth]
+            self._opacity[parent_depth] = self._opacity[sibling_depth]
+            self._features_dc[parent_depth] = self._features_dc[sibling_depth]
+            self._features_rest[parent_depth] = self._features_rest[sibling_depth]
+            self._scaling[parent_depth] = self._scaling[sibling_depth]
+            self._rotation[parent_depth] = self._rotation[sibling_depth]
         
-        self._xyz[parent_indices] = self._xyz[sibling_indices]
-        self._opacity[parent_indices] = self._opacity[sibling_indices]
-        self._features_dc[parent_indices] = self._features_dc[sibling_indices]
-        self._features_rest[parent_indices] = self._features_rest[sibling_indices]
-        self._scaling[parent_indices] = self._scaling[sibling_indices]
-        self._rotation[parent_indices] = self._rotation[sibling_indices]
         
-        self.nodes[parent_indices, hierarchy_node_child_count] = 0
-        self.nodes[parent_indices, hierarchy_node_first_child] = -1
+            self.nodes[parent_depth, hierarchy_node_child_count] = self.nodes[sibling_depth, hierarchy_node_child_count]
+            self.nodes[parent_depth, hierarchy_node_first_child] = self.nodes[sibling_depth, hierarchy_node_first_child]
 
+            # propagate children of sibling upward
+            first_children = self.nodes[sibling_depth, hierarchy_node_first_child] 
+            self.nodes[first_children, hierarchy_node_parent] = parent_depth
+            self.nodes[first_children, hierarchy_node_depth] = self.nodes[parent_depth, hierarchy_node_depth] + 1
+            second_children = self.nodes[first_children, hierarchy_node_next_sibling] 
+            self.nodes[second_children, hierarchy_node_parent] = parent_depth
+            self.nodes[second_children, hierarchy_node_depth] = self.nodes[parent_depth, hierarchy_node_depth] + 1
         
+         
         # respawn nodes now have 2 children
         self.nodes[reinit_idx, hierarchy_node_child_count] = 2
         self.nodes[reinit_idx, hierarchy_node_first_child] = dead_indices.to(torch.int32)
@@ -1482,12 +1594,14 @@ class GaussianModel:
         self.nodes[sibling_indices, hierarchy_node_first_child] = 0
         self.nodes[sibling_indices, hierarchy_node_next_sibling] = 0
         
+        # The sibling is a copy
         self._xyz[sibling_indices] = self._xyz[dead_indices]
         self._opacity[sibling_indices] = self._opacity[dead_indices]
         self._features_dc[sibling_indices] = self._features_dc[dead_indices]
         self._opacity[sibling_indices] = self._opacity[dead_indices]
         self._scaling[sibling_indices] = self._scaling[dead_indices]
         if not On_Disk:
+            # TODO: Implement Disk Equivalent
             self.replace_tensors_to_optimizer(inds=sibling_indices)
          
         
@@ -1502,13 +1616,12 @@ class GaussianModel:
         
         
         add_idx, ratio = self._sample_alives(probs=probs, num=num_gs, alive_indices=alive_indices)
-        
+        # make sure respawn gaussians are unique
         add_idx = torch.where(ratio == 1)[0]
         ratio = torch.zeros_like(ratio)
         ratio[add_idx] = 1
         
-        (
-            new_xyz, 
+        (   new_xyz, 
             new_features_dc,
             new_features_rest,
             new_opacity,
@@ -1528,24 +1641,26 @@ class GaussianModel:
             new_scaling = new_scaling.cpu()
         
         
-        new_nodes = torch.zeros((len(new_xyz), 6), dtype=torch.int32)        
-        for index, node in enumerate(add_idx):
-            full_index = size + index*2
-            self.nodes[node][hierarchy_node_child_count] = 2
-            self.nodes[node][hierarchy_node_first_child] = full_index
-
-
-            new_nodes[index*2][hierarchy_node_depth] = self.nodes[node][hierarchy_node_depth] + 1
-            new_nodes[index*2][hierarchy_node_parent] = node
-            new_nodes[index*2][hierarchy_node_child_count] = 0
-            new_nodes[index*2][hierarchy_node_first_child] = 0
-            new_nodes[index*2][hierarchy_node_next_sibling] = full_index + 1
-
-            new_nodes[index*2+1][hierarchy_node_depth] = self.nodes[node][hierarchy_node_depth] + 1
-            new_nodes[index*2+1][hierarchy_node_parent] = node
-            new_nodes[index*2+1][hierarchy_node_child_count] = 0
-            new_nodes[index*2+1][hierarchy_node_first_child] = 0
-            new_nodes[index*2+1][hierarchy_node_next_sibling] = 0
+        new_nodes = torch.zeros((len(new_xyz), 6), dtype=torch.int32)     
+        add_idx = add_idx.to(torch.int32)
+        self.nodes[add_idx, hierarchy_node_child_count] = 2
+        self.nodes[add_idx, hierarchy_node_first_child] = torch.arange(0, len(add_idx), dtype = torch.int32) * 2 + size
+        
+        index = torch.arange(0, len(add_idx), dtype = torch.int32) * 2
+        index_plus_one = torch.arange(0, len(add_idx), dtype = torch.int32) * 2 + 1
+        new_nodes[index, hierarchy_node_depth] = self.nodes[add_idx, hierarchy_node_depth] + 1
+        new_nodes[index, hierarchy_node_parent] = add_idx
+        new_nodes[index, hierarchy_node_child_count] = 0
+        new_nodes[index, hierarchy_node_first_child] = 0
+        new_nodes[index, hierarchy_node_next_sibling] = index + size + 1
+        
+        new_nodes[index_plus_one, hierarchy_node_depth] = self.nodes[add_idx, hierarchy_node_depth] + 1
+        new_nodes[index_plus_one, hierarchy_node_parent] = add_idx
+        new_nodes[index_plus_one, hierarchy_node_child_count] = 0
+        new_nodes[index_plus_one, hierarchy_node_first_child] = 0
+        new_nodes[index_plus_one, hierarchy_node_next_sibling] = 0
+           
+        
         if On_Disk:
             self.nodes[size:size+new_nodes.size()[0]] = new_nodes
             self.densification_postfix_on_disk(new_xyz, new_features_dc, new_features_rest, new_opacity, new_scaling, new_rotation, reset_params=False)

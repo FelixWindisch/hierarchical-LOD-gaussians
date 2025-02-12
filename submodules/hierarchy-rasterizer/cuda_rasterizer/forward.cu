@@ -248,7 +248,7 @@ __global__ void preprocessCUDA(int P, int D, int M,
 	int2* rects, // return/receive bounding rectangle for projected gaussians
 	float3 boxmin, // for frustum culling
 	float3 boxmax, // for frustum culling
-	int skyboxnum, // ???
+	int skyboxnum, 
 	float biglimit,
 	MatMat viewmats,
 	MatMat projmats, 
@@ -464,7 +464,8 @@ renderCUDA(
 	float* __restrict__ out_color,
 	int P, int skyboxnum,
 	const float* __restrict__ depths,
-	float* __restrict__ invdepth)
+	float* __restrict__ invdepth,
+	int* seen)
 {
 	// Identify current tile and associated min/max pixel range.
 	auto block = cg::this_thread_block();
@@ -564,7 +565,7 @@ renderCUDA(
 				done = true;
 				continue;
 			}
-
+			seen[coll_id] = 1;
 			// Eq. (3) from 3D Gaussian splatting paper.
 			for (int ch = 0; ch < CHANNELS; ch++)
 				C[ch] += features[coll_id * CHANNELS + ch] * alpha * T;
@@ -612,7 +613,8 @@ void FORWARD::render(
 	int skyboxnum,
 	cudaStream_t stream,
 	float* depths,
-	float* depth)
+	float* depth,
+	int* seen)
 {
 	renderCUDA<NUM_CHANNELS> << <grid, block, 0, stream >> > (
 		ranges,
@@ -630,7 +632,8 @@ void FORWARD::render(
 		P,
 		skyboxnum,
 		depths, 
-		depth);
+		depth, 
+		seen);
 }
 
 

@@ -231,6 +231,7 @@ int CudaRasterizer::Rasterizer::forward(
 	float* boxmin, // =nullptr by default
 	float* boxmax,
 	bool debug,
+	int* seen,
 	int skyboxnum,
 	void* streamy,
 	int* num_rendered,
@@ -239,6 +240,8 @@ int CudaRasterizer::Rasterizer::forward(
 {
 	//std::cout << "Number of Gaussians: " << P << std::endl;
 	//std::cout << "boxmin: " << boxmin << std::endl;
+	
+	
 	cudaStream_t stream = (cudaStream_t)streamy;
 	const float focal_y = height / (2.0f * tan_fovy);
 	const float focal_x = width / (2.0f * tan_fovx);
@@ -390,7 +393,8 @@ int CudaRasterizer::Rasterizer::forward(
 		skyboxnum,
 		stream,
 		geomState.depths,
-		depth), debug);
+		depth, 
+		seen), debug);
 
 	return *num_rendered;
 }

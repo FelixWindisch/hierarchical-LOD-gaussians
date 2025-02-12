@@ -5,7 +5,7 @@
 #include "../runtime_switching.h"
 #include "../runtime_switching.h"
 #include "../HierarchyCut.h"
-
+#include "../morton.h"
 std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor>
 LoadHierarchy(std::string filename)
 {
@@ -255,25 +255,57 @@ void GetMortonCode(torch::Tensor& xyz, torch::Tensor& min, torch::Tensor& max, t
 }
 
 
-int GetHierarchyCut(
-torch::Tensor& nodes, 
-torch::Tensor& positions,
-torch::Tensor& scales, 
-float size, 
-torch::Tensor& viewpoint, 
-torch::Tensor& viewdir, 
-torch::Tensor& render_indices)
+//int GetHierarchyCut(
+//torch::Tensor& nodes, 
+//torch::Tensor& positions,
+//torch::Tensor& scales, 
+//float size, 
+//torch::Tensor& viewpoint, 
+//torch::Tensor& viewdir, 
+//torch::Tensor& render_indices)
+//{
+//	return HierarchyCut::getHierarchyCut(
+//	nodes.size(0), 
+//	size,
+//	nodes.contiguous().data_ptr<int>(), 
+//	positions.contiguous().data_ptr<float>(),
+//	scales.contiguous().data_ptr<float>(),
+//	viewpoint.contiguous().data_ptr<float>(),
+//	viewdir.data_ptr<float>()[0], viewdir.data_ptr<float>()[1], viewdir.data_ptr<float>()[2],
+//	render_indices.contiguous().data_ptr<int>(),
+//	nullptr,
+//	parent_indices.contiguous().data_ptr<int>(),
+//	nodes_for_render_indices.contiguous().data_ptr<int>());
+//}
+
+
+std::tuple<torch::Tensor, torch::Tensor>
+ GetSPTCut(
+	int number_of_SPTs,
+	torch::Tensor& gaussian_indices,
+	torch::Tensor& SPT_starts,
+	torch::Tensor& SPT_max,
+	torch::Tensor& SPT_min,
+	torch::Tensor& SPT_indices,
+	torch::Tensor& SPT_distances)
 {
-	return HierarchyCut::getHierarchyCut(
-	nodes.size(0), 
-	size,
-	nodes.contiguous().data_ptr<int>(), 
-	positions.contiguous().data_ptr<float>(),
-	scales.contiguous().data_ptr<float>(),
-	viewpoint.contiguous().data_ptr<float>(),
-	viewdir.data_ptr<float>()[0], viewdir.data_ptr<float>()[1], viewdir.data_ptr<float>()[2],
-	render_indices.contiguous().data_ptr<int>(),
-	nullptr,
-	parent_indices.contiguous().data_ptr<int>(),
-	nodes_for_render_indices.contiguous().data_ptr<int>());
+	int* SPT_cut;
+	int* SPT_counts;
+	//int size = 5;
+	//cudaMalloc(&d_result, size * sizeof(int));
+	int size = Switching::getSPTCut(
+		number_of_SPTs,
+		gaussian_indices.contiguous().data_ptr<int>(),
+		SPT_starts.contiguous().data_ptr<int>(),
+		SPT_max.contiguous().data_ptr<float>(),
+		SPT_min.contiguous().data_ptr<float>(),
+		SPT_indices.contiguous().data_ptr<int>(),
+		SPT_distances.contiguous().data_ptr<float>(),
+		&SPT_cut,
+		&SPT_counts);
+	torch::Tensor SPT_counts_tensor = torch::from_blob(SPT_counts, {number_of_SPTs}, torch::kInt32).to(torch::kCUDA);
+	torch::Tensor SPT_cut_tensor = torch::from_blob(SPT_cut, {size}, torch::kInt32).to(torch::kCUDA);
+	cudaFree(SPT_counts);
+	cudaFree(SPT_cut);
+	return std::make_tuple(SPT_cut_tensor, SPT_counts_tensor);
 }

@@ -23,4 +23,5 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
   m.def("get_interpolation_weights", &GetTsIndexed);
   m.def("get_interpolation_weights_dynamic", &GetTsIndexedDynamic);
   m.def("get_morton_indices", &GetMortonCode);
+  m.def("get_spt_cut_cuda", &GetSPTCut);
 }

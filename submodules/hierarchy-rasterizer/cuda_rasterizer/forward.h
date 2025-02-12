@@ -77,7 +77,8 @@ namespace FORWARD
 		int skyboxnum,
 		cudaStream_t stream,
 		float* depths,
-		float* depth);
+		float* depth,
+		int* seen);
 }
 
 

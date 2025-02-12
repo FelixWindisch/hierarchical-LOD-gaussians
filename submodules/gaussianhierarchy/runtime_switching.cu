@@ -29,6 +29,16 @@
 #include "types.h"
 #include "runtime_switching.h"
 
+
+#define CHECK_CUDA(A, debug) \
+A; if(debug) { \
+auto ret = cudaDeviceSynchronize(); \
+if (ret != cudaSuccess) { \
+std::cerr << "\n[CUDA ERROR] in " << __FILE__ << "\nLine " << __LINE__ << ": " << cudaGetErrorString(ret); \
+throw std::runtime_error(cudaGetErrorString(ret)); \
+} \
+}
+
 __global__ void markTargetNodes(Node* nodes, int N, int target, int* node_counts)
 {
 	int idx = blockDim.x * blockIdx.x + threadIdx.x;
@@ -735,7 +745,6 @@ void Switching::getTsIndexedDynamic(
 		num_siblings);
 }
 
-
 int Switching::expandToSizeDynamic(
 	int N,
 	float target_size,
@@ -771,6 +780,217 @@ int Switching::expandToSizeDynamic(
 	cudaMemcpy(&count, render_offsets.data().get() + N - 1, sizeof(int), cudaMemcpyDeviceToHost);
 	return count;
 }
+
+__global__ void binary_search_SPTs(int number_of_SPTs, int* SPT_starts, float* SPT_max, int* SPT_indices, float* SPT_distances, int* interval_sizes)
+{
+	int idx = blockDim.x * blockIdx.x + threadIdx.x;
+	if (idx >= number_of_SPTs)
+		return;
+	int index = SPT_indices[idx];
+	float distance = SPT_distances[idx];
+	
+	int low = SPT_starts[index];
+	int high = SPT_starts[index+1];
+	int pivot = (low+high)/2;
+	while((high-low) > 1)
+	{
+		if (SPT_max[pivot] > distance)
+		{
+			low = pivot;
+		}
+		else
+		{
+			high = pivot;
+		}
+		pivot = (low+high)/2;
+	}
+	//binary_search_indices[idx] = high;
+	interval_sizes[idx] = high - SPT_starts[index] - 1;
+}
+
+__global__ void populate_SPT
+(
+	int sum, 
+	int number_of_SPTs,
+	int* SPT_indices, 
+	int* SPT_starts, 
+	float* SPT_min, 
+	float* SPT_distance, 
+	int* prefix_sum, 
+	int* gaussian_indices, 
+	int* results,
+	int* SPT_counts)
+{
+	int idx = blockDim.x * blockIdx.x + threadIdx.x;
+	if (idx >= sum)
+		return;
+	int	low = 0;
+	int high = number_of_SPTs;
+
+	int interval_index = number_of_SPTs/2;
+	while(high - low > 1)
+	{
+		if (prefix_sum[interval_index] >= idx)
+		{
+			high = interval_index;
+		}
+		else
+		{
+			low = interval_index;
+		}
+		interval_index = (high + low)/2;
+	}
+	//results[idx] = interval_index;
+	//return;
+	int interval_offset = idx - prefix_sum[interval_index];
+	int SPT_index = SPT_indices[interval_index];
+	int gaussian_index = SPT_starts[SPT_index] + interval_offset;
+	results[idx] = 0;
+	if (SPT_min[gaussian_index] < SPT_distance[interval_index])
+	{
+		atomicAdd(&SPT_counts[interval_index], 1);
+		results[idx] = gaussian_indices[gaussian_index];
+	}
+	//results[idx] = interval_index;
+}
+
+
+struct IsNonZero {
+    __host__ __device__ bool operator()(const int x) const {
+        return x != 0;
+    }
+};
+
+template<typename T>
+void print_device_array(const T* d_array, int size) {
+    int* h_array = new int[size];
+	(cudaMemcpy(h_array, d_array, size * sizeof(int), cudaMemcpyDeviceToHost));
+	std::cout << "Device array: ";
+    for (int i = 0; i < size; i++) {
+        std::cout << h_array[i] << " ";
+    }
+    std::cout << std::endl;
+	std::cout << std::endl;
+	delete[] h_array;
+}
+
+int Switching::getSPTCut(
+	int number_of_SPTs,
+	int* gaussian_indices,
+	int* SPT_starts,
+	float* SPT_max,
+	float* SPT_min,
+	int* SPT_indices,
+	float* SPT_distances,
+	int** SPT_cut,
+	int** SPT_counts_out)
+{
+	// binary search for each SPT_index
+	int* interval_sizes;
+	CHECK_CUDA(cudaMalloc((void**)&interval_sizes, sizeof(int) * number_of_SPTs), true);
+	int num_blocks = (number_of_SPTs + 255) / 256;
+	binary_search_SPTs <<<num_blocks, 256 >>>(number_of_SPTs, SPT_starts, SPT_max, SPT_indices, SPT_distances, interval_sizes);
+	cudaDeviceSynchronize();
+	//print_device_array<int>(binary_search_indices, 100);
+	//cudaFree(binary_search_indices);
+	//print_device_array<int>(interval_sizes, 100);
+	//std::cout << binary_search_indices << std::endl;
+	// compute prefix sum of ranges
+	//cudaFree(binary_search_indices);
+	
+	int* prefix_sum = nullptr;
+	
+	void* d_temp_storage = nullptr;
+	size_t temp_storage_bytes = 0;
+	cub::DeviceScan::ExclusiveSum(
+	  d_temp_storage, temp_storage_bytes,
+	  interval_sizes, prefix_sum, number_of_SPTs);
+	CHECK_CUDA(cudaMalloc(&d_temp_storage, temp_storage_bytes), true);
+	CHECK_CUDA(cudaMalloc(&prefix_sum, sizeof(int) * number_of_SPTs), true);
+	CHECK_CUDA(cub::DeviceScan::ExclusiveSum(
+  	d_temp_storage, temp_storage_bytes,
+  	interval_sizes, prefix_sum, number_of_SPTs), true);
+	cudaDeviceSynchronize();
+	CHECK_CUDA(cudaFree(d_temp_storage), true);
+	
+	//*return_value = prefix_sum;
+	//return number_of_SPTs;
+	//print_device_array<int>(prefix_sum, 100);
+	int* SPT_counts;
+	CHECK_CUDA(cudaMalloc((void**)&SPT_counts, number_of_SPTs * sizeof(int)), true);
+	CHECK_CUDA(cudaMemset(SPT_counts, 0, number_of_SPTs * sizeof(int)), true);
+
+	int sum;
+	CHECK_CUDA(cudaMemcpy(&sum, &prefix_sum[number_of_SPTs-1], sizeof(int),cudaMemcpyDeviceToHost), true);
+	int addition;
+	CHECK_CUDA(cudaMemcpy(&addition, &interval_sizes[number_of_SPTs-1], sizeof(int),cudaMemcpyDeviceToHost), true);
+	sum += addition;
+	int* result;
+	CHECK_CUDA(cudaMalloc((void**)&result, sizeof(int) * sum), true);
+	num_blocks = (sum + 255) / 256;
+	populate_SPT <<<num_blocks, 256 >>>(sum, number_of_SPTs, SPT_indices, SPT_starts, SPT_min,  SPT_distances, prefix_sum,  gaussian_indices, result, SPT_counts);
+	cudaDeviceSynchronize();
+	cudaFree(prefix_sum);
+	cudaFree(interval_sizes);	
+	//*SPT_cut = result;
+	//return sum;
+	//std::cout << "NUMBER OF RENDER INDICES:" << h_num_indices << std::endl;
+	//print_device_array<int>(result, 100);
+
+	int* num_indices;
+    d_temp_storage = nullptr;
+	int* result_compacted;
+	CHECK_CUDA(cudaMalloc(&result_compacted, sum * sizeof(int)), true);
+	CHECK_CUDA(cudaMalloc(&num_indices, sizeof(int)), true);
+    temp_storage_bytes = 0;
+    CHECK_CUDA(cub::DeviceSelect::If(d_temp_storage, temp_storage_bytes, result, result_compacted, num_indices, sum, IsNonZero()), true);
+    CHECK_CUDA(cudaMalloc(&d_temp_storage, temp_storage_bytes), true);
+    CHECK_CUDA(cub::DeviceSelect::If(d_temp_storage, temp_storage_bytes, result, result_compacted, num_indices, sum, IsNonZero()), true);
+	cudaDeviceSynchronize();
+	CHECK_CUDA(cudaFree(d_temp_storage), true);
+	int h_num_indices;
+	CHECK_CUDA(cudaMemcpy(&h_num_indices, num_indices, sizeof(int),cudaMemcpyDeviceToHost), true);
+	cudaDeviceSynchronize();
+	CHECK_CUDA(cudaFree(num_indices), true);
+
+	//print_device_array<int>(result_compacted, 100);
+	//*SPT_cut = result_compacted;
+	//return h_num_indices;
+	cudaFree(result);
+	 
+
+	int* final_result;
+	CHECK_CUDA(cudaMalloc(&final_result, h_num_indices * sizeof(int)), true);
+	cudaDeviceSynchronize();
+	CHECK_CUDA(cudaMemcpy(final_result, result_compacted, h_num_indices * sizeof(int), cudaMemcpyDeviceToDevice), true);
+	cudaDeviceSynchronize();
+	cudaFree(result_compacted);
+
+
+
+	int* SPT_count_prefix_sum = nullptr;
+	
+	d_temp_storage = nullptr;
+	temp_storage_bytes = 0;
+	cub::DeviceScan::ExclusiveSum(
+	  d_temp_storage, temp_storage_bytes,
+	  SPT_counts, SPT_count_prefix_sum, number_of_SPTs);
+	cudaMalloc(&d_temp_storage, temp_storage_bytes);
+	cudaMalloc(&SPT_count_prefix_sum, sizeof(int) * number_of_SPTs);
+	cub::DeviceScan::ExclusiveSum(
+  	d_temp_storage, temp_storage_bytes,
+  	SPT_counts, SPT_count_prefix_sum, number_of_SPTs);
+	cudaDeviceSynchronize();
+	cudaFree(d_temp_storage);
+	cudaFree(SPT_counts);
+
+
+	*SPT_counts_out = SPT_count_prefix_sum;
+	*SPT_cut = final_result;
+	//std::cout << "NUMBER OF RENDER INDICES:" << h_num_indices << std::endl;
+	return h_num_indices;
+}
+
 
 int Switching::expandToSize(
 	int N,

@@ -74,13 +74,22 @@ torch::Tensor& viewdir,
 torch::Tensor& ts,
 torch::Tensor& num_kids);
 
-int GetHierarchyCut(
-torch::Tensor& nodes, 
-torch::Tensor& positions,
-torch::Tensor& scales, 
-float size, 
-torch::Tensor& viewpoint, 
-torch::Tensor& viewdir, 
-torch::Tensor& render_indices);
+//int GetHierarchyCut(
+//torch::Tensor& nodes, 
+//torch::Tensor& positions,
+//torch::Tensor& scales, 
+//float size, 
+//torch::Tensor& viewpoint, 
+//torch::Tensor& viewdir, 
+//torch::Tensor& render_indices);
 
 void GetMortonCode(torch::Tensor& xyz, torch::Tensor& min, torch::Tensor& max, torch::Tensor& codes);
+
+std::tuple<torch::Tensor, torch::Tensor> GetSPTCut(
+	int number_of_SPTs,
+	torch::Tensor& gaussian_indices,
+	torch::Tensor& SPT_starts,
+	torch::Tensor& SPT_max,
+	torch::Tensor& SPT_min,
+	torch::Tensor& SPT_indices,
+	torch::Tensor& SPT_distances);

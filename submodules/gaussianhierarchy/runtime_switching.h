@@ -107,4 +107,15 @@ public:
 		float zy,
 		float zz
 	);
+
+	static int getSPTCut(
+	int number_of_SPTs,
+	int* gaussian_indices,
+	int* SPT_starts,
+	float* SPT_max,
+	float* SPT_min,
+	int* SPT_indices,
+	float* SPT_distances,
+	int** SPT_cut,
+	int** SPT_counts);
 };

@@ -13,13 +13,25 @@ import torch
 from torch import nn
 import math
 from diff_gaussian_rasterization import GaussianRasterizationSettings, GaussianRasterizer
-from scene.gaussian_model import GaussianModel
+#from scene.gaussian_model import GaussianModel
 from utils.sh_utils import eval_sh
 from diff_gaussian_rasterization import _C
 import numpy as np
 
+
+def occlusion_cull(indices, gaussians, camera, pipe, background):
+    means3D = gaussians._xyz[indices].cuda().contiguous()
+    opacity = gaussians.opacity_activation(gaussians._opacity[indices].cuda().contiguous())
+    scales = gaussians.scaling_activation(gaussians._scaling[indices].cuda().contiguous())
+    rotations = gaussians.rotation_activation(gaussians._rotation[indices].cuda().contiguous())
+    features_dc = gaussians._features_dc[indices].cuda().contiguous()
+    features_rest = gaussians._features_rest[indices].cuda().contiguous()
+    shs = torch.cat((features_dc, features_rest), dim=1).contiguous()
+    
+    return render_on_disk(camera, means3D, opacity, scales, rotations, shs, pipe, background)["seen"].to(torch.bool).cpu()
+
 def render(
-        viewpoint_camera, pc : GaussianModel, 
+        viewpoint_camera, pc, 
         pipe, 
         bg_color : torch.Tensor, 
         scaling_modifier = 1.0, 
@@ -195,9 +207,7 @@ def render_on_disk(
 
     rasterizer = GaussianRasterizer(raster_settings=raster_settings)
 
-    
-    
-    rendered_image, radii, _ = rasterizer(
+    rendered_image, seen, depth = rasterizer(
         means3D = means3D,
         means2D = means2D,
         shs = shs,
@@ -208,20 +218,21 @@ def render_on_disk(
         cov3D_precomp = cov3D_precomp)
     
     rendered_image = rendered_image.clamp(0, 1)
-    radii = radii[100000:]
-    vis_filter = radii > 0
+    #radii = radii[100000:]
+    #vis_filter = radii > 0
 
     # Those Gaussians that were frustum culled or had a radius of 0 were not visible.
     # They will be excluded from value updates used in the splitting criteria.
     return {"render": rendered_image,
             "viewspace_points": screenspace_points,
-            "visibility_filter" : vis_filter,
-            "radii": radii[vis_filter]}
+            #"visibility_filter" : vis_filter,
+            #"radii": radii[vis_filter]
+            "seen" : seen}
 
 # render with hierarchy, interpolate Gaussians with their parent nodes beforehand
 def render_post(
         viewpoint_camera, 
-        gaussians : GaussianModel, 
+        gaussians, 
         pipe, 
         bg_color : torch.Tensor, 
         scaling_modifier = 1.0, 
@@ -383,7 +394,7 @@ def render_post(
 
 
 # Exactly like render, but without the option to use exposure and without returning depth data (depth regularization is only used in chunk training)
-def render_coarse(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, scaling_modifier = 1.0, zfar=0.0, override_color = None, indices = None):
+def render_coarse(viewpoint_camera, pc, pipe, bg_color : torch.Tensor, scaling_modifier = 1.0, zfar=0.0, override_color = None, indices = None):
     """
     Render the scene for the coarse optimization. 
     

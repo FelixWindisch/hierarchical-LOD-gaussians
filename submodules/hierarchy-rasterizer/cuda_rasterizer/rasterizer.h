@@ -61,11 +61,13 @@ namespace CudaRasterizer
 			float* boxmin = nullptr,
 			float* boxmax = nullptr,
 			bool debug = false,
+			int* seen = nullptr,
 			int skyboxnum = 0,
 			void* stream = 0,
 			int* num_rendered = nullptr,
 			float biglimit = INFINITY,
-			bool on_cpu = false);
+			bool on_cpu = false
+			);
 
 		static void backward(
 			const int P, int D, int M, int R,
