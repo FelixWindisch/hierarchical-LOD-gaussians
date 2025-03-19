@@ -38,7 +38,6 @@ SPT_index = 0
 SPT_min_distance = 1
 SPT_max_distance = 2
 
-
 clock_start = True
 clock_time = time.time()
 def clock():
@@ -107,25 +106,34 @@ class GaussianModel:
     
     
     
-    def get_SPT_cut(self, camera_position, full_proj_transform, target_granularity, camera, pipe):
+    def get_SPT_cut(self, camera_position, full_proj_transform, target_granularity, camera, pipe, use_bouding_spheres=True, use_frustum_culling=True, use_occlusion_culling = False):
         # Scale factor decides strictness of frustum culling
+        if use_bouding_spheres:
+            bounds = self.bounding_sphere_radii
+        else: 
+            bounds = (self.scaling_activation(torch.max(self.upper_tree_scaling, dim=-1)[0]) * 3.0)
         #max_scales = self.scaling_activation(torch.max(self.upper_tree_scaling, dim=-1)[0]) * 3.0
         planes = self.extract_frustum_planes(full_proj_transform)
         #visible = gaussians.frustum_cull_spheres(gaussians._xyz[render_indices].cuda(), max_scales, planes)
-        cull = lambda indices : self.frustum_cull_spheres(self.upper_tree_xyz[indices], self.bounding_sphere_radii[indices], planes)
+        if use_frustum_culling:
+            cull = lambda indices : self.frustum_cull_spheres(self.upper_tree_xyz[indices], bounds[indices], planes)
+        else:
+            cull = lambda indices : torch.ones(len(indices), dtype = torch.bool)
+        
         # Detail level is sufficient (return 0 for cut) to cut if the closest distance at which we can view the Gaussian is less than the distance to camera
         LOD_detail_cut = lambda indices : self.min_distance_squared[indices] > (camera_position - self.upper_tree_xyz[indices]).square().sum()
         LOD_detail_cut = lambda indices : torch.ones_like(indices, dtype=torch.bool)
         coarse_cut = self.cut_hierarchy_on_condition(self.upper_tree_nodes, LOD_detail_cut, return_upper_tree=False, root_node=0, leave_out_of_cut_condition=cull)
 
         # occlusion cull
-        #bg_color = [0, 0, 0]
-        #background = torch.tensor(bg_color, dtype=torch.float32, device="cuda")
-        #temp = len(coarse_cut)
-        #occlusion_indices = self.upper_tree_nodes[coarse_cut, hierarchy_node_max_side_length]
-        #occlusion_mask = occlusion_cull(occlusion_indices.cpu(), self, camera, pipe, background).cuda()
-        #coarse_cut = coarse_cut[occlusion_mask]
-        #print(f"Occlusion Cull {temp - len(coarse_cut)} out of {temp} upper tree gaussians")
+        if use_occlusion_culling:
+            bg_color = [0, 0, 0]
+            background = torch.tensor(bg_color, dtype=torch.float32, device="cuda")
+            temp = len(coarse_cut)
+            occlusion_indices = self.upper_tree_nodes[coarse_cut, hierarchy_node_max_side_length]
+            occlusion_mask = occlusion_cull(occlusion_indices.cpu(), self, camera, pipe, background).cuda()
+            coarse_cut = coarse_cut[occlusion_mask]
+            print(f"Occlusion Cull {temp - len(coarse_cut)} out of {temp} upper tree gaussians")
         
         
         leaf_mask = self.upper_tree_nodes[coarse_cut, hierarchy_node_child_count] == 0
@@ -173,7 +181,7 @@ class GaussianModel:
         return result, None, None
         
 
-    def build_hierarchical_SPT(self, SPT_Root_Volume, target_granularity):
+    def build_hierarchical_SPT(self, SPT_Root_Volume, target_granularity, use_bounding_spheres=True):
         SPT_scale = SPT_Root_Volume
         
         
@@ -188,7 +196,7 @@ class GaussianModel:
         self.SPT_max = torch.empty(0, device='cuda', dtype=torch.float32)
         self.SPT_gaussian_indices = torch.empty(0, device='cuda', dtype=torch.int32)
 
-        self.SPT = []
+        #self.SPT = []
         SPT_indices = []
         leaf_spt_children = []
         
@@ -237,16 +245,13 @@ class GaussianModel:
                 SPT = torch.cat((SPT, stack_SPT))
                 temp_additional_indices = torch.cat((temp_additional_indices, stack))
             if len(SPT) > 100: 
-                
                 bounding_sphere_radii.append(bounding_sphere_radius)
                 SPT = SPT.cuda()
                 sort_indices = SPT[:,-1].argsort(dim=0, descending=True)
                 SPT = SPT[sort_indices]
-                
-                leaf_spt_children.append(len(self.SPT))
-                self.SPT.append(SPT)
+                leaf_spt_children.append(len(SPT_root_hierarchy_indices))
+                #self.SPT.append(SPT)
                 SPT_indices.append(cut_node)
-                
                 self.SPT_starts = torch.cat((self.SPT_starts, (self.SPT_starts[-1] + len(SPT)).unsqueeze(0)))
                 self.SPT_max = torch.cat((self.SPT_max, SPT[:, 2]))
                 self.SPT_min = torch.cat((self.SPT_min, SPT[:, 1]))
@@ -256,7 +261,6 @@ class GaussianModel:
             else:
                 upper_tree_indices = torch.cat((upper_tree_indices, temp_additional_indices)) # SPT[:, 0].to(torch.int32)[1:]))
         
-        self.bounding_sphere_radii = torch.zeros_like(upper_tree_indices, device='cuda', dtype=torch.float32)
         upper_tree_indices = torch.sort(upper_tree_indices)[0]
         # make it contiguous for searchsorted()
         upper_tree_indices = upper_tree_indices.contiguous()
@@ -290,23 +294,25 @@ class GaussianModel:
         
         
         leaf_indices = torch.where(self.upper_tree_nodes[:, hierarchy_node_first_child] == -1)[0]
-        self.bounding_sphere_radii[leaf_indices] = torch.max(self.scaling_activation(self.upper_tree_scaling[leaf_indices]), dim=-1)[0] * 3
-        self.bounding_sphere_radii[cut_SPT_indices] = torch.tensor(bounding_sphere_radii, device ='cuda')
-        # upward propagating bounding sphere radii
-        level_indices = torch.where(self.upper_tree_nodes[:, hierarchy_node_child_count] == 0)[0]
-        while level_indices.numel():
-            parents = self.upper_tree_nodes[level_indices, hierarchy_node_parent]
-            parents = parents[parents >= 0]
-            first_children = self.upper_tree_nodes[parents, hierarchy_node_first_child]
-            second_children = self.upper_tree_nodes[first_children, hierarchy_node_next_sibling]
-            first_children_distance = (self.upper_tree_xyz[parents] - self.upper_tree_xyz[first_children]).square().sum(1).sqrt()
-            second_children_distance = (self.upper_tree_xyz[parents] - self.upper_tree_xyz[second_children]).square().sum(1).sqrt()
-            self.bounding_sphere_radii[parents] = torch.maximum(self.bounding_sphere_radii[first_children] + first_children_distance, self.bounding_sphere_radii[second_children] + second_children_distance)
-            level_indices = parents
+        if use_bounding_spheres:
+            self.bounding_sphere_radii = torch.zeros_like(upper_tree_indices, device='cuda', dtype=torch.float32)
+            self.bounding_sphere_radii[leaf_indices] = torch.max(self.scaling_activation(self.upper_tree_scaling[leaf_indices]), dim=-1)[0] * 3
+            self.bounding_sphere_radii[cut_SPT_indices] = torch.tensor(bounding_sphere_radii, device ='cuda')
+            # upward propagating bounding sphere radii
+            level_indices = torch.where(self.upper_tree_nodes[:, hierarchy_node_child_count] == 0)[0]
+            while level_indices.numel():
+                parents = self.upper_tree_nodes[level_indices, hierarchy_node_parent]
+                parents = parents[parents >= 0]
+                first_children = self.upper_tree_nodes[parents, hierarchy_node_first_child]
+                second_children = self.upper_tree_nodes[first_children, hierarchy_node_next_sibling]
+                first_children_distance = (self.upper_tree_xyz[parents] - self.upper_tree_xyz[first_children]).square().sum(1).sqrt()
+                second_children_distance = (self.upper_tree_xyz[parents] - self.upper_tree_xyz[second_children]).square().sum(1).sqrt()
+                self.bounding_sphere_radii[parents] = torch.maximum(self.bounding_sphere_radii[first_children] + first_children_distance, self.bounding_sphere_radii[second_children] + second_children_distance)
+                level_indices = parents
             
             
-        self.bounding_sphere_radii = self.bounding_sphere_radii.cuda()
-        
+            self.bounding_sphere_radii = self.bounding_sphere_radii.cuda()
+        #self.SPT = []
         return torch.tensor(SPT_root_hierarchy_indices)
         
         

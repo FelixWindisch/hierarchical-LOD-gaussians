@@ -13,6 +13,8 @@ import torch
 from torch import nn
 import math
 from diff_gaussian_rasterization import GaussianRasterizationSettings, GaussianRasterizer
+import vanilla_gaussian_rasterization
+import stp_gaussian_rasterization
 #from scene.gaussian_model import GaussianModel
 from utils.sh_utils import eval_sh
 from diff_gaussian_rasterization import _C
@@ -228,6 +230,9 @@ def render_on_disk(
             #"visibility_filter" : vis_filter,
             #"radii": radii[vis_filter]
             "seen" : seen}
+
+
+
 
 # render with hierarchy, interpolate Gaussians with their parent nodes beforehand
 def render_post(
@@ -506,3 +511,193 @@ def render_coarse(viewpoint_camera, pc, pipe, bg_color : torch.Tensor, scaling_m
             "viewspace_points": screenspace_points,
             "visibility_filter" : vis_filter,
             "radii": radii[subfilter]}
+
+
+def render_stp(viewpoint_camera, gaussians, 
+        means3D,
+        opacity,
+        scales, 
+        rotations,
+        shs, pipe, bg_color : torch.Tensor, splat_args = None, sh_degree=3, scaling_modifier = 1.0, override_color = None, use_trained_exp=False):
+    """
+    Render the scene. 
+    
+    Background tensor (bg_color) must be on GPU!
+    """
+ 
+    # Create zero tensor. We will use it to make pytorch return gradients of the 2D (screen-space) means
+    #screenspace_points = torch.zeros_like(means3D, dtype=means3D.dtype, requires_grad=True, device="cuda") + 0
+
+    # Set up rasterization configuration
+    tanfovx = math.tan(viewpoint_camera.FoVx * 0.5)
+    tanfovy = math.tan(viewpoint_camera.FoVy * 0.5)
+
+    raster_settings = stp_gaussian_rasterization.GaussianRasterizationSettings(
+        image_height=int(viewpoint_camera.image_height),
+        image_width=int(viewpoint_camera.image_width),
+        tanfovx=tanfovx,
+        tanfovy=tanfovy,
+        bg=bg_color,
+        scale_modifier=1.0,
+        viewmatrix=viewpoint_camera.world_view_transform,
+        projmatrix=viewpoint_camera.full_proj_transform,
+        inv_viewprojmatrix=viewpoint_camera.full_proj_transform_inverse,
+        sh_degree=sh_degree,
+        campos=viewpoint_camera.camera_center,
+        prefiltered=False,
+        debug=True,
+        render_depth=False,
+        settings=splat_args)
+
+    rasterizer = stp_gaussian_rasterization.GaussianRasterizer(raster_settings=raster_settings)
+    size = len(means3D)
+    #means3D = torch.ones((size,3), device='cuda')
+    #opacity = torch.ones(size, device='cuda')
+    #scales = torch.full((size,3), 0.001, device='cuda')
+    #rotations = torch.zeros((size,4), device='cuda')
+    #rotations[:, 3] = 1
+    #shs = shs.abs()
+    #shs = torch.zeros_like(shs)
+
+    
+    screenspace_points = torch.zeros_like(means3D, dtype=means3D.dtype, requires_grad=True, device="cuda") + 0
+    try:
+        screenspace_points.retain_grad()
+    except:
+        pass
+    means2D = (screenspace_points)
+    # If precomputed 3d covariance is provided, use it. If not, then it will be computed from
+    # scaling / rotation by the rasterizer.
+    cov3D_precomp = None
+
+    # If precomputed colors are provided, use them. Otherwise, if it is desired to precompute colors
+    # from SHs in Python, do it. If not, then SH -> RGB conversion will be done by rasterizer.
+    
+    colors_precomp = None
+    #override_color = torch.ones((len(means3D), 3), device='cuda', dtype=torch.float32)
+    #if not override_color is None:
+    #    shs = None
+    #    colors_precomp = override_color
+    #if True or pipe.compute_cov3D_python:
+    #    cov3D_precomp = gaussians.covariance_activation(scales, 1.0, rotations)
+        
+    #if True or pipe.convert_SHs_python:
+    #    shs_view = shs.transpose(1, 2).view(-1, 3, (3+1)**2)
+    #    dir_pp = (means3D - viewpoint_camera.camera_center.repeat(shs.shape[0], 1))
+    #    dir_pp_normalized = dir_pp/dir_pp.norm(dim=1, keepdim=True)
+    #    sh2rgb = eval_sh(sh_degree, shs_view, dir_pp_normalized)
+    #    colors_precomp = torch.clamp_min(sh2rgb + 0.5, 0.0)
+    number_to_render = 10000
+    # Rasterize visible Gaussians to image, obtain their radii (on screen). 
+    rendered_image, radii = rasterizer(
+        means3D = means3D[:number_to_render],
+        means2D = means2D[:number_to_render],
+        shs = shs[:number_to_render],
+        colors_precomp = None, # colors_precomp[:number_to_render],
+        opacities = (opacity)[:number_to_render],
+        scales = scales[:number_to_render],
+        rotations = rotations[:number_to_render],
+        cov3D_precomp = None)
+    print("DONE RENDERING!")
+    # Apply exposure to rendered image (training only)
+    #if use_trained_exp:
+    #    exposure = pc.get_exposure_from_name(viewpoint_camera.image_name)
+    #    rendered_image = torch.matmul(rendered_image.permute(1, 2, 0), exposure[:3, :3]).permute(2, 0, 1) + exposure[:3, 3,   None, None]
+
+    # Those Gaussians that were frustum culled or had a radius of 0 were not visible.
+    # They will be excluded from value updates used in the splitting criteria.
+    rendered_image = rendered_image.clamp(0, 1)
+    out = {
+        "render": rendered_image,
+        "viewspace_points": screenspace_points
+        }
+    
+    return out
+
+
+def render_vanilla(viewpoint_camera, 
+        means3D,
+        opacity,
+        scales, 
+        rotations,
+        shs, pipe, bg_color : torch.Tensor, sh_degree=3, scaling_modifier = 1.0, override_color = None, use_trained_exp=False):
+    """
+    Render the scene. 
+    
+    Background tensor (bg_color) must be on GPU!
+    """
+ 
+    # Create zero tensor. We will use it to make pytorch return gradients of the 2D (screen-space) means
+    #screenspace_points = torch.zeros_like(means3D, dtype=means3D.dtype, requires_grad=True, device="cuda") + 0
+
+    # Set up rasterization configuration
+    tanfovx = math.tan(viewpoint_camera.FoVx * 0.5)
+    tanfovy = math.tan(viewpoint_camera.FoVy * 0.5)
+
+    raster_settings = vanilla_gaussian_rasterization.GaussianRasterizationSettings(
+        image_height=int(viewpoint_camera.image_height),
+        image_width=int(viewpoint_camera.image_width),
+        tanfovx=tanfovx,
+        tanfovy=tanfovy,
+        bg=bg_color,
+        scale_modifier=1.0,
+        viewmatrix=viewpoint_camera.world_view_transform,
+        projmatrix=viewpoint_camera.full_proj_transform,
+        sh_degree=sh_degree,
+        campos=viewpoint_camera.camera_center,
+        prefiltered=False,
+        debug=True    )
+
+    rasterizer = vanilla_gaussian_rasterization.GaussianRasterizer(raster_settings=raster_settings)
+    size = len(means3D)
+    #means3D = torch.ones((size,3), device='cuda')
+    #opacity = torch.ones(size, device='cuda')
+    #scales = torch.ones((size,3), device='cuda')
+    #rotations = torch.zeros((size,4), device='cuda')
+    #rotations[:, 0] = 1
+    #shs = torch.ones((size, 16, 3))
+    
+    
+    screenspace_points = torch.zeros_like(means3D, dtype=torch.float32, requires_grad=True, device="cuda") + 0
+    try:
+        screenspace_points.retain_grad()
+    except:
+        pass
+    means2D = (screenspace_points)
+    # If precomputed 3d covariance is provided, use it. If not, then it will be computed from
+    # scaling / rotation by the rasterizer.
+    cov3D_precomp = None
+
+    # If precomputed colors are provided, use them. Otherwise, if it is desired to precompute colors
+    # from SHs in Python, do it. If not, then SH -> RGB conversion will be done by rasterizer.
+    
+    colors_precomp = None
+    if not override_color is None:
+        shs = None
+        colors_precomp = override_color
+
+    # Rasterize visible Gaussians to image, obtain their radii (on screen). 
+    rendered_image, radii = rasterizer(
+        means3D = means3D,
+        means2D = means2D,
+        shs = shs,
+        colors_precomp = colors_precomp,
+        opacities = opacity,
+        scales = scales,
+        rotations = rotations,
+        cov3D_precomp = None)
+    print("DONE RENDERING!")
+    # Apply exposure to rendered image (training only)
+    #if use_trained_exp:
+    #    exposure = pc.get_exposure_from_name(viewpoint_camera.image_name)
+    #    rendered_image = torch.matmul(rendered_image.permute(1, 2, 0), exposure[:3, :3]).permute(2, 0, 1) + exposure[:3, 3,   None, None]
+
+    # Those Gaussians that were frustum culled or had a radius of 0 were not visible.
+    # They will be excluded from value updates used in the splitting criteria.
+    rendered_image = rendered_image.clamp(0, 1)
+    out = {
+        "render": rendered_image,
+        "viewspace_points": screenspace_points
+        }
+    
+    return out

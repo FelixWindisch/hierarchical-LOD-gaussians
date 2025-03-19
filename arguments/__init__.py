@@ -9,9 +9,76 @@
 # For inquiries contact  george.drettakis@inria.fr
 #
 
+
 from argparse import ArgumentParser, Namespace
+from stp_gaussian_rasterization import ExtendedSettings, GlobalSortOrder, SortMode
+import json
 import sys
 import os
+from distutils.util import strtobool
+class SplattingSettings():
+    
+    group_config = None
+    group_settings = None
+    settings = ExtendedSettings()
+    parser = None
+    render = False
+    
+    def __init__(self, parser, render=False):
+        self.parser = parser
+        self.render = render
+        if not render:
+            self.group_config = parser.add_argument_group("Splatting Config")
+            self.group_config.add_argument("--splatting_config", type=str)
+            
+        bool_ = lambda x: bool(strtobool(x))
+        
+        self.group_settings = parser.add_argument_group("Splatting Settings")
+        self.group_settings.add_argument("--sort_mode", type=lambda sortmode: SortMode[sortmode], choices=list(SortMode))
+        self.group_settings.add_argument("--sort_order", type=lambda sortorder: GlobalSortOrder[sortorder], choices=list(GlobalSortOrder))
+        self.group_settings.add_argument("--tile_4x4", type=int, choices=[64], help='only needed if using sort_mode HIER')
+        self.group_settings.add_argument("--tile_2x2", type=int, choices=[8,12,20], help='only needed if using sort_mode HIER')
+        self.group_settings.add_argument("--per_pixel", type=int, choices=[1,2,4,8,12,16,20,24], help='if using sort_mode HIER, only {4,8,16} are valid')
+        self.group_settings.add_argument("--rect_bounding", type=bool_, choices=[True, False], help="Bound 2D Gaussians with a rectangle instead of a circle")
+        self.group_settings.add_argument("--tight_opacity_bounding", type=bool_, choices=[True, False], help="Bound 2D Gaussians by considering their opacity")
+        self.group_settings.add_argument("--tile_based_culling", type=bool_, choices=[True, False], help="Cull complete tiles based on opacity")
+        self.group_settings.add_argument("--hierarchical_4x4_culling", type=bool_, choices=[True, False], help="Cull Gaussians for 4x4 subtiles, only when using sort_mode HIER")
+        self.group_settings.add_argument("--load_balancing", type=bool_, choices=[True, False], help="Perform per-tile computations cooperatively (e.g. duplication)")
+        self.group_settings.add_argument("--proper_ewa_scaling", type=bool_, choices=[True, False], help='Dilation of 2D Gaussians as proposed by Yu et al. ("Mip-Splatting")')
+    
+    def get_settings(self, arguments):
+        # get valid choices from configargparse
+        config = None
+        
+        # load default dict, if passed
+        if self.render:
+            cmdlne_string = sys.argv[1:]
+            args_cmdline = self.parser.parse_args(cmdlne_string)
+            cfgfilepath = os.path.join(args_cmdline.model_path, "config.json")
+            print("Looking for splatting config file in", cfgfilepath)
+            if os.path.exists(cfgfilepath):
+                print("Config file found: {}".format(cfgfilepath))
+                self.settings = ExtendedSettings.from_json(cfgfilepath)
+            else:
+                print("No config file found, assuming default values")
+        else:
+            for arg in vars(arguments).items():
+                if any([arg[0] in z.option_strings[0] for z in self.group_config._group_actions]):
+                    # json passed, load it
+                    if arg[1] is None:
+                        continue
+                    with open(arg[1], 'r') as json_file:
+                        config = json.load(json_file)
+                        self.settings = ExtendedSettings.from_dict(config)
+                    
+        for arg in vars(arguments).items():
+            if any([arg[0] in z.option_strings[0] for z in self.group_settings._group_actions]):
+                # pass any options which were not given
+                if arg[1] is None:
+                    continue
+                self.settings.set_value(arg[0], arg[1])
+                
+        return self.settings
 
 class GroupParams:
     pass

@@ -10,6 +10,38 @@ def pair_id_to_image_ids(pair_id, num_images):
     return image_id1, image_id2
 
 
+def metropolis_hastings_walk(G, node):
+    """
+    Perform a Metropolis-Hastings random walk on a weighted graph.
+    
+    Parameters:
+    G (networkx.Graph): A weighted graph where edge weights influence transition probabilities.
+    start_node: The starting node for the walk.
+    num_steps (int): The number of steps to take in the walk.
+    
+    Returns:
+    list: A list of visited nodes.
+    """
+    current_node = str(node)
+    while True:
+        neighbors = list(G.neighbors(current_node))
+        #if not neighbors:
+        #   break  # Stop if there are no neighbors
+        
+        # Select a neighbor with probability proportional to edge weight
+        weights = [G[current_node][nbr]['weight'] for nbr in neighbors]
+        proposed_node = random.choices(neighbors, weights=weights)[0]
+        
+        # Compute acceptance probability
+        deg_current = sum(G[current_node][nbr]['weight'] for nbr in G.neighbors(current_node))
+        deg_proposed = sum(G[proposed_node][nbr]['weight'] for nbr in G.neighbors(proposed_node))
+        acceptance_prob = min(1, deg_current / deg_proposed)
+        
+        # Accept or reject the move
+        if random.random() < acceptance_prob:
+            current_node = proposed_node    
+            return current_node
+
 def random_walk_node(G, node, node_count):
     neighbors = list(G.neighbors(node))  # Get adjacent nodes
     if not neighbors:

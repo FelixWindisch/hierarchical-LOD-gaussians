@@ -122,7 +122,7 @@ if __name__ == '__main__':
     model_params.images = images_dir
     
     graph_path = os.path.join(colmap_dir, "consistency_graph.edge_list")
-    if not os.path.isfile(graph_path) or True:
+    if not os.path.isfile(graph_path):
         if os.path.isfile(os.path.join(colmap_dir, "../unrectified/database.db")):   
             # Build consistency graph
             consistency_graph = consistency_graph.load_consistency_graph(os.path.join(colmap_dir, "../unrectified/"))
@@ -226,7 +226,7 @@ if __name__ == '__main__':
 
     
     #Standard 3DGS training parameters
-    optimization_params.iterations = 50_000
+    optimization_params.iterations = 30_000
     optimization_params.position_lr_init = 0.00016
     #optimization_params.position_lr_init = 0.016
     optimization_params.position_lr_final = 0.0000016
