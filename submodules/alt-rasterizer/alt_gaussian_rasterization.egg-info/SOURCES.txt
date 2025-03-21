@@ -1,0 +1,13 @@
+README.md
+ext.cpp
+rasterize_points.cu
+setup.py
+alt_gaussian_rasterization/__init__.py
+alt_gaussian_rasterization.egg-info/PKG-INFO
+alt_gaussian_rasterization.egg-info/SOURCES.txt
+alt_gaussian_rasterization.egg-info/dependency_links.txt
+alt_gaussian_rasterization.egg-info/top_level.txt
+cuda_rasterizer/backward.cu
+cuda_rasterizer/forward.cu
+cuda_rasterizer/rasterizer_impl.cu
+cuda_rasterizer/utils.cu

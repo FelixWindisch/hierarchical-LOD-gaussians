@@ -58,7 +58,7 @@ def direct_collate(x):
     return x
 
 
-WriteTensorBoard = False
+WriteTensorBoard = True
 
 #Unused
 Random_Hierarchy_Cut = True
@@ -81,19 +81,20 @@ Use_Frustum_Culling = True
 # SPTs
 On_Disk = True
 lambda_hierarchy = 0.00
-SPT_Root_Volume = 5
-SPT_Target_Granularity = 0.0005
+SPT_Root_Volume = 2
+SPT_Target_Granularity = 0.0000005
 Cache_SPTs = True
-Reuse_SPT_Tolerarance = 0.5
+Reuse_SPT_Tolerarance = 0.0
 #View Selection
 Use_Consistency_Graph = False
 # Rasterizer
-Rasterizer = "Hierarchical"
+Rasterizer = "Vanilla"
+
 
 
 def training(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoint_iterations, checkpoint, debug_from, cons_graph):
     #torch.cuda.memory._record_memory_history()
-    #torch.autograd.set_detect_anomaly(True)
+    torch.autograd.set_detect_anomaly(True)
     network_gui.init("127.0.0.1", 6009)
     splat_settings = ExtendedSettings.from_json('/home/felix-windisch/hierarchical-LOD-gaussians/configs/vanilla.json')
     if WriteTensorBoard:
@@ -205,6 +206,9 @@ def training(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoin
     else:
         means3D, opacity, scales, rotations, features_dc, features_rest, render_indices = torch.empty((0, 3), device='cuda', dtype=torch.float32), torch.empty((0, 1), device='cuda', dtype=torch.float32), torch.empty((0, 3), device='cuda', dtype=torch.float32), torch.empty((0,4), device='cuda', dtype=torch.float32), torch.empty((0, 1, 3), device='cuda', dtype=torch.float32), torch.empty((0,15, 3), device='cuda', dtype=torch.float32), torch.empty(0, device='cuda', dtype=torch.int32)
     
+    
+    
+    
     parameters = []
     for values, name, lr in zip([means3D, features_dc, opacity, scales, rotations, features_rest], 
                                                 ["xyz", "f_dc", "opacity", "scaling", "rotation", "f_rest"],
@@ -223,11 +227,10 @@ def training(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoin
                                                     lr_final=opt.position_lr_final*gaussians.spatial_lr_scale,
                                                     lr_delay_mult=opt.position_lr_delay_mult,
                                                     max_steps=opt.position_lr_max_steps)
-    
-    def Camera_MC_function(shared_features, number_of_visits):
-        return math.sqrt(shared_features)/number_of_visits**2
+
     while iteration < opt.iterations + 1:
         for viewpoint_batch in training_generator:
+            
             for viewpoint_cam in viewpoint_batch:
                 if Use_Consistency_Graph:
                     current_camera_index = int(consistency_graph.metropolis_hastings_walk(cons_graph, current_camera_index))
@@ -235,7 +238,7 @@ def training(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoin
                     train_image_counts[current_camera_index] += 1
                     viewpoint_cam = train_camera_data_set[current_camera_index]
                 #camera_direction = torch.tensor(viewpoint_cam.R[:, 2], dtype=torch.float32)
-                
+                #viewpoint_cam = train_camera_data_set[0]
                 if network_gui.conn == None:
                     network_gui.try_connect()
                 while network_gui.conn != None:
@@ -473,6 +476,17 @@ def training(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoin
                 # Render
                 if Rasterizer == "Hierarchical":
                     render_pkg = render_on_disk(
+                    viewpoint_cam, 
+                    means3D,
+                    gaussians.opacity_activation(opacity),
+                    gaussians.scaling_activation(scales), 
+                    gaussians.rotation_activation(rotations),
+                    shs,
+                    pipe, 
+                    background,
+                    sh_degree = gaussians.active_sh_degree)
+                elif Rasterizer == "Vanilla":
+                    render_pkg = render_vanilla(
                         viewpoint_cam, 
                         means3D,
                         gaussians.opacity_activation(opacity),
@@ -481,10 +495,12 @@ def training(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoin
                         shs,
                         pipe, 
                         background,
-                        sh_degree = gaussians.active_sh_degree)
+                        #splat_args=splat_settings,
+                        sh_degree = gaussians.active_sh_degree,
+                        )
                 else:
                     render_pkg = render_stp(
-                        viewpoint_cam, gaussians,
+                        viewpoint_cam, 
                         means3D,
                         gaussians.opacity_activation(opacity),
                         gaussians.scaling_activation(scales), 
@@ -501,10 +517,12 @@ def training(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoin
                 #torchvision.utils.save_image(image, os.path.join(scene.model_path, str(iteration) + "Sky.png"))
                 #exit()
 
-                if iteration % 250 == 0 or iteration == 1:
-                    torchvision.utils.save_image(image, os.path.join(scene.model_path, str(iteration) + ".png"))
+                
                 # Loss
                 gt_image = viewpoint_cam.original_image.cuda()
+                if iteration % 50 == 0 or iteration == 1:
+                    torchvision.utils.save_image(image, os.path.join(scene.model_path, str(iteration) + ".png"))
+                    #torchvision.utils.save_image(gt_image, os.path.join(scene.model_path, str(iteration) + "_gt.png"))
                 if viewpoint_cam.alpha_mask is not None:
                     Ll1 = l1_loss(image * viewpoint_cam.alpha_mask.cuda(), gt_image)
                     loss = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * (1.0 - fused_ssim((image * viewpoint_cam.alpha_mask.cuda()).unsqueeze(0), gt_image.unsqueeze(0)))
@@ -537,6 +555,7 @@ def training(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoin
                             print("gradients collapsed :(")
                 # Write values for every iteration
                 if WriteTensorBoard:
+                    writer.add_scalar('VRAM usage', torch.cuda.memory_allocated(0), iteration)
                     writer.add_scalar('Total Loss', loss, iteration)
                     writer.add_scalar('Opacity Loss', opacity_loss, iteration)
                     writer.add_scalar('Scaling Loss', scaling_loss, iteration)

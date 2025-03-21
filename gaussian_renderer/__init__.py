@@ -14,7 +14,8 @@ from torch import nn
 import math
 from diff_gaussian_rasterization import GaussianRasterizationSettings, GaussianRasterizer
 import vanilla_gaussian_rasterization
-import stp_gaussian_rasterization
+import alt_gaussian_rasterization
+#import stp_gaussian_rasterization
 #from scene.gaussian_model import GaussianModel
 from utils.sh_utils import eval_sh
 from diff_gaussian_rasterization import _C
@@ -209,6 +210,9 @@ def render_on_disk(
 
     rasterizer = GaussianRasterizer(raster_settings=raster_settings)
 
+    
+
+    
     rendered_image, seen, depth = rasterizer(
         means3D = means3D,
         means2D = means2D,
@@ -513,7 +517,7 @@ def render_coarse(viewpoint_camera, pc, pipe, bg_color : torch.Tensor, scaling_m
             "radii": radii[subfilter]}
 
 
-def render_stp(viewpoint_camera, gaussians, 
+def render_stp(viewpoint_camera,  
         means3D,
         opacity,
         scales, 
@@ -532,7 +536,7 @@ def render_stp(viewpoint_camera, gaussians,
     tanfovx = math.tan(viewpoint_camera.FoVx * 0.5)
     tanfovy = math.tan(viewpoint_camera.FoVy * 0.5)
 
-    raster_settings = stp_gaussian_rasterization.GaussianRasterizationSettings(
+    raster_settings = GaussianRasterizationSettings(
         image_height=int(viewpoint_camera.image_height),
         image_width=int(viewpoint_camera.image_width),
         tanfovx=tanfovx,
@@ -549,7 +553,7 @@ def render_stp(viewpoint_camera, gaussians,
         render_depth=False,
         settings=splat_args)
 
-    rasterizer = stp_gaussian_rasterization.GaussianRasterizer(raster_settings=raster_settings)
+    rasterizer = GaussianRasterizer(raster_settings=raster_settings)
     size = len(means3D)
     #means3D = torch.ones((size,3), device='cuda')
     #opacity = torch.ones(size, device='cuda')
@@ -634,7 +638,7 @@ def render_vanilla(viewpoint_camera,
     tanfovx = math.tan(viewpoint_camera.FoVx * 0.5)
     tanfovy = math.tan(viewpoint_camera.FoVy * 0.5)
 
-    raster_settings = vanilla_gaussian_rasterization.GaussianRasterizationSettings(
+    raster_settings = alt_gaussian_rasterization.GaussianRasterizationSettings(
         image_height=int(viewpoint_camera.image_height),
         image_width=int(viewpoint_camera.image_width),
         tanfovx=tanfovx,
@@ -646,9 +650,9 @@ def render_vanilla(viewpoint_camera,
         sh_degree=sh_degree,
         campos=viewpoint_camera.camera_center,
         prefiltered=False,
-        debug=True    )
+        debug=False    )
 
-    rasterizer = vanilla_gaussian_rasterization.GaussianRasterizer(raster_settings=raster_settings)
+    rasterizer = alt_gaussian_rasterization.GaussianRasterizer(raster_settings=raster_settings)
     size = len(means3D)
     #means3D = torch.ones((size,3), device='cuda')
     #opacity = torch.ones(size, device='cuda')
@@ -671,22 +675,23 @@ def render_vanilla(viewpoint_camera,
     # If precomputed colors are provided, use them. Otherwise, if it is desired to precompute colors
     # from SHs in Python, do it. If not, then SH -> RGB conversion will be done by rasterizer.
     
-    colors_precomp = None
-    if not override_color is None:
-        shs = None
-        colors_precomp = override_color
-
+    #if True or pipe.convert_SHs_python:
+    #    shs_view = shs.transpose(1, 2).view(-1, 3, (3+1)**2)
+    #    dir_pp = (means3D - viewpoint_camera.camera_center.repeat(shs.shape[0], 1))
+    #    dir_pp_normalized = dir_pp/dir_pp.norm(dim=1, keepdim=True)
+    #    sh2rgb = eval_sh(sh_degree, shs_view, dir_pp_normalized)
+    #    colors_precomp = torch.clamp_min(sh2rgb + 0.5, 0.0)
     # Rasterize visible Gaussians to image, obtain their radii (on screen). 
     rendered_image, radii = rasterizer(
         means3D = means3D,
         means2D = means2D,
-        shs = shs,
-        colors_precomp = colors_precomp,
+        shs = shs, # shs,
+        colors_precomp = None, #colors_precomp,
         opacities = opacity,
         scales = scales,
         rotations = rotations,
         cov3D_precomp = None)
-    print("DONE RENDERING!")
+    #print("DONE RENDERING!")
     # Apply exposure to rendered image (training only)
     #if use_trained_exp:
     #    exposure = pc.get_exposure_from_name(viewpoint_camera.image_name)
