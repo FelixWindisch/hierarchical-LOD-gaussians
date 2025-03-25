@@ -27,8 +27,9 @@ def init(wish_host, wish_port):
     global host, port, listener
     host = wish_host
     port = wish_port
-    listener.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 30_000_000)
-    listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    listener.bind((host, port))
+    #listener.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 30_000_000)
+    #listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     listener.listen()
     listener.settimeout(0)
 

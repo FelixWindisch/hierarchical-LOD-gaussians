@@ -183,7 +183,7 @@ class GaussianModel:
 
     def build_hierarchical_SPT(self, SPT_Root_Volume, target_granularity, use_bounding_spheres=True):
         SPT_scale = SPT_Root_Volume
-        
+        device = self._xyz.device
         
         condition = lambda indices : torch.prod(self.scaling_activation(self._scaling[indices]), dim=-1) > SPT_scale
         upper_tree_indices, cut_indices = self.cut_hierarchy_on_condition(self.nodes, condition)
@@ -209,20 +209,20 @@ class GaussianModel:
                 continue
             #create SPT
             SPT_center = self._xyz[cut_node]
-            SPT = torch.zeros(1, 3, device='cpu')
+            SPT = torch.zeros(1, 3, device=device)
             SPT.requires_grad_(False)
             SPT[0, 0] = cut_node
             SPT[0, 1] = self.get_min_distance(cut_node, target_granularity)
             SPT[0, 2] = 1000000000000
-            stack = torch.zeros(1, dtype=torch.int32, device = 'cpu')
+            stack = torch.zeros(1, dtype=torch.int32, device = device)
             stack[0] = cut_node
-            max_distances = torch.zeros(1)
+            max_distances = torch.zeros(1, device=device)
             max_distances[0] = SPT[0,1]
             bounding_sphere_radius = torch.max(self.scaling_activation(self._scaling[cut_node]), dim=-1)[0].item() * 3.0
-            temp_additional_indices = torch.empty(0, dtype=torch.int32)
+            temp_additional_indices = torch.empty(0, dtype=torch.int32, device=device)
             while len(stack) > 0:
                 
-                first_children = self.nodes[stack.cpu(), hierarchy_node_first_child]
+                first_children = self.nodes[stack.to(device), hierarchy_node_first_child]
                 second_children = self.nodes[first_children, hierarchy_node_next_sibling]
 
                 stack = torch.cat((first_children, second_children)) 
@@ -235,7 +235,7 @@ class GaussianModel:
                 max_center_distances = torch.max(center_distances + torch.max(self.scaling_activation(self._scaling[stack]), dim=-1)[0] * 3).item()
                 bounding_sphere_radius = max(bounding_sphere_radius, max_center_distances)
                 max_distances = max_distances[first_children > 0]
-                stack_SPT = torch.zeros(len(stack), 3)
+                stack_SPT = torch.zeros(len(stack), 3, device=device)
                 stack_SPT[:, 0] = stack
                 min_distances = self.get_min_distance(stack, target_granularity) + center_distances
                 max_distances = torch.cat((max_distances, max_distances))
@@ -266,7 +266,7 @@ class GaussianModel:
         upper_tree_indices = upper_tree_indices.contiguous()
         self.upper_tree_nodes = self.nodes[upper_tree_indices].clone().cuda()
 
-        cut_SPT_indices = torch.searchsorted(upper_tree_indices, torch.tensor(SPT_indices))
+        cut_SPT_indices = torch.searchsorted(upper_tree_indices, torch.tensor(SPT_indices, device=device))
         
         # SPT Leaves store the SPT index in first_child
         self.upper_tree_nodes[cut_SPT_indices, hierarchy_node_child_count] = 0
@@ -281,7 +281,7 @@ class GaussianModel:
         self.upper_tree_nodes[:, hierarchy_node_parent] = torch.searchsorted(upper_tree_indices.cuda(), self.upper_tree_nodes[:, hierarchy_node_parent])
         self.upper_tree_nodes[0, hierarchy_node_parent] = -1
         # Dont modify SPT leaves
-        non_leaf = ~torch.isin(torch.range(0, len(self.upper_tree_nodes)-1), torch.tensor(cut_SPT_indices))
+        non_leaf = ~torch.isin(torch.range(0, len(self.upper_tree_nodes)-1, device=device), cut_SPT_indices.clone().detach())
         # if it is a normal leaf node without SPT, set child to -1, otherwise translate the first_child from self.nodes to self.upper_tree_nodes index
         self.upper_tree_nodes[non_leaf, hierarchy_node_first_child] = torch.where(self.upper_tree_nodes[non_leaf, hierarchy_node_first_child] == 0, -1, torch.searchsorted(upper_tree_indices.cuda(), self.upper_tree_nodes[non_leaf, hierarchy_node_first_child]).to(torch.int32))
         
@@ -290,7 +290,7 @@ class GaussianModel:
         self.upper_tree_nodes[first_sibling, hierarchy_node_next_sibling] = torch.searchsorted(upper_tree_indices.cuda(), self.upper_tree_nodes[first_sibling, hierarchy_node_next_sibling]).to(torch.int32)
         
         # The squared min distance in the upper tree is used for granularity cutting the upper tree
-        self.min_distance_squared = self.get_min_distance(self.upper_tree_nodes[:, hierarchy_node_max_side_length].cpu(), target_granularity).square().cuda()
+        self.min_distance_squared = self.get_min_distance(self.upper_tree_nodes[:, hierarchy_node_max_side_length].to(device), target_granularity).square().cuda()
         
         
         leaf_indices = torch.where(self.upper_tree_nodes[:, hierarchy_node_first_child] == -1)[0]
@@ -355,7 +355,7 @@ class GaussianModel:
         stack[0] = root_node
         visited = 1
         if return_upper_tree:
-            upper_tree = torch.empty(0, dtype=torch.int32)#stack.clone() 
+            upper_tree = torch.empty(0, dtype=torch.int32, device = device)#stack.clone() 
         cut = torch.empty(0, dtype=torch.int32, device = device)
         while len(stack) > 0:
             if return_upper_tree:
@@ -421,6 +421,37 @@ class GaussianModel:
         return optimizer_state
         
     
+    def move_storage_to(self, device, max_number_of_gaussians):
+        self.size = len(self._xyz)
+        names = ["xyz", "f_dc", "scaling", "rotation", "opacity", "f_rest", "nodes"]
+        new_tensors = []
+        optimizer_state = {}
+        tensors = [self._xyz, self._features_dc, self._scaling, self._rotation, self._opacity, self._features_rest, self.nodes]
+        for name, tensor in zip(names, tensors):
+            shape = list(tensor.size())
+            shape[0] = max_number_of_gaussians
+            shape = torch.Size(shape)
+            storage_tensor = torch.zeros(shape, dtype=tensor.cpu().dtype, device=device)
+            #if device == 'cpu':
+            #    storage_tensor = storage_tensor.pin_memory()    
+            storage_tensor[:len(tensor)] = tensor
+            new_tensors.append(storage_tensor)
+            # Can we reduce the 
+            exp_avgs = torch.zeros(shape, dtype=torch.float32, device=device)
+            exp_avgs_sqs = torch.zeros(shape, dtype=torch.float32, device=device)
+            optimizer_state[name] = {"exp_avgs" : exp_avgs, "exp_avgs_sqs" : exp_avgs_sqs}
+        self._xyz = new_tensors[0]
+        self._features_dc = new_tensors[1]
+        self._scaling = new_tensors[2]
+        self._rotation = new_tensors[3]
+        self._opacity = new_tensors[4]
+        self._features_rest = new_tensors[5]
+        self.nodes = new_tensors[6]
+        
+        
+        return optimizer_state
+    
+    # deprecated?
     def move_to_cpu(self, max_number_of_gaussians):
         self.size = len(self._xyz)
         
@@ -546,10 +577,10 @@ class GaussianModel:
         for i in range(samples):
             random_node = random.randrange(1, len(self.nodes))
             bounding_sphere_radius = torch.max(self.get_scaling[random_node]).item()
-            bounding_sphere_position = self._xyz[random_node].detach().cpu()
+            bounding_sphere_position = self._xyz[random_node].detach()
             parent = self.nodes[random_node, hierarchy_node_parent]
             parent_sphere_radius = torch.max(self.get_scaling[parent])
-            parent_sphere_position = self._xyz[parent].detach().cpu()
+            parent_sphere_position = self._xyz[parent].detach()
             for j in range(100):
                 while True:
                     # Generate a random point in a cube of side 2*radius centered at the origin
@@ -992,20 +1023,19 @@ class GaussianModel:
             nodes = torch.cat((torch.full((self.skybox_points, 6), -99, dtype=torch.int32), nodes)) 
             nodes[skybox_points:, 3] = torch.where(nodes[skybox_points:, 2]==2, nodes[skybox_points:, 3], torch.zeros_like(nodes[skybox_points:,3]))
 
-        if self.on_disk:
-            self._xyz = xyz.cuda()
-            self._features_dc = shs_all.cuda()[:,:1,:].requires_grad_(True)
-            self._features_rest = shs_all.cuda()[:,1:16,:].requires_grad_(True)
-            self._opacity = alpha.cuda().requires_grad_(True)
-            self._scaling = scales.cuda().requires_grad_(True)
-            self._rotation =rots.cuda().requires_grad_(True)
-        else:
-            self._xyz = nn.Parameter(xyz.cuda().requires_grad_(True))
-            self._features_dc = nn.Parameter(shs_all.cuda()[:,:1,:].requires_grad_(True))
-            self._features_rest = nn.Parameter(shs_all.cuda()[:,1:16,:].requires_grad_(True))
-            self._opacity = nn.Parameter(alpha.cuda().requires_grad_(True))
-            self._scaling = nn.Parameter(scales.cuda().requires_grad_(True))
-            self._rotation = nn.Parameter(rots.cuda().requires_grad_(True))
+        self._xyz = xyz.cuda()
+        self._features_dc = shs_all.cuda()[:,:1,:].requires_grad_(True)
+        self._features_rest = shs_all.cuda()[:,1:16,:].requires_grad_(True)
+        self._opacity = alpha.cuda().requires_grad_(True)
+        self._scaling = scales.cuda().requires_grad_(True)
+        self._rotation =rots.cuda().requires_grad_(True)
+        
+        #    self._xyz = nn.Parameter(xyz.cuda().requires_grad_(True))
+        #    self._features_dc = nn.Parameter(shs_all.cuda()[:,:1,:].requires_grad_(True))
+        #    self._features_rest = nn.Parameter(shs_all.cuda()[:,1:16,:].requires_grad_(True))
+        #    self._opacity = nn.Parameter(alpha.cuda().requires_grad_(True))
+        #    self._scaling = nn.Parameter(scales.cuda().requires_grad_(True))
+        #    self._rotation = nn.Parameter(rots.cuda().requires_grad_(True))
         self.max_radii2D = torch.zeros((self.get_xyz.shape[0]), device="cuda")
 
         #self.opacity_activation = torch.abs
@@ -1236,7 +1266,7 @@ class GaussianModel:
         return optimizable_tensors
     
 
-    def densification_postfix_on_disk(self, new_xyz, new_features_dc, new_features_rest, new_opacities, new_scaling, new_rotation, reset_params=True):
+    def densification_postfix_with_storage(self, new_xyz, new_features_dc, new_features_rest, new_opacities, new_scaling, new_rotation, reset_params=True):
         new_gaussians = new_xyz.size()[0]
         self._xyz[self.size:self.size+new_gaussians] = new_xyz
         self._features_dc[self.size:self.size+new_gaussians] = new_features_dc
@@ -1454,6 +1484,7 @@ class GaussianModel:
 
 
 #region MCMC
+    # sets momentum parameters for inds to 0
     def replace_tensors_to_optimizer(self, inds=None):
         tensors_dict = {"xyz": self._xyz,
             "f_dc": self._features_dc,
@@ -1506,7 +1537,7 @@ class GaussianModel:
         ratio = torch.bincount(sampled_idxs).unsqueeze(-1)
         return sampled_idxs, ratio
     
-    def relocate_gs(self, dead_mask=None, size = 0, On_Disk=False):
+    def relocate_gs(self, dead_mask, size, optimizer_state, storage_device='cpu'):
         if dead_mask.sum() == 0:
             return
         alive_mask = ~dead_mask
@@ -1551,9 +1582,8 @@ class GaussianModel:
             self._rotation[dead_indices] 
         ) = self._update_params(reinit_idx, ratio=ratio)
         
-        if On_Disk:
-            new_opacity = new_opacity.cpu()
-            new_scaling = new_scaling.cpu()
+        new_opacity = new_opacity.to(storage_device)
+        new_scaling = new_scaling.to(storage_device)
         self._opacity[dead_indices] = new_opacity
         self._scaling[dead_indices] = new_scaling
         
@@ -1606,12 +1636,18 @@ class GaussianModel:
         self._features_dc[sibling_indices] = self._features_dc[dead_indices]
         self._opacity[sibling_indices] = self._opacity[dead_indices]
         self._scaling[sibling_indices] = self._scaling[dead_indices]
-        if not On_Disk:
-            # TODO: Implement Disk Equivalent
-            self.replace_tensors_to_optimizer(inds=sibling_indices)
-         
         
-    def add_new_gs(self, cap_max, size, On_Disk):
+        
+        # TODO: Implement Disk Equivalent
+        #self.replace_tensors_to_optimizer(inds=sibling_indices)
+        
+        # Keep momentum for dead indices to encourage exploration?
+        for name in ["xyz", "f_dc", "scaling", "rotation", "opacity", "f_rest", "nodes"]:
+            optimizer_state[name]["exp_avgs"][sibling_indices] = 0
+            optimizer_state[name]["exp_avgs_sqs"][sibling_indices] = 0
+        
+    def add_new_gs(self, cap_max, size):
+        device = self._xyz.device
         target_num = min(cap_max, int(1.05 * size))
         num_gs = max(0, target_num - size)
         if num_gs <= 0:
@@ -1642,18 +1678,19 @@ class GaussianModel:
         new_opacity = new_opacity.repeat_interleave(repeats=2, dim=0)
         new_scaling = new_scaling.repeat_interleave(repeats=2, dim=0)
         new_rotation = new_rotation.repeat_interleave(repeats=2, dim=0)
-        if On_Disk:
-            new_opacity = new_opacity.cpu()
-            new_scaling = new_scaling.cpu()
+
+        new_opacity = new_opacity.to(device)
+        new_scaling = new_scaling.to(device)
         
         
-        new_nodes = torch.zeros((len(new_xyz), 6), dtype=torch.int32)     
+        new_nodes = torch.zeros((len(new_xyz), 6), dtype=torch.int32, device= device)     
         add_idx = add_idx.to(torch.int32)
+        add_idx = add_idx.to(device)
         self.nodes[add_idx, hierarchy_node_child_count] = 2
-        self.nodes[add_idx, hierarchy_node_first_child] = torch.arange(0, len(add_idx), dtype = torch.int32) * 2 + size
+        self.nodes[add_idx, hierarchy_node_first_child] = torch.arange(0, len(add_idx), dtype = torch.int32, device=device) * 2 + size
         
-        index = torch.arange(0, len(add_idx), dtype = torch.int32) * 2
-        index_plus_one = torch.arange(0, len(add_idx), dtype = torch.int32) * 2 + 1
+        index = torch.arange(0, len(add_idx), dtype = torch.int32, device=device) * 2
+        index_plus_one = torch.arange(0, len(add_idx), dtype = torch.int32, device=device) * 2 + 1
         new_nodes[index, hierarchy_node_depth] = self.nodes[add_idx, hierarchy_node_depth] + 1
         new_nodes[index, hierarchy_node_parent] = add_idx
         new_nodes[index, hierarchy_node_child_count] = 0
@@ -1667,13 +1704,15 @@ class GaussianModel:
         new_nodes[index_plus_one, hierarchy_node_next_sibling] = 0
            
         
-        if On_Disk:
-            self.nodes[size:size+new_nodes.size()[0]] = new_nodes
-            self.densification_postfix_on_disk(new_xyz, new_features_dc, new_features_rest, new_opacity, new_scaling, new_rotation, reset_params=False)
-            self.size += new_nodes.size()[0]
-        else:
-            self.nodes = torch.cat((self.nodes, new_nodes.to(self.nodes.device)))  
-            self.densification_postfix(new_xyz, new_features_dc, new_features_rest, new_opacity, new_scaling, new_rotation, reset_params=False)      
+        
+        self.nodes[size:size+new_nodes.size()[0]] = new_nodes
+        self.densification_postfix_with_storage(new_xyz, new_features_dc, new_features_rest, new_opacity, new_scaling, new_rotation, reset_params=False)
+        self.size += new_nodes.size()[0]
+
+        
+        # With no separation of storage / render cache:
+        #    self.nodes = torch.cat((self.nodes, new_nodes.to(self.nodes.device)))  
+        #    self.densification_postfix(new_xyz, new_features_dc, new_features_rest, new_opacity, new_scaling, new_rotation, reset_params=False)      
             
         return num_gs
 #endregion

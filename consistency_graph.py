@@ -22,7 +22,7 @@ def metropolis_hastings_walk(G, node):
     Returns:
     list: A list of visited nodes.
     """
-    current_node = str(node)
+    current_node = node
     while True:
         neighbors = list(G.neighbors(current_node))
         #if not neighbors:

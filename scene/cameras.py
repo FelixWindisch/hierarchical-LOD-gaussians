@@ -14,6 +14,7 @@ from torch import nn
 import numpy as np
 from utils.graphics_utils import getWorld2View2, getProjectionMatrix
 import cv2
+from PIL import Image
 
 from utils.general_utils import PILtoTorch
 
@@ -21,12 +22,18 @@ import torch
 import torch.nn.functional as F
 
 class Camera(nn.Module):
+    def load_gt_image(self):
+        image = Image.open(self.image_path)
+        resized_image_rgb = PILtoTorch(image, self.resolution)
+        gt_image = resized_image_rgb[:3, ...]
+        return gt_image.clamp(0.0, 1.0).to(self.data_device)
+    
     def __init__(self, resolution, colmap_id, R, T, FoVx, FoVy, depth_params, primx, primy, image, alpha_mask,
                  invdepthmap,
                  image_name, uid,
                  trans=np.array([0.0, 0.0, 0.0]), scale=1.0, data_device = "cuda",
                  train_test_exp=False, is_test_dataset=False, is_test_view=False,
-                 ):
+                 image_path = "empty"):
         super(Camera, self).__init__()
 
         self.uid = uid
@@ -36,7 +43,7 @@ class Camera(nn.Module):
         self.FoVx = FoVx
         self.FoVy = FoVy
         self.image_name = image_name
-
+        self.image_path = image_path
         try:
             self.data_device = torch.device(data_device)
         except Exception as e:
@@ -49,9 +56,9 @@ class Camera(nn.Module):
         if alpha_mask is not None:
             self.alpha_mask = PILtoTorch(alpha_mask, resolution)
         elif resized_image_rgb.shape[0] == 4:
-            self.alpha_mask = resized_image_rgb[3:4, ...].to(self.data_device)
+            self.alpha_mask = resized_image_rgb[3:4, ...].to('cpu')
         else: 
-            self.alpha_mask = torch.ones_like(resized_image_rgb[0:1, ...].to(self.data_device))
+            self.alpha_mask = torch.ones_like(resized_image_rgb[0:1, ...].to('cpu'))
 
         if train_test_exp and is_test_view:
             if is_test_dataset:
@@ -59,7 +66,7 @@ class Camera(nn.Module):
             else:
                 self.alpha_mask[..., self.alpha_mask.shape[-1] // 2:] = 0
 
-        self.original_image = gt_image.clamp(0.0, 1.0).to(self.data_device)
+        self.original_image = gt_image.clamp(0.0, 1.0).to('cpu')
         self.image_width = self.original_image.shape[2]
         self.image_height = self.original_image.shape[1]
 

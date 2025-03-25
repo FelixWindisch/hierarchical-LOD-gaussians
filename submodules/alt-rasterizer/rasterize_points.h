@@ -65,3 +65,12 @@ torch::Tensor markVisible(
 		torch::Tensor& means3D,
 		torch::Tensor& viewmatrix,
 		torch::Tensor& projmatrix);
+
+
+// MCMC
+std::tuple<torch::Tensor, torch::Tensor> ComputeRelocationCUDA(
+	torch::Tensor& opacity_old,
+	torch::Tensor& scale_old,
+	torch::Tensor& N,
+	torch::Tensor& binoms,
+	const int n_max);

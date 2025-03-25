@@ -11,7 +11,7 @@
 
 
 from argparse import ArgumentParser, Namespace
-from stp_gaussian_rasterization import ExtendedSettings, GlobalSortOrder, SortMode
+#from stp_gaussian_rasterization import ExtendedSettings, GlobalSortOrder, SortMode
 import json
 import sys
 import os
@@ -20,7 +20,7 @@ class SplattingSettings():
     
     group_config = None
     group_settings = None
-    settings = ExtendedSettings()
+    #settings = ExtendedSettings()
     parser = None
     render = False
     
