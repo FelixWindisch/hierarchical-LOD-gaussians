@@ -36,7 +36,7 @@ import consistency_graph
 from scipy.spatial import KDTree
 import numpy as np
 from gaussian_hierarchy._C import  get_spt_cut_cuda
-from stp_gaussian_rasterization import ExtendedSettings
+#from stp_gaussian_rasterization import ExtendedSettings
 from gaussian_renderer import occlusion_cull
 import psutil
 
@@ -104,7 +104,7 @@ def training(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoin
     #torch.cuda.memory._record_memory_history()
     #torch.autograd.set_detect_anomaly(True)
     network_gui.init("127.0.0.1", 6009)
-    splat_settings = ExtendedSettings.from_json('/home/felix-windisch/hierarchical-LOD-gaussians/configs/vanilla.json')
+    #splat_settings = ExtendedSettings.from_json('/home/felix-windisch/hierarchical-LOD-gaussians/configs/vanilla.json')
     if WriteTensorBoard:
         writer = SummaryWriter()
         hyper_params = {

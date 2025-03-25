@@ -19,7 +19,7 @@ from scene import cameras
 from mpl_toolkits.mplot3d import Axes3D
 import matplotlib.pyplot as plt
 import numpy as np
-matplotlib.use('TkAgg')
+#matplotlib.use('TkAgg')
 from gaussian_hierarchy._C import expand_to_size, get_interpolation_weights, expand_to_size_dynamic, get_interpolation_weights_dynamic
 
 def direct_collate(x):

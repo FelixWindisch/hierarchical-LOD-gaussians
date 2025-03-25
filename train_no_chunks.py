@@ -122,23 +122,19 @@ if __name__ == '__main__':
     model_params.images = images_dir
     
     graph_path = os.path.join(colmap_dir, "consistency_graph.edge_list")
-    if not os.path.isfile(graph_path):
+    if not os.path.isfile(graph_path) or True:
         if os.path.isfile(os.path.join(colmap_dir, "../unrectified/database.db")):   
             # Build consistency graph
-            consistency_graph = consistency_graph.load_consistency_graph(os.path.join(colmap_dir, "../unrectified/"))
+            cg = consistency_graph.load_consistency_graph(os.path.join(colmap_dir, "../unrectified/"))
             # remove training images
-            consistency_graph.remove_nodes_from([(i*10)+1 for i in range(0, len(consistency_graph.nodes())//10 + 2)])
-            sorted_nodes = sorted(consistency_graph.nodes())
-            node_mapping = {old: new_index for new_index, old in enumerate(sorted_nodes)}
-            consistency_graph = nx.relabel_nodes(consistency_graph, node_mapping)
-            nx.write_edgelist(consistency_graph, graph_path)
-            print("Write consistency Graph")
+            cg.remove_nodes_from([(i*10)+1 for i in range(0, len(cg.nodes())//10 + 2)])
         else:
-            print("Could not find COLMAP database, do not use consistency graph")
-            consistency_graph = None
-    else:
-        consistency_graph = nx.read_edgelist(graph_path)
-        print("Load consistency Graph")
+            print("No COLMAP Database found for consistency graph!")
+            cg = None
+            
+    model_params.source_path = colmap_dir #os.path.join(colmap_dir, "../rectified/")
+    model_params.images = images_dir
+    
         
     # Randomize Initialization
     #gaussians = GaussianModel(1)
@@ -227,9 +223,9 @@ if __name__ == '__main__':
     
     #Standard 3DGS training parameters
     optimization_params.iterations = 30_000
-    optimization_params.position_lr_init = 0.00016
-    #optimization_params.position_lr_init = 0.016
-    optimization_params.position_lr_final = 0.0000016
+    optimization_params.position_lr_init =  0.00000056 #0.0000016 #0.00016
+    #     #optimization_params.position_lr_init = 0.016
+    optimization_params.position_lr_final = 0.0000000000001 #0.000000016 #0.0000016
     optimization_params.position_lr_delay_mult = 0.01
     optimization_params.position_lr_max_steps = 50_000
     optimization_params.feature_lr = 0.0025
@@ -242,7 +238,7 @@ if __name__ == '__main__':
     optimization_params.exposure_lr_delay_mult = 0.0
     optimization_params.percent_dense = 0.01
     optimization_params.lambda_dssim = 0.2
-    optimization_params.densification_interval = 500
+    optimization_params.densification_interval = 100
     optimization_params.opacity_reset_interval = 3000
     optimization_params.densify_from_iter = 100
     optimization_params.densify_until_iter = 40_000
@@ -251,7 +247,7 @@ if __name__ == '__main__':
     optimization_params.depth_l1_weight_final = 0.01
 
 
-    train_post.training(model_params, optimization_params, pipeline_params, [], [], [], [], consistency_graph)
+    train_post.training(model_params, optimization_params, pipeline_params, [], [], [], [], cg)
     
     exit()
     post_opt_chunk_args =  " ".join([

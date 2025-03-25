@@ -13,7 +13,6 @@ import torch
 from torch import nn
 import math
 from diff_gaussian_rasterization import GaussianRasterizationSettings, GaussianRasterizer
-import vanilla_gaussian_rasterization
 import alt_gaussian_rasterization
 #import stp_gaussian_rasterization
 #from scene.gaussian_model import GaussianModel
