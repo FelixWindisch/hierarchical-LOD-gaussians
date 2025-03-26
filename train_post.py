@@ -39,6 +39,7 @@ from gaussian_hierarchy._C import  get_spt_cut_cuda
 #from stp_gaussian_rasterization import ExtendedSettings
 from gaussian_renderer import occlusion_cull
 import psutil
+import gc
 
 # to check CPU RAM usage
 pid = os.getpid()
@@ -60,15 +61,15 @@ def direct_collate(x):
     return x
 
 
-WriteTensorBoard = True
+WriteTensorBoard = False
 #Standard
-densify_interval = 1000
+densify_interval = 50
 lr_multiplier = 0.1
 #Unused
 Random_Hierarchy_Cut = True
 Only_Noise_Visible = True
 #MCMC
-Max_Cap = 3_000_000
+Max_Cap = 20_000_000
 MCMC_Densification = True
 MCMC_Noise_LR = 0  #5e5
 lambda_scaling = 0
@@ -137,22 +138,27 @@ def training(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoin
     gaussians = GaussianModel(dataset.sh_degree)
     gaussians.active_sh_degree = dataset.sh_degree
     gaussians.scaffold_points = None
-    with torch.no_grad():
-        gaussians._features_dc = gaussians._features_dc.abs() 
+    #with torch.no_grad():
+    #    gaussians._features_dc = gaussians._features_dc.abs() 
     dataset.eval = True
     scene = Scene(dataset, gaussians, resolution_scales = [1], create_from_hier=True)
-    with torch.no_grad():
-        gaussians._opacity.clamp_(0, 0.99999)
-        gaussians._opacity = gaussians.inverse_opacity_activation(gaussians._opacity)
+    gaussians._xyz.requires_grad_(False)
+    gaussians._opacity.requires_grad_(False)
+    gaussians._rotation.requires_grad_(False)
+    gaussians._scaling.requires_grad_(False)
+    gaussians._features_dc.requires_grad_(False)
+    gaussians._features_rest.requires_grad_(False)
+    #with torch.no_grad():
+    gaussians._opacity.clamp_(0, 0.99999)
+    gaussians._opacity = gaussians.inverse_opacity_activation(gaussians._opacity)
         
     if checkpoint:
         (model_params, first_iter) = torch.load(checkpoint)
         gaussians.restore(model_params, opt)
         
-    render_indices = torch.zeros(gaussians._xyz.size(0)).int().cuda()
-    parent_indices = torch.zeros(gaussians._xyz.size(0)).int().cuda()
-    nodes_for_render_indices = torch.zeros(gaussians._xyz.size(0)).int().cuda()
-    num_siblings = torch.zeros(gaussians._xyz.size(0)).int().cuda()
+    #parent_indices = torch.zeros(gaussians._xyz.size(0)).int().cuda()
+    #nodes_for_render_indices = torch.zeros(gaussians._xyz.size(0)).int().cuda()
+    #num_siblings = torch.zeros(gaussians._xyz.size(0)).int().cuda()
     
     
     optimizer_state = gaussians.move_storage_to(Storage_Device, int(round(Max_Cap * 1.2)))
@@ -171,7 +177,6 @@ def training(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoin
     progress_bar = tqdm(range(first_iter, opt.iterations), desc="Training progress")
     first_iter += 1
 
-    indices = None
 
     iteration = first_iter
     # Dataloader loads data from disk
@@ -285,61 +290,59 @@ def training(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoin
 
                 clock()
                 
-                if not Cache_SPTs:
-                    ############# Individual Gaussian Cache
-                    new_render_indices, SPT_indices, SPT_distances = gaussians.get_SPT_cut(viewpoint_cam.camera_center.cuda(),  viewpoint_cam.full_proj_transform.cuda(), 0, viewpoint_cam, pipe, Use_Bounding_Spheres, Use_Frustum_Culling, Use_Occlusion_Culling)
-                    keep_mask = torch.isin(render_indices, new_render_indices).to(Storage_Device)
-                    write_back_mask = ~keep_mask
-                    write_back_indices = render_indices[write_back_mask].to(Storage_Device)
-                    load_mask = ~torch.isin(new_render_indices, render_indices)
-                    load_from_disk_indices = new_render_indices[load_mask].to(Storage_Device)
-                    render_indices = torch.cat((render_indices[keep_mask], new_render_indices[load_mask]))
-                    print(f"Load Percentage: {len(load_from_disk_indices) * 100.0 / len(render_indices):.2f}" )
-                    
-                    hierarchy_cut_time = clock()
-                    clock()
-                    
-                    # Write back the training results
-                    with torch.no_grad():
-                        gaussians._xyz[write_back_indices, :] = means3D[write_back_mask, :].detach().to(Storage_Device, non_blocking=False)
-                        gaussians._opacity[write_back_indices, :] = opacity[write_back_mask, :].detach().to(Storage_Device, non_blocking=False)
-                        gaussians._features_dc[write_back_indices, :] = features_dc[write_back_mask, :,  :].detach().to(Storage_Device, non_blocking=False)
-                        gaussians._features_rest[write_back_indices, :] = features_rest[write_back_mask, :].detach().to(Storage_Device, non_blocking=False)
-                        gaussians._scaling[write_back_indices, :] = scales[write_back_mask, :].detach().to(Storage_Device, non_blocking=False)
-                        gaussians._rotation[write_back_indices, :] = rotations[write_back_mask, :].detach().to(Storage_Device, non_blocking=False)
-                    
-                    means3D = nn.Parameter(torch.cat((means3D[keep_mask].detach(), gaussians._xyz[load_from_disk_indices].cuda(non_blocking=non_blocking))).contiguous())
-                    opacity = nn.Parameter(torch.cat((opacity[keep_mask].detach(), gaussians._opacity[load_from_disk_indices].cuda(non_blocking=non_blocking))).contiguous())
-                    scales = nn.Parameter(torch.cat((scales[keep_mask].detach(), gaussians._scaling[load_from_disk_indices].cuda(non_blocking=non_blocking))).contiguous())
-                    rotations = nn.Parameter(torch.cat((rotations[keep_mask].detach(), gaussians._rotation[load_from_disk_indices].cuda(non_blocking=non_blocking))).contiguous())
-                    # TODO: ABS?
-                    features_dc = nn.Parameter(torch.cat((features_dc[keep_mask].detach(), gaussians._features_dc[load_from_disk_indices].cuda(non_blocking=non_blocking))).contiguous())
-                    features_rest = nn.Parameter(torch.cat((features_rest[keep_mask].detach(), gaussians._features_rest[load_from_disk_indices].cuda(non_blocking=non_blocking))).contiguous())
-                    torch.cuda.synchronize()
-                    shs = torch.cat((features_dc, features_rest), dim=1).contiguous()
-                    
-                    #scene.dump_gaussians("Dump", False, file_name="View.ply", indices=render_indices.to(Storage_Device))
-                    
-                    parameters_new = []
-                    for index, (values, name, lr) in enumerate(zip([means3D, features_dc, opacity, scales, rotations, features_rest], 
-                                            ["xyz", "f_dc", "opacity", "scaling", "rotation", "f_rest"],
-                                            [xyz_lr, opt.feature_lr, opt.opacity_lr, opt.scaling_lr, opt.rotation_lr, opt.feature_lr])):
-                        optimizer_state[name]["exp_avgs"][write_back_indices] = parameters[index]["exp_avgs"][write_back_mask].to(Storage_Device)
-                        optimizer_state[name]["exp_avgs_sqs"][write_back_indices] = parameters[index]["exp_avgs_sqs"][write_back_mask].to(Storage_Device)
-                        exp_avgs = torch.cat((parameters[index]["exp_avgs"][keep_mask], optimizer_state[name]["exp_avgs"][load_from_disk_indices].cuda())).contiguous()
-                        exp_avgs_sqs = torch.cat((parameters[index]["exp_avgs_sqs"][keep_mask], optimizer_state[name]["exp_avgs_sqs"][load_from_disk_indices].cuda())).contiguous()
-                        parameters_new.append({'params': [values], 'lr': lr*lr_multiplier, "name": name, 
-                         "exp_avgs" : exp_avgs, "exp_avgs_sqs" : exp_avgs_sqs})
-                
-                
-                    indices = render_indices.to(Storage_Device)
-                    render_indices_cpu = indices
-                    parameters = parameters_new
-                    to_render = len(render_indices)
-                    load_write_time = clock()
-                    clock()
-                    ############# Individual Gaussian Cache
-                else:
+                #if not Cache_SPTs:
+                #    ############# Individual Gaussian Cache
+                #    new_render_indices, SPT_indices, SPT_distances = gaussians.get_SPT_cut(viewpoint_cam.camera_center.cuda(),  viewpoint_cam.full_proj_transform.cuda(), 0, viewpoint_cam, pipe, Use_Bounding_Spheres, Use_Frustum_Culling, Use_Occlusion_Culling)
+                #    keep_mask = torch.isin(render_indices, new_render_indices).to(Storage_Device)
+                #    write_back_mask = ~keep_mask
+                #    write_back_indices = render_indices[write_back_mask].to(Storage_Device)
+                #    load_mask = ~torch.isin(new_render_indices, render_indices)
+                #    load_from_disk_indices = new_render_indices[load_mask].to(Storage_Device)
+                #    render_indices = torch.cat((render_indices[keep_mask], new_render_indices[load_mask]))
+                #    print(f"Load Percentage: {len(load_from_disk_indices) * 100.0 / len(render_indices):.2f}" )
+                #    
+                #    hierarchy_cut_time = clock()
+                #    clock()
+                #    
+                #    # Write back the training results
+                #    with torch.no_grad():
+                #        gaussians._xyz[write_back_indices, :] = means3D[write_back_mask, :].detach().to(Storage_Device, non_blocking=False)
+                #        gaussians._opacity[write_back_indices, :] = opacity[write_back_mask, :].detach().to(Storage_Device, non_blocking=False)
+                #        gaussians._features_dc[write_back_indices, :] = features_dc[write_back_mask, :,  :].detach().to(Storage_Device, non_blocking=False)
+                #        gaussians._features_rest[write_back_indices, :] = features_rest[write_back_mask, :].detach().to(Storage_Device, non_blocking=False)
+                #        gaussians._scaling[write_back_indices, :] = scales[write_back_mask, :].detach().to(Storage_Device, non_blocking=False)
+                #        gaussians._rotation[write_back_indices, :] = rotations[write_back_mask, :].detach().to(Storage_Device, non_blocking=False)
+                #    
+                #    means3D = nn.Parameter(torch.cat((means3D[keep_mask].detach(), gaussians._xyz[load_from_disk_indices].cuda(non_blocking=non_blocking))).contiguous())
+                #    opacity = nn.Parameter(torch.cat((opacity[keep_mask].detach(), gaussians._opacity[load_from_disk_indices].cuda(non_blocking=non_blocking))).contiguous())
+                #    scales = nn.Parameter(torch.cat((scales[keep_mask].detach(), gaussians._scaling[load_from_disk_indices].cuda(non_blocking=non_blocking))).contiguous())
+                #    rotations = nn.Parameter(torch.cat((rotations[keep_mask].detach(), gaussians._rotation[load_from_disk_indices].cuda(non_blocking=non_blocking))).contiguous())
+                #    # TODO: ABS?
+                #    features_dc = nn.Parameter(torch.cat((features_dc[keep_mask].detach(), gaussians._features_dc[load_from_disk_indices].cuda(non_blocking=non_blocking))).contiguous())
+                #    features_rest = nn.Parameter(torch.cat((features_rest[keep_mask].detach(), gaussians._features_rest[load_from_disk_indices].cuda(non_blocking=non_blocking))).contiguous())
+                #    torch.cuda.synchronize()
+                #    shs = torch.cat((features_dc, features_rest), dim=1).contiguous()
+                #    
+                #    #scene.dump_gaussians("Dump", False, file_name="View.ply", indices=render_indices.to(Storage_Device))
+                #    
+                #    parameters_new = []
+                #    for index, (values, name, lr) in enumerate(zip([means3D, features_dc, opacity, scales, rotations, features_rest], 
+                #                            ["xyz", "f_dc", "opacity", "scaling", "rotation", "f_rest"],
+                #                            [xyz_lr, opt.feature_lr, opt.opacity_lr, opt.scaling_lr, opt.rotation_lr, opt.feature_lr])):
+                #        optimizer_state[name]["exp_avgs"][write_back_indices] = parameters[index]["exp_avgs"][write_back_mask].to(Storage_Device)
+                #        optimizer_state[name]["exp_avgs_sqs"][write_back_indices] = parameters[index]["exp_avgs_sqs"][write_back_mask].to(Storage_Device)
+                #        exp_avgs = torch.cat((parameters[index]["exp_avgs"][keep_mask], optimizer_state[name]["exp_avgs"][load_from_disk_indices].cuda())).contiguous()
+                #        exp_avgs_sqs = torch.cat((parameters[index]["exp_avgs_sqs"][keep_mask], optimizer_state[name]["exp_avgs_sqs"][load_from_disk_indices].cuda())).contiguous()
+                #        parameters_new.append({'params': [values], 'lr': lr*lr_multiplier, "name": name, 
+                #         "exp_avgs" : exp_avgs, "exp_avgs_sqs" : exp_avgs_sqs})
+                #
+                #
+                #    #render_indices_cpu = indices
+                #    parameters = parameters_new
+                #    load_write_time = clock()
+                #    clock()
+                #    ############# Individual Gaussian Cache
+                if Cache_SPTs:
                     ############# SPT Cache
                     if Use_Bounding_Spheres:
                         bounds = gaussians.bounding_sphere_radii
@@ -432,8 +435,9 @@ def training(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoin
                     load_from_disk_indices = torch.cat((cut_SPTs,  upper_tree_nodes_to_render))
                     
                     write_back_mask = ~keep_gaussians_mask
-                    write_back_indices = render_indices[write_back_mask].to(Storage_Device)
-                    
+                    write_back_indices = render_indices[write_back_mask].detach().to(Storage_Device)
+                    #write_back_indices.is_guilty=True
+
                     render_indices = torch.cat((render_indices[keep_gaussians_mask], load_from_disk_indices))
 
                     load_from_disk_indices = load_from_disk_indices.to(Storage_Device)
@@ -443,16 +447,16 @@ def training(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoin
                     # not sure why this is needed
                     #with torch.no_grad():
                     # Write back the training results
-                    stream = torch.cuda.Stream()
+                    #stream = torch.cuda.Stream()
 
-                    with torch.cuda.stream(stream):
-                        gaussians._xyz[write_back_indices, :] = means3D[write_back_mask, :].detach().to(Storage_Device, non_blocking=non_blocking)
-                        gaussians._opacity[write_back_indices, :] = opacity[write_back_mask, :].detach().to(Storage_Device, non_blocking=non_blocking)
-                        gaussians._features_dc[write_back_indices, :] = features_dc[write_back_mask, :,  :].detach().to(Storage_Device, non_blocking=non_blocking)
-                        gaussians._features_rest[write_back_indices, :] = features_rest[write_back_mask, :].detach().to(Storage_Device, non_blocking=non_blocking)
-                        gaussians._scaling[write_back_indices, :] = scales[write_back_mask, :].detach().to(Storage_Device, non_blocking=non_blocking)
-                        gaussians._rotation[write_back_indices, :] = rotations[write_back_mask, :].detach().to(Storage_Device, non_blocking=non_blocking)
-                    torch.cuda.synchronize()
+                    #with torch.cuda.stream(stream):
+                    gaussians._xyz[write_back_indices, :] = means3D[write_back_mask, :].detach().to(Storage_Device, non_blocking=non_blocking)
+                    gaussians._opacity[write_back_indices, :] = opacity[write_back_mask, :].detach().to(Storage_Device, non_blocking=non_blocking)
+                    gaussians._features_dc[write_back_indices, :] = features_dc[write_back_mask, :,  :].detach().to(Storage_Device, non_blocking=non_blocking)
+                    gaussians._features_rest[write_back_indices, :] = features_rest[write_back_mask, :].detach().to(Storage_Device, non_blocking=non_blocking)
+                    gaussians._scaling[write_back_indices, :] = scales[write_back_mask, :].detach().to(Storage_Device, non_blocking=non_blocking)
+                    gaussians._rotation[write_back_indices, :] = rotations[write_back_mask, :].detach().to(Storage_Device, non_blocking=non_blocking)
+                    #torch.cuda.synchronize()
                     
                     means3D = means3D[keep_gaussians_mask]
                     opacity = opacity[keep_gaussians_mask]
@@ -461,19 +465,19 @@ def training(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoin
                     features_dc = features_dc[keep_gaussians_mask]
                     features_rest = features_rest[keep_gaussians_mask]
                     torch.cuda.empty_cache()
-                    stream = torch.cuda.Stream()
+                    #stream = torch.cuda.Stream()
 
-                    with torch.cuda.stream(stream):
-                        means3D = nn.Parameter(torch.cat((means3D.detach(), gaussians._xyz[load_from_disk_indices].cuda(non_blocking=non_blocking))).contiguous())
-                        opacity = nn.Parameter(torch.cat((opacity.detach(), gaussians._opacity[load_from_disk_indices].cuda(non_blocking=non_blocking))).contiguous())
-                        scales = nn.Parameter(torch.cat((scales.detach(), gaussians._scaling[load_from_disk_indices].cuda(non_blocking=non_blocking))).contiguous())
-                        rotations = nn.Parameter(torch.cat((rotations.detach(), gaussians._rotation[load_from_disk_indices].cuda(non_blocking=non_blocking))).contiguous())
-                        # TODO: ABS?
-                        features_dc = nn.Parameter(torch.cat((features_dc.detach(), gaussians._features_dc[load_from_disk_indices].cuda(non_blocking=non_blocking))).contiguous())
-                        features_rest = nn.Parameter(torch.cat((features_rest.detach(), gaussians._features_rest[load_from_disk_indices].cuda(non_blocking=non_blocking))).contiguous())
-                        shs = torch.cat((features_dc, features_rest), dim=1).contiguous()
+                    #with torch.cuda.stream(stream):
+                    means3D = nn.Parameter(torch.cat((means3D.detach(), gaussians._xyz[load_from_disk_indices].cuda(non_blocking=non_blocking))).contiguous())
+                    opacity = nn.Parameter(torch.cat((opacity.detach(), gaussians._opacity[load_from_disk_indices].cuda(non_blocking=non_blocking))).contiguous())
+                    scales = nn.Parameter(torch.cat((scales.detach(), gaussians._scaling[load_from_disk_indices].cuda(non_blocking=non_blocking))).contiguous())
+                    rotations = nn.Parameter(torch.cat((rotations.detach(), gaussians._rotation[load_from_disk_indices].cuda(non_blocking=non_blocking))).contiguous())
+                    # TODO: ABS?
+                    features_dc = nn.Parameter(torch.cat((features_dc.detach(), gaussians._features_dc[load_from_disk_indices].cuda(non_blocking=non_blocking))).contiguous())
+                    features_rest = nn.Parameter(torch.cat((features_rest.detach(), gaussians._features_rest[load_from_disk_indices].cuda(non_blocking=non_blocking))).contiguous())
+                    shs = torch.cat((features_dc, features_rest), dim=1).contiguous()
                     
-                    render_indices_cpu = render_indices.to(Storage_Device)
+                    #render_indices_cpu = render_indices.to(Storage_Device)
                     
                     parameters_new = []
                     for index, (values, name, lr) in enumerate(zip([means3D, features_dc, opacity, scales, rotations, features_rest], 
@@ -495,8 +499,8 @@ def training(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoin
                     torch.cuda.empty_cache()
                     torch.cuda.synchronize()
                 # parent indices contains as many elements as indices
-                interpolation_weights = torch.zeros(gaussians._xyz.size(0), dtype=torch.float32, device = gaussians._xyz.device)
-                interpolation_weights[:len(render_indices)] = 1.0
+                #interpolation_weights = torch.zeros(gaussians._xyz.size(0), dtype=torch.float32, device = gaussians._xyz.device)
+                #interpolation_weights[:len(render_indices)] = 1.0
                 
                 # Render
                 if Rasterizer == "Hierarchical":
@@ -559,13 +563,13 @@ def training(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoin
                 Ll1 = l1_loss(image, gt_image) 
                 loss = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * (1.0 - fused_ssim(image.unsqueeze(0), gt_image.unsqueeze(0)))
                     
-                parents = gaussians.nodes[indices, 1]
-                hierarchy_loss = 0 #torch.sum(torch.clamp_min(torch.max(torch.abs(gaussians.get_scaling[indices]), dim=-1)[0] - torch.max(torch.abs(gaussians.get_scaling[parents]), dim=-1)[0], 0)) / len(indices)
+                #parents = gaussians.nodes[indices, 1]
+                #hierarchy_loss = 0 #torch.sum(torch.clamp_min(torch.max(torch.abs(gaussians.get_scaling[indices]), dim=-1)[0] - torch.max(torch.abs(gaussians.get_scaling[parents]), dim=-1)[0], 0)) / len(indices)
                 #loss = loss + lambda_hierarchy * hierarchy_loss
                 #MCMC
                 if MCMC_Densification:
-                    opacity_loss = torch.sum(torch.abs(gaussians.opacity_activation(opacity))) / len(render_indices_cpu)
-                    scaling_loss = torch.sum(torch.abs(gaussians.scaling_activation(scales)) / len(render_indices_cpu))
+                    opacity_loss = torch.sum(torch.abs(gaussians.opacity_activation(opacity))) / len(render_indices)
+                    scaling_loss = torch.sum(torch.abs(gaussians.scaling_activation(scales))) / len(render_indices)
                         # loss for active gaussians that have high opacity/scale
                         #all_indices = torch.cat((indices, parents)).unique()
                         #opacity_loss = torch.sum(torch.abs(gaussians.get_opacity.squeeze()[all_indices] * interpolation_weights[all_indices])) / len(all_indices)

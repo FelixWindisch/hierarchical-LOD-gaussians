@@ -170,7 +170,8 @@ if __name__ == '__main__':
         )
     except subprocess.CalledProcessError as e:
                 print(f"Error executing hierarchy_creator: {e}")
-                if not args.keep_running:
+                # TODO: WTF is happening here?
+                if not args.keep_running and False:
                     sys.exit(1)
                     
     # ==================================== Hierarchy finished ==============================
