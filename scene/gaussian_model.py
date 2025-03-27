@@ -663,7 +663,7 @@ class GaussianModel:
         self._scaling = torch.empty(0)
         self._rotation = torch.empty(0)
         self._opacity = torch.empty(0)
-        self.max_radii2D = torch.empty(0)
+        #self.max_radii2D = torch.empty(0)
         self.xyz_gradient_accum = torch.empty(0)
         self.denom = torch.empty(0)
         self.optimizer = None
@@ -869,7 +869,7 @@ class GaussianModel:
         self._scaling = nn.Parameter(scales.requires_grad_(True))
         self._rotation = nn.Parameter(rots.requires_grad_(True))
         self._opacity = nn.Parameter(opacities.requires_grad_(True))
-        self.max_radii2D = torch.zeros((self.get_xyz.shape[0]), device="cuda")
+        #self.max_radii2D = torch.zeros((self.get_xyz.shape[0]), device="cuda")
 
         self.exposure_mapping = {cam_info.image_name: idx for idx, cam_info in enumerate(cam_infos)}
 
@@ -1025,7 +1025,13 @@ class GaussianModel:
 
         self._xyz = xyz.cuda()
         self._features_dc = shs_all.cuda()[:,:1,:].requires_grad_(True)
-        self._features_rest = shs_all.cuda()[:,1:16,:].requires_grad_(True)
+        if self.max_sh_degree == 3:
+            sh_coefficients = 15
+        elif self.max_sh_degree == 2:
+            sh_coefficients = 8
+        elif self.max_sh_degree == 1:
+            sh_coefficients = 3
+        self._features_rest = shs_all.cuda()[:,1:1+sh_coefficients,:].requires_grad_(True)
         self._opacity = alpha.cuda().requires_grad_(True)
         self._scaling = scales.cuda().requires_grad_(True)
         self._rotation =rots.cuda().requires_grad_(True)
@@ -1036,7 +1042,7 @@ class GaussianModel:
         #    self._opacity = nn.Parameter(alpha.cuda().requires_grad_(True))
         #    self._scaling = nn.Parameter(scales.cuda().requires_grad_(True))
         #    self._rotation = nn.Parameter(rots.cuda().requires_grad_(True))
-        self.max_radii2D = torch.zeros((self.get_xyz.shape[0]), device="cuda")
+        #self.max_radii2D = torch.zeros((self.get_xyz.shape[0]), device="cuda")
 
         #self.opacity_activation = torch.abs
         #self.inverse_opacity_activation = torch.abs
@@ -1063,7 +1069,7 @@ class GaussianModel:
         self._opacity = nn.Parameter(alpha.cuda().requires_grad_(True))
         self._scaling = nn.Parameter(scales.cuda().requires_grad_(True))
         self._rotation = nn.Parameter(rots.cuda().requires_grad_(True))
-        self.max_radii2D = torch.zeros((self.get_xyz.shape[0]), device="cuda")
+        #self.max_radii2D = torch.zeros((self.get_xyz.shape[0]), device="cuda")
 
     def save_hier(self):
         print(f"Result hierarchy written to {self.hierarchy_path}_opt")

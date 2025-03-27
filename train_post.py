@@ -40,7 +40,6 @@ from gaussian_hierarchy._C import  get_spt_cut_cuda
 from gaussian_renderer import occlusion_cull
 import psutil
 import gc
-
 # to check CPU RAM usage
 pid = os.getpid()
 
@@ -63,17 +62,17 @@ def direct_collate(x):
 
 WriteTensorBoard = False
 #Standard
-densify_interval = 50
-lr_multiplier = 0.1
+densify_interval = 100
+lr_multiplier = 0.3
 #Unused
 Random_Hierarchy_Cut = True
 Only_Noise_Visible = True
 #MCMC
-Max_Cap = 20_000_000
+Max_Cap = 15_000_000
 MCMC_Densification = True
 MCMC_Noise_LR = 0  #5e5
 lambda_scaling = 0
-lambda_opacity = 0.00
+lambda_opacity = 0.001
 #Hierarchical
 Gaussian_Interpolation = False
 # Upward Propagation 
@@ -87,7 +86,7 @@ Use_MIP_respawn = False
 # SPTs
 Storage_Device = 'cpu'
 lambda_hierarchy = 0.00
-SPT_Root_Volume = 0.8
+SPT_Root_Volume = 0.1
 SPT_Target_Granularity = 0.00005
 Cache_SPTs = True
 Reuse_SPT_Tolerarance = 0.25
@@ -99,9 +98,12 @@ Rasterizer = "Vanilla"
 
 non_blocking=False
 
+Max_SH_Degree = 2
+
 
 def training(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoint_iterations, checkpoint, debug_from, cons_graph):
     opt.densification_interval = densify_interval
+    prev_peak_memory =0
     #torch.cuda.memory._record_memory_history()
     #torch.autograd.set_detect_anomaly(True)
     network_gui.init("127.0.0.1", 6009)
@@ -135,8 +137,8 @@ def training(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoin
         writer.add_hparams(hyper_params, metrics)
     first_iter = 0
     prepare_output_and_logger(dataset)
-    gaussians = GaussianModel(dataset.sh_degree)
-    gaussians.active_sh_degree = dataset.sh_degree
+    gaussians = GaussianModel(Max_SH_Degree)
+    gaussians.active_sh_degree = Max_SH_Degree
     gaussians.scaffold_points = None
     #with torch.no_grad():
     #    gaussians._features_dc = gaussians._features_dc.abs() 
@@ -172,7 +174,7 @@ def training(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoin
 
     iter_start = torch.cuda.Event(enable_timing = True)
     iter_end = torch.cuda.Event(enable_timing = True)
-
+    opt.iterations = 15000
     ema_loss_for_log = 0.0
     progress_bar = tqdm(range(first_iter, opt.iterations), desc="Training progress")
     first_iter += 1
@@ -194,18 +196,12 @@ def training(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoin
         current_camera_index = list(cons_graph.nodes())[0]
     else:
         current_camera_index = 0
-    limit = 0.001
-
-    to_render = 0
-    
-    limmax = 0.02
-    limmin = 0.0001
     if Gradient_Propagation:
         gaussians.recompute_weights()
     
     #means3D, opacity, scales, rotations, features_dc, features_rest, render_indices = torch.empty((0, 3), device='cuda', dtype=torch.float32), torch.empty((0, 1), device='cuda', dtype=torch.float32), torch.empty((0, 3), device='cuda', dtype=torch.float32), torch.empty((0,4), device='cuda', dtype=torch.float32), torch.empty((0, 1, 3), device='cuda', dtype=torch.float32), torch.empty((0,15, 3), device='cuda', dtype=torch.float32), torch.empty(0, device='cuda', dtype=torch.int32)
     if Cache_SPTs:
-        render_indices = torch.arange(0, gaussians.skybox_points, device='cuda')
+        render_indices = torch.arange(0, gaussians.skybox_points, device='cuda', dtype = torch.int32)
         means3D = gaussians._xyz[:gaussians.skybox_points].cuda().contiguous()
         opacity = gaussians._opacity[:gaussians.skybox_points].cuda().contiguous()
         scales = gaussians._scaling[:gaussians.skybox_points].cuda().contiguous()
@@ -270,11 +266,6 @@ def training(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoin
                 if Gradient_Propagation and iteration % 10 == 0:
                     gaussians.recompute_weights()
                 
-                sample = torch.rand(1).item()
-                # target granularity
-                limit = math.pow(2, sample * (math.log2(limmax) - math.log2(limmin)) + math.log2(limmin))
-                if iteration % 250 == 0:
-                    limit = 0
                 viewpoint_cam.world_view_transform = viewpoint_cam.world_view_transform.cuda()
                 viewpoint_cam.projection_matrix = viewpoint_cam.projection_matrix.cuda()
                 viewpoint_cam.full_proj_transform = viewpoint_cam.full_proj_transform.cuda()
@@ -583,8 +574,72 @@ def training(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoin
                 if math.isnan(loss):
                             torchvision.utils.save_image(image, os.path.join(scene.model_path, "Error" + ".png"))
                             print("gradients collapsed :(")
-                #make_dot(loss).render("graph", format="png")
+                #make_dot(loss).render("graph", format="png"                
                 loss.backward()
+                ############## DEBUG LABELS
+                if True:
+                    render_indices.label = 'render_indices'
+                    means3D.label = "means3D"
+                    opacity.label = "opacity"
+                    scales.label = "scales" 
+                    rotations.label = "rotations" 
+                    features_dc.label = "features_dc"
+                    features_rest.label = "features_rest"
+                    shs.label = 'shs'
+                    means3D.grad.label = "means3Dgrad"
+                    opacity.grad.label = "opacitygrad"
+                    scales.grad.label = "scalesgrad" 
+                    rotations.grad.label = "rotationsgrad" 
+                    features_dc.grad.label = "features_dcgrad"
+                    features_rest.grad.label = "features_restgrad"
+                    for param in parameters: 
+                        param['exp_avgs'].label = param['name'] + '_exp_avgs'
+                        param['exp_avgs_sqs'].label = param['name'] + '_exp_avgs_sqs'
+                    SPT_counts_new.label = "SPT_counts_new"
+                    SPT_counts.label = "SPT_counts"
+                    write_back_mask.label = "write_back_mask"
+                    SPT_indices.label = "SPT_indices"
+                    keep_SPT_indices.label = "keep_SPT_indices"
+                    SPTs_prev_to_new.label = "SPTs_prev_to_new"
+                    SPT_distances.label = "SPT_distances"
+                    SPT_node_indices.label = "SPT_node_indices"
+                    LOD_detail_cut.label = "LOD_detail_cut"
+                    coarse_cut.label = "coarse_cut"
+                    leaf_mask.label = "leaf_mask"
+                    leaf_nodes.label = "leaf_nodes"
+                    SPTs_prev_to_new.label = "SPTs_prev_to_new"
+                    valid.label = "valid"
+                    prev_distances_compare.label = "prev_distances_compare"
+                    distances_compare.label = "distances_compare"
+                    close_enough.label = "close_enough"
+                    valid_non_zero.label = "valid_non_zero"
+                    close_enough_non_zero.label = "close_enough_non_zero"
+                    SPT_keep_counts_indices.label = "SPT_keep_counts_indices"
+                    keep_gaussians_mask.label = "keep_gaussians_mask"
+                    mask.label = "mask"
+                    upper_tree_nodes_to_render.label = "upper_tree_nodes_to_render"
+                    cut_SPTs.label = "cut_SPTs"
+                    SPT_counts.label = "SPT_counts"
+                    SPT_counts_new.label = "SPT_counts_new"
+                    prev_SPT_indices.label = "prev_SPT_indices"
+                    prev_SPT_distances.label = "prev_SPT_distances"
+                    prev_SPT_counts.label = "prev_SPT_counts"
+                    gaussians.SPT_starts.label = "SPT_starts"
+                    gaussians.SPT_min.label = "SPT_min"
+                    gaussians.SPT_max.label = "SPT_max"
+                    gaussians.SPT_gaussian_indices.label = "SPT_gaussian_indices" 
+                    gaussians.upper_tree_nodes.label = "upper_tree_nodes"
+                    gaussians.upper_tree_xyz.label = "upper_tree_xyz"
+                    gaussians.upper_tree_scaling.label = "upper_tree_scaling"
+                    gaussians.min_distance_squared.label = "min_distance_squared"
+                    gt_image.label = "gt_image"
+                    bounds.label = "bounds"
+                    planes.label = "planes"
+                    render_pkg["render"].label = "image"
+                    render_pkg["viewspace_points"].label = "means2D"
+                    render_pkg["viewspace_points"].grad.label = "means2D_grad"
+                ############## DEBUG LABELS
+                
                 if means3D.grad.isnan().sum() > 0:
                             torchvision.utils.save_image(image, os.path.join(scene.model_path, "Error" + ".png"))
                             print("gradients collapsed :(")
@@ -616,6 +671,9 @@ def training(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoin
                 with torch.no_grad():
                     # Progress bar
                     ema_loss_for_log = 0.4 * loss.item() + 0.6 * ema_loss_for_log
+                    if torch.cuda.max_memory_allocated(device='cuda') > prev_peak_memory:
+                        prev_peak_memory = torch.cuda.max_memory_allocated(device='cuda')
+                        print("New peak memory reached")
                     if iteration % 10 == 0:
                         progress_bar.set_postfix({"Loss": f"{ema_loss_for_log:.{7}f}", "Size": f"{gaussians.size:_}/{gaussians._xyz.size(0):_}", "Peak memory": f"{torch.cuda.max_memory_allocated(device='cuda'):_}"})
                         progress_bar.update(10)
@@ -708,8 +766,7 @@ def training(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoin
                         # Per-Densification Statistics
                         if WriteTensorBoard:
                             writer.add_scalar('Number of Hierarchy Levels', gaussians.get_number_of_levels(), iteration)
-                            leaf_nodes = gaussians.nodes[:, 3] <= 0
-                            writer.add_scalar('Lowest leaf node level', torch.min(gaussians.nodes[leaf_nodes, 0][gaussians.skybox_points:]).item(), iteration)
+                            writer.add_scalar('Lowest leaf node level', torch.min(gaussians.nodes[gaussians.nodes[:, 3] <= 0, 0][gaussians.skybox_points:]).item(), iteration)
                             writer.add_scalar('Number of Gaussians', gaussians.size, iteration)
                             writer.add_scalar('Number of SPTs', len(gaussians.SPT_starts), iteration)
                             writer.add_scalar('Mean Number of Gaussians per SPT', torch.mean((gaussians.SPT_starts[1:] - gaussians.SPT_starts[:-1]).float()), iteration)
