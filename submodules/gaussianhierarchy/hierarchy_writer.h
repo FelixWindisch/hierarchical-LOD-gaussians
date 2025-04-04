@@ -30,7 +30,13 @@ public:
 		Node* nodes,
 		Box* boxes,
 		bool compressed = true);
-
-    void writeDynamic(const char *filename, int number_of_gaussians, int number_of_nodes, Eigen::Vector3f *positions, SHs *shs, float *opacities, Eigen::Vector3f *log_scales, Eigen::Vector4f *rotations, HierarchyNode *nodes);
+    void writeDynamic(const char *filename, 
+		int number_of_gaussians, 
+		int number_of_nodes, 
+		Eigen::Vector3f *positions, 
+		void *shs, float *opacities, 
+		Eigen::Vector3f *log_scales, 
+		Eigen::Vector4f *rotations, 
+		HierarchyNode *nodes, int sh_degree);
 
 };

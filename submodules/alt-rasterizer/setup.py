@@ -26,7 +26,9 @@ setup(
             "cuda_rasterizer/forward.cu",
             "cuda_rasterizer/backward.cu",
             "cuda_rasterizer/utils.cu",
+            "cuda_rasterizer/adam.cu",
             "rasterize_points.cu",
+            #"conv.cu",
             "ext.cpp"],
             extra_compile_args={"nvcc": ["-Xcompiler","-fno-gnu-unique" if platform.system() == "Linux" else "","-I" + os.path.join(os.path.dirname(os.path.abspath(__file__)), "third_party/glm/")]})
         ],

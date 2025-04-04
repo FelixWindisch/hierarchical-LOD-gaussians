@@ -23,7 +23,7 @@
 #include <fstream>
 #include <cooperative_groups.h>
 #include <cooperative_groups/reduce.h>
-#include <nvtx3/nvToolsExt.h>
+//#include <nvtx3/nvToolsExt.h>
 #include <thrust/host_vector.h>
 #include <tuple>
 #include "types.h"

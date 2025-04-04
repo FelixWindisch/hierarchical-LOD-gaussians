@@ -181,7 +181,7 @@ class GaussianModel:
         return result, None, None
         
 
-    def build_hierarchical_SPT(self, SPT_Root_Volume, target_granularity, use_bounding_spheres=True):
+    def build_hierarchical_SPT(self, SPT_Root_Volume, target_granularity, min_SPT_Size = 100, use_bounding_spheres=True):
         SPT_scale = SPT_Root_Volume
         device = self._xyz.device
         
@@ -244,7 +244,7 @@ class GaussianModel:
                 max_distances = stack_SPT[:, 1].clone()
                 SPT = torch.cat((SPT, stack_SPT))
                 temp_additional_indices = torch.cat((temp_additional_indices, stack))
-            if len(SPT) > 100: 
+            if len(SPT) > min_SPT_Size: 
                 bounding_sphere_radii.append(bounding_sphere_radius)
                 SPT = SPT.cuda()
                 sort_indices = SPT[:,-1].argsort(dim=0, descending=True)
@@ -289,9 +289,11 @@ class GaussianModel:
         first_sibling = self.upper_tree_nodes[:, hierarchy_node_next_sibling] > 0
         self.upper_tree_nodes[first_sibling, hierarchy_node_next_sibling] = torch.searchsorted(upper_tree_indices.cuda(), self.upper_tree_nodes[first_sibling, hierarchy_node_next_sibling]).to(torch.int32)
         
-        # The squared min distance in the upper tree is used for granularity cutting the upper tree
-        self.min_distance_squared = self.get_min_distance(self.upper_tree_nodes[:, hierarchy_node_max_side_length].to(device), target_granularity).square().cuda()
-        
+        # The squared min distance of the parent in the upper tree is used for granularity cutting the upper tree
+        parents = self.upper_tree_nodes[self.upper_tree_nodes[:, hierarchy_node_parent], hierarchy_node_max_side_length]
+        self.min_distance_squared = self.get_min_distance(parents.to(device), target_granularity).square().cuda()
+        # The root can always be rendered
+        self.min_distance_squared[0] = 1000000000000
         
         leaf_indices = torch.where(self.upper_tree_nodes[:, hierarchy_node_first_child] == -1)[0]
         if use_bounding_spheres:
@@ -360,12 +362,14 @@ class GaussianModel:
         while len(stack) > 0:
             if return_upper_tree:
                 upper_tree = torch.cat((upper_tree, stack), dim=-1)
-            cut = torch.cat((cut, stack[hierarchy[stack, hierarchy_node_child_count] == 0]))
-            stack = stack[hierarchy[stack, hierarchy_node_child_count] > 0]
+            
             
             if leave_out_of_cut_condition is not None:
                 leave_out_mask = leave_out_of_cut_condition(stack)
                 stack = stack[leave_out_mask]
+            #TODO Should this be 3 lines above?
+            cut = torch.cat((cut, stack[hierarchy[stack, hierarchy_node_child_count] == 0]))
+            stack = stack[hierarchy[stack, hierarchy_node_child_count] > 0]
             
             cut_mask = condition(stack)
             cut = torch.cat((cut, stack[~cut_mask]))
@@ -447,8 +451,38 @@ class GaussianModel:
         self._opacity = new_tensors[4]
         self._features_rest = new_tensors[5]
         self.nodes = new_tensors[6]
+        return optimizer_state
+    
+    
+    def move_storage_to_render(self, device, max_number_of_gaussians = None):
         
-        
+        self.size = len(self._xyz)
+        if max_number_of_gaussians == None:
+            max_number_of_gaussians = self.size
+        names = ["xyz", "f_dc", "scaling", "rotation", "opacity", "f_rest", "nodes"]
+        new_tensors = []
+        optimizer_state = {}
+        tensors = [self._xyz, self._features_dc, self._scaling, self._rotation, self._opacity, self._features_rest, self.nodes]
+        for name, tensor in zip(names, tensors):
+            shape = list(tensor.size())
+            shape[0] = max_number_of_gaussians
+            shape = torch.Size(shape)
+            storage_tensor = torch.zeros(shape, dtype=tensor.cpu().dtype, device=device)
+            #if device == 'cpu':
+            #    storage_tensor = storage_tensor.pin_memory()    
+            storage_tensor[:len(tensor)] = tensor
+            new_tensors.append(storage_tensor)
+            # Can we reduce the 
+            #exp_avgs = torch.zeros(shape, dtype=torch.float32, device=device)
+            #exp_avgs_sqs = torch.zeros(shape, dtype=torch.float32, device=device)
+            optimizer_state[name] = {"exp_avgs" : None, "exp_avgs_sqs" : None}
+        self._xyz = new_tensors[0]
+        self._features_dc = new_tensors[1]
+        self._scaling = new_tensors[2]
+        self._rotation = new_tensors[3]
+        self._opacity = new_tensors[4]
+        self._features_rest = new_tensors[5]
+        self.nodes = new_tensors[6]
         return optimizer_state
     
     # deprecated?
@@ -530,10 +564,10 @@ class GaussianModel:
     def sort_morton(self):
         #pass
         xyz = self._xyz[self.skybox_points:]
-        codes = torch.zeros_like(xyz[:, 0], dtype=torch.int64)
-        get_morton_indices(xyz, torch.min(self._xyz[self.skybox_points:], dim=0)[0], torch.max(self._xyz[self.skybox_points:], dim=0)[0], codes)
+        codes = torch.zeros_like(xyz[:, 0], dtype=torch.int64).cuda()
+        get_morton_indices(xyz, torch.min(self._xyz[self.skybox_points:], dim=0)[0].cuda(), torch.max(self._xyz[self.skybox_points:], dim=0)[0].cuda(), codes)
         indices = torch.argsort(codes)
-        indices = indices.to(torch.int)
+        indices = indices.to(torch.int).to(self._xyz.device)
         # Make sure the root node stays in place
         root_index = torch.where(indices==0)[0][0]
         indices[root_index] = indices[0]
@@ -558,6 +592,7 @@ class GaussianModel:
             self.nodes[self.skybox_points, hierarchy_node_next_sibling] = 0
             self.nodes[indices] = self.nodes.clone()[self.skybox_points:]
             pass
+        print("Morton Sort Complete")
             
         
     def merge_gaussians(self, indices):
@@ -1079,7 +1114,8 @@ class GaussianModel:
                         self.opacity_activation(self._opacity),
                         self._scaling,
                         self._rotation,
-                        self.nodes)
+                        self.nodes,
+                        self.max_sh_degree)
 
     def update_learning_rate(self, iteration):
         ''' Learning rate scheduling per step '''
@@ -1566,6 +1602,9 @@ class GaussianModel:
 
 
         alive_indices = alive_indices[~torch.isin(alive_indices, sibling_indices)]
+        # Torch.multionmial can only handle 16_000_000 elements. If there are more possible respawn locations, uniformly sample 16M
+        if len(alive_indices) > 16_000_000:
+            alive_indices = alive_indices[torch.randperm(len(alive_indices))[:16_000_000]]
         probs = (self.opacity_activation(self._opacity[alive_indices, 0])) 
 
         if 0 in sibling_indices:

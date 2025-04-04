@@ -11,6 +11,7 @@ import debug_utils
 import train_post
 import consistency_graph
 import networkx as nx
+import train_coarse
 def submit_job(slurm_args):
     """Submit a job using sbatch and return the job ID."""    
     try:
@@ -112,7 +113,14 @@ if __name__ == '__main__':
             train_coarse_args += " " + args.extra_training_args
 
         try:
-            subprocess.run(train_coarse_args, shell=True, check=True)
+            optimization_params = OptimizationParams(parser)
+            model_params.source_path = colmap_dir
+            model_params.images = images_dir
+            model_params.model_path = os.path.join(output_dir, "scaffold")
+            model_params.skybox_num = 100000
+            optimization_params.iterations = 30000
+            train_coarse.training(model_params, optimization_params, pipeline_params, [30000], [], False, -1)
+            #subprocess.run(train_coarse_args, shell=True, check=True)
         except subprocess.CalledProcessError as e:
             print(f"Error executing train_coarse: {e}")
             sys.exit(1)
@@ -223,10 +231,10 @@ if __name__ == '__main__':
 
     
     #Standard 3DGS training parameters
-    optimization_params.iterations = 30_000
-    optimization_params.position_lr_init =  0.00000056 #0.0000016 #0.00016
+    optimization_params.iterations = 50_000
+    optimization_params.position_lr_init =  0.0000056 #0.0000016 #0.00016
     #     #optimization_params.position_lr_init = 0.016
-    optimization_params.position_lr_final = 0.0000000000001 #0.000000016 #0.0000016
+    optimization_params.position_lr_final = 0.00000001 #0.000000016 #0.0000016
     optimization_params.position_lr_delay_mult = 0.01
     optimization_params.position_lr_max_steps = 50_000
     optimization_params.feature_lr = 0.0025
@@ -242,7 +250,7 @@ if __name__ == '__main__':
     optimization_params.densification_interval = 100
     optimization_params.opacity_reset_interval = 3000
     optimization_params.densify_from_iter = 100
-    optimization_params.densify_until_iter = 40_000
+    optimization_params.densify_until_iter = 50_000
     optimization_params.densify_grad_threshold = 0.15
     optimization_params.depth_l1_weight_init = 1.0
     optimization_params.depth_l1_weight_final = 0.01

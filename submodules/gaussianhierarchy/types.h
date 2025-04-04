@@ -29,6 +29,10 @@ struct Box
 
 
 typedef Eigen::Matrix<float, 48, 1> SHs;
+typedef Eigen::Matrix<float, 48, 1> SHs3;
+typedef Eigen::Matrix<float, 27, 1> SHs2;
+typedef Eigen::Matrix<float, 12, 1> SHs1;
+typedef Eigen::Matrix<float, 3, 1> SHs0;
 
 #else
 

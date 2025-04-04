@@ -119,15 +119,14 @@ void HierarchyWriter::write(const char* filename,
 }
 
 
-
 void HierarchyWriter::writeDynamic(const char* filename,
 	int number_of_gaussians, int number_of_nodes,
 	Eigen::Vector3f* positions,
-	SHs* shs,
+	void* shs,
 	float* opacities,
 	Eigen::Vector3f* log_scales,
 	Eigen::Vector4f* rotations,
-	HierarchyNode* nodes)
+	HierarchyNode* nodes, int sh_degree)
 {
 	std::ofstream outfile(filename, std::ios_base::binary);
 
@@ -135,13 +134,35 @@ void HierarchyWriter::writeDynamic(const char* filename,
 		throw std::runtime_error("File not created!");
 
 
+	int sh_sizes [] = {sizeof(SHs0), sizeof(SHs1), sizeof(SHs2), sizeof(SHs3)};
+
 	outfile.write((char*)(&number_of_gaussians), sizeof(int));
+	outfile.write((char*)(&sh_degree), sizeof(int));
+	
 	outfile.write((char*)positions, number_of_gaussians * sizeof(Eigen::Vector3f));
 	outfile.write((char*)rotations, number_of_gaussians * sizeof(Eigen::Vector4f));
 	outfile.write((char*)log_scales, number_of_gaussians * sizeof(Eigen::Vector3f));
 	outfile.write((char*)opacities, number_of_gaussians * sizeof(float));
-	outfile.write((char*)shs, number_of_gaussians * sizeof(SHs));
+
+	//  For the record, I am aware that this is stupid
+	if(sh_degree == 0)
+	{
+		outfile.write((char*)shs, number_of_gaussians * sizeof(SHs0));
+	}
+	else if(sh_degree == 1)
+	{
+		outfile.write((char*)shs, number_of_gaussians * sizeof(SHs1));
+	}
+	else if(sh_degree == 2)
+	{
+		outfile.write((char*)shs, number_of_gaussians * sizeof(SHs2));
+	}
+	else if(sh_degree == 3)
+	{
+		outfile.write((char*)shs, number_of_gaussians * sizeof(SHs3));
+	}
 
 	outfile.write((char*)(&number_of_nodes), sizeof(int));
 	outfile.write((char*)nodes, number_of_nodes * sizeof(HierarchyNode));
+	printf("WRITE G: %d, SH: %d, N: %d\n", number_of_gaussians, sh_degree, number_of_nodes);
 }

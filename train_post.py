@@ -60,22 +60,22 @@ def direct_collate(x):
     return x
 
 
-WriteTensorBoard = False
+WriteTensorBoard = True
 #Standard
-densify_interval = 100
-lr_multiplier = 0.3
+densify_interval = 500
+lr_multiplier = 0.2
 #Unused
 Random_Hierarchy_Cut = True
 Only_Noise_Visible = True
 #MCMC
-Max_Cap = 15_000_000
+Max_Cap = 25_000_000
 MCMC_Densification = True
 MCMC_Noise_LR = 0  #5e5
 lambda_scaling = 0
-lambda_opacity = 0.001
+lambda_opacity = 0.01
 #Hierarchical
 Gaussian_Interpolation = False
-# Upward Propagation 
+# Upward Propagation D
 Gradient_Propagation = False
 Propagation_Strength = 1.0
 #Culling
@@ -86,8 +86,9 @@ Use_MIP_respawn = False
 # SPTs
 Storage_Device = 'cpu'
 lambda_hierarchy = 0.00
-SPT_Root_Volume = 0.1
-SPT_Target_Granularity = 0.00005
+SPT_Root_Volume = 0.02
+SPT_Target_Granularity = 0.00008
+Min_SPT_Size = 100
 Cache_SPTs = True
 Reuse_SPT_Tolerarance = 0.25
 #View Selection
@@ -98,12 +99,14 @@ Rasterizer = "Vanilla"
 
 non_blocking=False
 
-Max_SH_Degree = 2
+Max_SH_Degree = 1
 
 
 def training(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoint_iterations, checkpoint, debug_from, cons_graph):
+    post_backward_peak = 0
     opt.densification_interval = densify_interval
     prev_peak_memory =0
+    prev_number_rendered =0
     #torch.cuda.memory._record_memory_history()
     #torch.autograd.set_detect_anomaly(True)
     network_gui.init("127.0.0.1", 6009)
@@ -142,7 +145,6 @@ def training(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoin
     gaussians.scaffold_points = None
     #with torch.no_grad():
     #    gaussians._features_dc = gaussians._features_dc.abs() 
-    dataset.eval = True
     scene = Scene(dataset, gaussians, resolution_scales = [1], create_from_hier=True)
     gaussians._xyz.requires_grad_(False)
     gaussians._opacity.requires_grad_(False)
@@ -153,7 +155,6 @@ def training(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoin
     #with torch.no_grad():
     gaussians._opacity.clamp_(0, 0.99999)
     gaussians._opacity = gaussians.inverse_opacity_activation(gaussians._opacity)
-        
     if checkpoint:
         (model_params, first_iter) = torch.load(checkpoint)
         gaussians.restore(model_params, opt)
@@ -165,16 +166,15 @@ def training(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoin
     
     optimizer_state = gaussians.move_storage_to(Storage_Device, int(round(Max_Cap * 1.2)))
 
-    gaussians.build_hierarchical_SPT(SPT_Root_Volume, SPT_Target_Granularity, use_bounding_spheres=Use_Bounding_Spheres)
+    gaussians.build_hierarchical_SPT(SPT_Root_Volume, SPT_Target_Granularity, Min_SPT_Size, use_bounding_spheres=Use_Bounding_Spheres)
     print("Built SPTs")
     #scene.dump_gaussians("Dump", False, file_name="SPTNodes.ply", indices=spt_nodes.to(Storage_Device))
-    #exit()
     bg_color = [1, 1, 1] if dataset.white_background else [0, 0, 0]
     background = torch.tensor(bg_color, dtype=torch.float32, device="cuda")
 
     iter_start = torch.cuda.Event(enable_timing = True)
     iter_end = torch.cuda.Event(enable_timing = True)
-    opt.iterations = 15000
+    #opt.iterations = 15000
     ema_loss_for_log = 0.0
     progress_bar = tqdm(range(first_iter, opt.iterations), desc="Training progress")
     first_iter += 1
@@ -230,7 +230,8 @@ def training(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoin
                                                     lr_final=opt.position_lr_final*gaussians.spatial_lr_scale,
                                                     lr_delay_mult=opt.position_lr_delay_mult,
                                                     max_steps=opt.position_lr_max_steps)
-
+    
+    #gaussians.sort_morton()
     while iteration < opt.iterations + 1:
         for viewpoint_batch in training_generator:
             for viewpoint_cam in viewpoint_batch:
@@ -242,25 +243,6 @@ def training(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoin
                     viewpoint_cam = train_camera_data_set[current_camera_index]
                 #camera_direction = torch.tensor(viewpoint_cam.R[:, 2], dtype=torch.float32)
                 #viewpoint_cam = train_camera_data_set[0]
-                if network_gui.conn == None:
-                    network_gui.try_connect()
-                while network_gui.conn != None:
-                    try:
-                        net_image_bytes = None
-                        custom_cam, do_training, keep_alive_, scaling_modifer, slider = network_gui.receive()
-                        
-                        if custom_cam != None:
-                            limit = slider["x"]/100.0
-                            net_image = debug_utils.generate_hierarchy_scene_image(custom_cam, scene, pipe, limit=limit)
-
-                            net_image_bytes = memoryview((torch.clamp(net_image, min=0, max=1.0) * 255).byte().permute(1, 2, 0).contiguous().to(Storage_Device).numpy())
-                        
-                        network_gui.send(net_image_bytes, "") #dataset.source_path)
-                        if do_training and ((iteration < int(opt.iterations)) or not keep_alive_):
-                            break
-                    except Exception as e:
-                        print(e)
-                        network_gui.conn = None
                 
                 #recompute Gaussian weights
                 if Gradient_Propagation and iteration % 10 == 0:
@@ -345,7 +327,7 @@ def training(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoin
                     else:
                         cull = lambda indices : torch.ones(len(indices), dtype = torch.bool)
                     camera_position = viewpoint_cam.camera_center.cuda()
-                    LOD_detail_cut = lambda indices : gaussians.min_distance_squared[indices] > (camera_position - gaussians.upper_tree_xyz[indices]).square().sum()
+                    LOD_detail_cut = lambda indices : gaussians.min_distance_squared[indices] > (camera_position - gaussians.upper_tree_xyz[indices]).square().sum(dim=-1)
                     #LOD_detail_cut = lambda indices : torch.ones_like(indices, dtype=torch.bool)
                     coarse_cut = gaussians.cut_hierarchy_on_condition(gaussians.upper_tree_nodes, LOD_detail_cut, return_upper_tree=False, root_node=0, leave_out_of_cut_condition=cull)
                     
@@ -466,7 +448,7 @@ def training(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoin
                     # TODO: ABS?
                     features_dc = nn.Parameter(torch.cat((features_dc.detach(), gaussians._features_dc[load_from_disk_indices].cuda(non_blocking=non_blocking))).contiguous())
                     features_rest = nn.Parameter(torch.cat((features_rest.detach(), gaussians._features_rest[load_from_disk_indices].cuda(non_blocking=non_blocking))).contiguous())
-                    shs = torch.cat((features_dc, features_rest), dim=1).contiguous()
+                    #shs = torch.cat((features_dc, features_rest), dim=1).contiguous()
                     
                     #render_indices_cpu = render_indices.to(Storage_Device)
                     
@@ -492,7 +474,8 @@ def training(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoin
                 # parent indices contains as many elements as indices
                 #interpolation_weights = torch.zeros(gaussians._xyz.size(0), dtype=torch.float32, device = gaussians._xyz.device)
                 #interpolation_weights[:len(render_indices)] = 1.0
-                
+                pre_render_peak = torch.cuda.max_memory_allocated(device='cuda')
+                torch.cuda.reset_peak_memory_stats()
                 # Render
                 if Rasterizer == "Hierarchical":
                     render_pkg = render_on_disk(
@@ -512,7 +495,8 @@ def training(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoin
                         gaussians.opacity_activation(opacity),
                         gaussians.scaling_activation(scales), 
                         gaussians.rotation_activation(rotations),
-                        shs,
+                        features_dc,
+                        features_rest,
                         pipe, 
                         background,
                         #splat_args=splat_settings,
@@ -532,7 +516,8 @@ def training(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoin
                         sh_degree = gaussians.active_sh_degree,
                         )
 
-
+                post_render_peak = torch.cuda.max_memory_allocated(device='cuda')
+                torch.cuda.reset_peak_memory_stats()
                 image = render_pkg["render"]#, render_pkg["viewspace_points"], render_pkg["visibility_filter"], render_pkg["radii"]
                 #torchvision.utils.save_image(image, os.path.join(scene.model_path, str(iteration) + "Sky.png"))
                 #exit()
@@ -576,6 +561,8 @@ def training(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoin
                             print("gradients collapsed :(")
                 #make_dot(loss).render("graph", format="png"                
                 loss.backward()
+                post_backward_peak = torch.cuda.max_memory_allocated(device='cuda')
+                torch.cuda.reset_peak_memory_stats()
                 ############## DEBUG LABELS
                 if True:
                     render_indices.label = 'render_indices'
@@ -585,7 +572,7 @@ def training(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoin
                     rotations.label = "rotations" 
                     features_dc.label = "features_dc"
                     features_rest.label = "features_rest"
-                    shs.label = 'shs'
+                    #shs.label = 'shs'
                     means3D.grad.label = "means3Dgrad"
                     opacity.grad.label = "opacitygrad"
                     scales.grad.label = "scalesgrad" 
@@ -665,6 +652,10 @@ def training(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoin
                     total_SPT_nodes = gaussians.SPT_starts[SPT_indices+1] - gaussians.SPT_starts[SPT_indices]
                     writer.add_scalar('Rendered SPTs Detail', (len(render_indices)-gaussians.skybox_points)/total_SPT_nodes.sum(), iteration)
                     
+                    writer.add_scalar('Peak before Render', pre_render_peak, iteration)
+                    writer.add_scalar('Peak during Render', post_render_peak, iteration)
+                    writer.add_scalar('Peak during backwards', post_backward_peak, iteration)
+                    
 
                 iter_end.record()
 
@@ -673,7 +664,8 @@ def training(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoin
                     ema_loss_for_log = 0.4 * loss.item() + 0.6 * ema_loss_for_log
                     if torch.cuda.max_memory_allocated(device='cuda') > prev_peak_memory:
                         prev_peak_memory = torch.cuda.max_memory_allocated(device='cuda')
-                        print("New peak memory reached")
+                        print(f"New peak memory reached {len(render_indices):_}, before: {prev_number_rendered:_}")
+                    prev_number_rendered = len(render_indices)
                     if iteration % 10 == 0:
                         progress_bar.set_postfix({"Loss": f"{ema_loss_for_log:.{7}f}", "Size": f"{gaussians.size:_}/{gaussians._xyz.size(0):_}", "Peak memory": f"{torch.cuda.max_memory_allocated(device='cuda'):_}"})
                         progress_bar.update(10)
@@ -908,7 +900,6 @@ if __name__ == "__main__":
     parser.add_argument("--start_checkpoint", type=str, default = None)
     args = parser.parse_args(sys.argv[1:])
     print(args)
-    exit()
     args.save_iterations.append(args.iterations)
     
     print("Optimizing " + args.model_path)

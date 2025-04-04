@@ -132,15 +132,22 @@ void HierarchyLoader::load(const char* filename,
 		std::vector<float>& alphas,
 		std::vector<Eigen::Vector3f>& scales,
 		std::vector<Eigen::Vector4f>& rot,
-		std::vector<HierarchyNode>& nodes)
+		std::vector<HierarchyNode>& nodes,
+		int& sh_degree)
 	{
 		std::ifstream infile(filename, std::ios_base::binary);
 
 		if (!infile.good())
 			throw std::runtime_error("File not found!");
 
+		
+
 		int number_of_gaussians;
 		infile.read((char*)&number_of_gaussians, sizeof(int));
+		int SH_Degree;
+		infile.read((char*)&SH_Degree, sizeof(int));
+		sh_degree = SH_Degree;
+		
 
 		pos.resize(number_of_gaussians);
 		shs.resize(number_of_gaussians);
@@ -148,15 +155,34 @@ void HierarchyLoader::load(const char* filename,
 		scales.resize(number_of_gaussians);
 		rot.resize(number_of_gaussians);
 
+
+		
 		infile.read((char*)pos.data(), number_of_gaussians * sizeof(Eigen::Vector3f));
 		infile.read((char*)rot.data(), number_of_gaussians * sizeof(Eigen::Vector4f));
 		infile.read((char*)scales.data(), number_of_gaussians * sizeof(Eigen::Vector3f));
 		infile.read((char*)alphas.data(), number_of_gaussians * sizeof(float));
-		infile.read((char*)shs.data(), number_of_gaussians * sizeof(SHs));
+		if(SH_Degree == 0)
+		{
+			infile.read((char*)shs.data(), number_of_gaussians * sizeof(SHs0));
+		}
+		else if(SH_Degree == 1)
+		{
+			infile.read((char*)shs.data(), number_of_gaussians * sizeof(SHs1));
+		}
+		else if(SH_Degree == 2)
+		{
+			infile.read((char*)shs.data(), number_of_gaussians * sizeof(SHs2));
+		}
+		else if(SH_Degree == 3)
+		{
+			infile.read((char*)shs.data(), number_of_gaussians * sizeof(SHs3));
+		}
 
 		int number_of_nodes;
 		infile.read((char*)&number_of_nodes, sizeof(int));
 
+		printf("G: %d, SH: %d, N: %d\n", number_of_gaussians, SH_Degree, number_of_nodes);
+		number_of_nodes = number_of_gaussians;
 		nodes.resize(number_of_nodes);
 
 		infile.read((char*)nodes.data(), number_of_nodes * sizeof(HierarchyNode));

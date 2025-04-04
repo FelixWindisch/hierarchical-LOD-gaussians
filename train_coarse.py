@@ -12,7 +12,7 @@
 import os
 import torch
 from utils.loss_utils import l1_loss, ssim
-from gaussian_renderer import render_coarse, network_gui
+from gaussian_renderer import render_coarse, render_vanilla, network_gui
 import sys
 from scene import Scene, GaussianModel
 from utils.general_utils import safe_state
@@ -21,7 +21,8 @@ from tqdm import tqdm
 from torch.utils.data import DataLoader
 from argparse import ArgumentParser, Namespace
 from arguments import ModelParams, PipelineParams, OptimizationParams
-
+import alt_gaussian_rasterization
+import torchvision
 def direct_collate(x):
     return x
 
@@ -31,6 +32,8 @@ def training(dataset, opt, pipe, saving_iterations, checkpoint_iterations, check
     print("coarse source path: " + dataset.source_path)
     gaussians = GaussianModel(1)
     scene = Scene(dataset, gaussians)
+    with torch.no_grad():
+        gaussians._opacity[:] = -3
     gaussians.training_setup(opt)
     if checkpoint:
         (model_params, first_iter) = torch.load(checkpoint)
@@ -51,15 +54,19 @@ def training(dataset, opt, pipe, saving_iterations, checkpoint_iterations, check
     indices = None
 
     iteration = first_iter
-    training_generator = DataLoader(scene.getTrainCameras(), num_workers = 8, prefetch_factor = 1, persistent_workers = True, collate_fn=direct_collate)
+    training_generator = DataLoader(scene.getTrainCameras(), num_workers = 8, prefetch_factor = 1, persistent_workers = True, collate_fn=direct_collate, shuffle=True)
 
+    
     for param_group in gaussians.optimizer.param_groups:
         if param_group["name"] == "xyz":
             param_group['lr'] = 0.0
-
+            
+    #first_images = [0, 930, 1044, 2094, 2304]
+    #gaussians.save_ply("/home/felix-windisch/Datasets/matrix_city_road_down/output/scaffold/point_cloud/start.ply")
     while iteration < opt.iterations + 1:
         for viewpoint_batch in training_generator:
             for viewpoint_cam in viewpoint_batch:
+                #viewpoint_cam = scene.getTrainCameras()[first_images[iteration-1]]
                 background = torch.rand((3), dtype=torch.float32, device="cuda")
                 viewpoint_cam.world_view_transform = viewpoint_cam.world_view_transform.cuda()
                 viewpoint_cam.projection_matrix = viewpoint_cam.projection_matrix.cuda()
@@ -92,11 +99,26 @@ def training(dataset, opt, pipe, saving_iterations, checkpoint_iterations, check
                 if (iteration - 1) == debug_from:
                     pipe.debug = True
 
-                render_pkg = render_coarse(viewpoint_cam, gaussians, pipe, background, indices = indices)
-                image, viewspace_point_tensor, visibility_filter, radii = render_pkg["render"], render_pkg["viewspace_points"], render_pkg["visibility_filter"], render_pkg["radii"]
-
+                #render_pkg = render_coarse(viewpoint_cam, gaussians, pipe, background, indices = indices)
+                render_pkg = render_vanilla(
+                        viewpoint_cam, 
+                        gaussians._xyz,
+                        gaussians.get_opacity,
+                        gaussians.get_scaling, 
+                        gaussians.get_rotation,
+                        gaussians._features_dc,
+                        gaussians._features_rest,
+                        pipe, 
+                        background,
+                        #splat_args=splat_settings,
+                        sh_degree = gaussians.active_sh_degree,
+                        )
+                image = render_pkg["render"]
+                
                 # Loss
                 gt_image = viewpoint_cam.original_image.cuda().float()
+                #torchvision.utils.save_image(image, os.path.join(scene.model_path, str(iteration) + ".png"))
+                #torchvision.utils.save_image(gt_image, os.path.join(scene.model_path, "gt_" + str(iteration) + ".png"))
                 if viewpoint_cam.alpha_mask is not None:
                     alpha_mask = viewpoint_cam.alpha_mask.cuda().float()
                     Ll1 = l1_loss(image * alpha_mask, gt_image) 
@@ -105,10 +127,13 @@ def training(dataset, opt, pipe, saving_iterations, checkpoint_iterations, check
                     Ll1 = l1_loss(image, gt_image) 
                     loss = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * (1.0 - ssim(image, gt_image))
                 loss.backward()
-
+                if iteration % 250 == 0 or iteration == 1:
+                    print(scene.model_path)
+                    torchvision.utils.save_image(image, os.path.join(scene.model_path, str(iteration) + ".png"))
+                    torchvision.utils.save_image(gt_image, os.path.join(scene.model_path, str(iteration) + "_gt.png"))
                 iter_end.record()
 
-                gaussians.max_radii2D[visibility_filter] = torch.max(gaussians.max_radii2D[visibility_filter], radii)
+                #gaussians.max_radii2D[visibility_filter] = torch.max(gaussians.max_radii2D[visibility_filter], radii)
 
                 with torch.no_grad():
                     # Progress bar

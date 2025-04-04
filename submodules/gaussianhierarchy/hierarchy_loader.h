@@ -36,5 +36,6 @@ public:
 		std::vector<float>& alphas,
 		std::vector<Eigen::Vector3f>& scales,
 		std::vector<Eigen::Vector4f>& rot,
-		std::vector<HierarchyNode>& nodes);
+		std::vector<HierarchyNode>& nodes, 
+		int& sh_degree);
 };

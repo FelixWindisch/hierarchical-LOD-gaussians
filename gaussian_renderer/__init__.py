@@ -623,7 +623,7 @@ def render_vanilla(viewpoint_camera,
         opacity,
         scales, 
         rotations,
-        shs, pipe, bg_color : torch.Tensor, sh_degree=3, scaling_modifier = 1.0, override_color = None, use_trained_exp=False):
+        dc, shs,   pipe, bg_color : torch.Tensor, sh_degree=3, scaling_modifier = 1.0, override_color = None, use_trained_exp=False):
     """
     Render the scene. 
     
@@ -649,7 +649,8 @@ def render_vanilla(viewpoint_camera,
         sh_degree=sh_degree,
         campos=viewpoint_camera.camera_center,
         prefiltered=False,
-        debug=False    )
+        debug=False,
+        antialiasing=False)
 
     rasterizer = alt_gaussian_rasterization.GaussianRasterizer(raster_settings=raster_settings)
     size = len(means3D)
@@ -681,11 +682,13 @@ def render_vanilla(viewpoint_camera,
     #    sh2rgb = eval_sh(sh_degree, shs_view, dir_pp_normalized)
     #    colors_precomp = torch.clamp_min(sh2rgb + 0.5, 0.0)
     # Rasterize visible Gaussians to image, obtain their radii (on screen). 
-    rendered_image, radii = rasterizer(
+    rendered_image, radii, x = rasterizer(
         means3D = means3D,
         means2D = means2D,
-        shs = shs, # shs,
-        colors_precomp = None, #colors_precomp,
+        dc = dc,
+        shs = shs,
+        # shs,
+        colors_precomp = override_color, #colors_precomp,
         opacities = opacity,
         scales = scales,
         rotations = rotations,
@@ -702,6 +705,7 @@ def render_vanilla(viewpoint_camera,
     out = {
         "render": rendered_image,
         "viewspace_points": screenspace_points
+        #,"render_buffer_overhead" : render_buffer_overhead
         }
     
     return out

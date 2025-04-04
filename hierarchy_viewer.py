@@ -38,7 +38,7 @@ import numpy as np
 from gaussian_hierarchy._C import  get_spt_cut_cuda
 from stp_gaussian_rasterization import ExtendedSettings
 from gaussian_renderer import occlusion_cull
-
+import json
 
 
 clock_start = True
@@ -61,12 +61,12 @@ def direct_collate(x):
 WriteTensorBoard = False
 #Standard
 densify_interval = 200
-lr_multiplier = 0.1
+lr_multiplier = 1
 #Unused
 Random_Hierarchy_Cut = True
 Only_Noise_Visible = True
 #MCMC
-Max_Cap = 5_000_000
+Max_Cap = 25_000_000
 MCMC_Densification = True
 MCMC_Noise_LR = 0  #5e5
 lambda_scaling = 0
@@ -84,10 +84,10 @@ Use_MIP_respawn = False
 # SPTs
 Storage_Device = 'cuda'
 lambda_hierarchy = 0.00
-SPT_Root_Volume = 2
+SPT_Root_Volume = 0.025
 SPT_Target_Granularity = 0.00005
 Cache_SPTs = True
-Reuse_SPT_Tolerarance = 0.3
+Reuse_SPT_Tolerarance = 0.25
 #View Selection
 Use_Consistency_Graph = False
 # Rasterizer
@@ -96,6 +96,7 @@ Rasterizer = "Vanilla"
 
 non_blocking=False
 def training(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoint_iterations, checkpoint, debug_from,  hierarchy_path):
+    global Reuse_SPT_Tolerarance
     opt.densification_interval = densify_interval
     #torch.cuda.memory._record_memory_history()
     #torch.autograd.set_detect_anomaly(True)
@@ -151,8 +152,9 @@ def training(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoin
     nodes_for_render_indices = torch.zeros(gaussians._xyz.size(0)).int().cuda()
     num_siblings = torch.zeros(gaussians._xyz.size(0)).int().cuda()
     
-    
-    optimizer_state = gaussians.move_storage_to(Storage_Device, int(round(Max_Cap * 1.2)))
+    #scene.dump_gaussians("Dump", only_leaves=True)
+
+    optimizer_state = gaussians.move_storage_to_render(Storage_Device, None)
 
     gaussians.build_hierarchical_SPT(SPT_Root_Volume, SPT_Target_Granularity, use_bounding_spheres=Use_Bounding_Spheres)
     print("Built SPTs")
@@ -173,15 +175,7 @@ def training(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoin
     iteration = first_iter
     # Dataloader loads data from disk
     # DONT SHUFFLE IF USING CORRESPONDENCE GRAPH
-    training_generator = DataLoader(scene.getTrainCameras(), num_workers = 8, prefetch_factor = 1, persistent_workers = True, collate_fn=direct_collate, shuffle=True)
-    train_camera_data_set = scene.getTrainCameras()
-    view_positions = []
-    view_directions = []
-    for camera in train_camera_data_set:
-        view_positions.append(camera.camera_center)
-    view_positions = np.array(view_positions)
-    if Use_MIP_respawn:
-        camera_KD_tree = KDTree(view_positions)
+
     
     if Gradient_Propagation:
         gaussians.recompute_weights()
@@ -209,12 +203,7 @@ def training(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoin
                              "exp_avgs" : torch.zeros_like(values, device='cuda'), "exp_avgs_sqs" : torch.zeros_like(values, device='cuda')})
     prev_SPT_distances = torch.empty(0, dtype = torch.float32, device='cuda')
     prev_SPT_indices = torch.empty(0, dtype = torch.int32, device='cuda')
-    prev_SPT_starts = torch.empty(0, dtype = torch.int32, device='cuda')
-    prev_render_indices = torch.empty(0, dtype = torch.int32, device='cuda')
-    prev_SPT_counts = torch.empty(0, dtype = torch.int32, device='cuda')
-
-    train_image_counts = torch.ones(len(train_camera_data_set), dtype=torch.int32)
-    
+    prev_SPT_counts = torch.empty(0, dtype = torch.int32, device='cuda')    
     gaussians.xyz_scheduler_args = get_expon_lr_func(lr_init=opt.position_lr_init*gaussians.spatial_lr_scale,
                                                     lr_final=opt.position_lr_final*gaussians.spatial_lr_scale,
                                                     lr_delay_mult=opt.position_lr_delay_mult,
@@ -238,13 +227,29 @@ def training(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoin
                     distance_multiplier = 1.0
                 if "render_SPTs" in slider:
                     render_SPTs = slider["render_SPTs"] > 0
+                    if render_SPTs:
+                        Reuse_SPT_Tolerarance = 0.0
                 else:
                     render_SPTs = False
                 if "freeze_view" in slider:    
                     freeze_view = slider["freeze_view"] > 0
                 else:
                     freeze_view = False
-                
+                    
+                if "distance_color" in slider and render_SPTs:    
+                    color_distance = slider["distance_color"] > 0
+                else:
+                    color_distance = False
+                if "size_color" in slider and render_SPTs and not color_distance:    
+                    color_size = slider["size_color"] > 0
+                else:
+                    color_size = False
+                if "reuse_SPT_tolerance" in slider and not render_SPTs:    
+                    Reuse_SPT_Tolerarance = slider["reuse_SPT_tolerance"]
+                if "separate_SPTs" in slider and not render_SPTs:    
+                    separate_SPTs = slider["separate_SPTs"] > 0
+                else:
+                    separate_SPTs = False
                     
                     
                 if custom_cam != None:
@@ -259,7 +264,7 @@ def training(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoin
                     if Use_Bounding_Spheres:
                         bounds = gaussians.bounding_sphere_radii
                     else: 
-                        bounds = (gaussians.scaling_activation(torch.max(gaussians.upper_tree_scaling, dim=-1)[0]) * 3.0)
+                        bounds = (gaussians.scaling_activation(torch.max(gaussians.upper_tree_scaling, dim=-1)[0]) * 2.5)
                     planes = gaussians.extract_frustum_planes(viewpoint_cam.full_proj_transform.cuda())
                     if Use_Frustum_Culling:
                         cull = lambda indices : gaussians.frustum_cull_spheres(gaussians.upper_tree_xyz[indices], bounds[indices], planes)
@@ -267,7 +272,7 @@ def training(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoin
                         cull = lambda indices : torch.ones(len(indices), dtype = torch.bool)
                     camera_position = viewpoint_cam.camera_center.cuda()
                     if not freeze_view:
-                        LOD_detail_cut = lambda indices : gaussians.min_distance_squared[indices] > ((camera_position - gaussians.upper_tree_xyz[indices]).square().sum() * distance_multiplier)
+                        LOD_detail_cut = lambda indices : gaussians.min_distance_squared[indices] > ((camera_position - gaussians.upper_tree_xyz[indices]).square().sum(dim=-1) * distance_multiplier)
                         #LOD_detail_cut = lambda indices : torch.ones_like(indices, dtype=torch.bool)
                         coarse_cut = gaussians.cut_hierarchy_on_condition(gaussians.upper_tree_nodes, LOD_detail_cut, return_upper_tree=False, root_node=0, leave_out_of_cut_condition=cull)
 
@@ -276,7 +281,7 @@ def training(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoin
                             background = torch.tensor(bg_color, dtype=torch.float32, device="cuda")
                             temp = len(coarse_cut)
                             occlusion_indices = gaussians.upper_tree_nodes[coarse_cut, 5]
-                            occlusion_mask = occlusion_cull(occlusion_indices.to(Storage_Device), gaussians, camera, pipe, background).cuda()
+                            occlusion_mask = occlusion_cull(occlusion_indices.to(Storage_Device), gaussians, custom_cam, pipe, background).cuda()
                             coarse_cut = coarse_cut[occlusion_mask]
                             print(f"Occlusion Cull {temp - len(coarse_cut)} out of {temp} upper tree gaussians")
                         leaf_mask = gaussians.upper_tree_nodes[coarse_cut, 2] == 0
@@ -324,7 +329,8 @@ def training(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoin
 
                         load_SPT_distances = (gaussians.upper_tree_xyz[load_SPT_indices] - camera_position).pow(2).sum(1).sqrt() * distance_multiplier
                         if render_SPTs:
-                            load_SPT_distances = torch.full((len(load_SPT_distances),), 10000, device='cuda', dtype=torch.float)
+                            load_SPT_distances = torch.full((len(load_SPT_distances),), 100000000, device='cuda', dtype=torch.float)
+                            #cut_SPTs = gaussians.SPT_
                         if len(load_SPT_indices) > 0:
                             #LOAD SPT CUT
                             cut_SPTs, SPT_counts = get_spt_cut_cuda(len(load_SPT_indices), gaussians.SPT_gaussian_indices, gaussians.SPT_starts, gaussians.SPT_max, gaussians.SPT_min, load_SPT_indices, load_SPT_distances)
@@ -370,7 +376,6 @@ def training(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoin
                         features_rest = nn.Parameter(torch.cat((features_rest[keep_gaussians_mask].detach(), gaussians._features_rest[load_from_disk_indices].cuda(non_blocking=non_blocking))).contiguous())
                         shs = torch.cat((features_dc, features_rest), dim=1).contiguous()
                         torch.cuda.synchronize()
-                        render_indices_cpu = render_indices.to(Storage_Device)
 
                         #parameters_new = []
                         #for index, (values, name, lr) in enumerate(zip([means3D, features_dc, opacity, scales, rotations, features_rest], 
@@ -406,16 +411,40 @@ def training(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoin
                         background,
                         sh_degree = gaussians.active_sh_degree)
                     elif Rasterizer == "Vanilla":
+                        if color_distance:
+                            colors_precomp = torch.zeros_like(features_dc)
+                            SPT_distances_remapped = (SPT_distances - SPT_distances.min()) / (SPT_distances.max() - SPT_distances.min())
+                            colors_precomp[:, 0] = SPT_distances_remapped
+                            colors_precomp[:, 1] = SPT_distances_remapped
+                            colors_precomp[:, 2] = SPT_distances_remapped
+                        elif color_size:
+                            colors_precomp = torch.zeros_like(features_dc)
+                            SPT_sizes = SPT_counts_new
+                            SPT_sizes_remapped = (SPT_sizes - SPT_sizes.min()) / (SPT_sizes.max() - SPT_sizes.min())
+                            colors_precomp[:, 0] = SPT_sizes_remapped
+                            colors_precomp[:, 1] = SPT_sizes_remapped
+                            colors_precomp[:, 2] = SPT_sizes_remapped
+                        elif separate_SPTs:
+                            colors_precomp = torch.zeros_like(features_dc)
+                            color = torch.zeros_like(render_indices)
+                            color[-len(upper_tree_nodes_to_render):] = 1
+                            colors_precomp[:, 0] = color
+                            colors_precomp[:, 1] = 0.2
+                            colors_precomp[:, 2] = 0.2
+                        else:
+                            colors_precomp = None
                         render_pkg = render_vanilla(
                             viewpoint_cam, 
                             means3D,
                             gaussians.opacity_activation(opacity),
                             gaussians.scaling_activation(scales), 
                             gaussians.rotation_activation(rotations),
-                            shs,
+                            features_dc,
+                            features_rest,
                             pipe, 
                             background,
                             #splat_args=splat_settings,
+                            override_color = colors_precomp, 
                             sh_degree = gaussians.active_sh_degree,
                             )
                     else:
@@ -437,8 +466,8 @@ def training(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoin
                     ####### RENDER
                     net_image = image.cpu()
                     net_image_bytes = memoryview((torch.clamp(net_image, min=0, max=1.0) * 255).byte().permute(1, 2, 0).contiguous().to('cpu').numpy())
-                
-                network_gui.send(net_image_bytes, "") #dataset.source_path)
+                train_params = {"Num_Rendered" : len(render_indices), "Number_of_SPTs" : len(SPT_indices), "Percentage_Rendered" : len(render_indices)/len(gaussians._xyz), "Percentage_SPTs" : len(SPT_indices)/len(gaussians.SPT_starts)}
+                network_gui.send(net_image_bytes, json.dumps({"iteration" : 99, "num_gaussians" : len(gaussians._xyz), "loss" : 0, "sh_degree":1, "error" : 0, "paused" : False, "train_params" : train_params})) #dataset.source_path)
                 if do_training and ((iteration < int(opt.iterations)) or not keep_alive_):
                     break
             except Exception as e:

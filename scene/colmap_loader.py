@@ -101,7 +101,7 @@ def read_points3D_text(path):
 
     xyzs = np.zeros((count, 3))
     rgbs = np.zeros((count, 3))
-    errors = np.zeros((count, 1))
+    #errors = np.zeros((count, 1))
 
     count = 0
     with open(path, "r") as fid:
@@ -114,13 +114,13 @@ def read_points3D_text(path):
                 elems = line.split()
                 xyz = np.array(tuple(map(float, elems[1:4])))
                 rgb = np.array(tuple(map(int, elems[4:7])))
-                error = np.array(float(elems[7]))
+                #error = np.array(float(elems[7]))
                 xyzs[count] = xyz
                 rgbs[count] = rgb
-                errors[count] = error
+                #errors[count] = error
 
                 count += 1
-    return xyzs, rgbs, errors
+    return xyzs, rgbs, None
 
 def read_points3D_binary(path_to_model_file):
     """
@@ -257,10 +257,10 @@ def read_extrinsics_text(path):
                 tvec = np.array(tuple(map(float, elems[5:8])))
                 camera_id = int(elems[8])
                 image_name = elems[9]
-                elems = fid.readline().split()
-                xys = np.column_stack([tuple(map(float, elems[0::3])),
-                                       tuple(map(float, elems[1::3]))])
-                point3D_ids = np.array(tuple(map(int, elems[2::3])))
+                #elems = fid.readline().split()
+                xys = None #np.column_stack([tuple(map(float, elems[0::3])),
+                            #           tuple(map(float, elems[1::3]))])
+                point3D_ids = None #np.array(tuple(map(int, elems[2::3])))
                 images[image_id] = Image(
                     id=image_id, qvec=qvec, tvec=tvec,
                     camera_id=camera_id, name=image_name,

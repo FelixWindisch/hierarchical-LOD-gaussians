@@ -51,19 +51,22 @@ LoadDynamicHierarchy(std::string filename)
 	std::vector<Eigen::Vector3f> scales;
 	std::vector<Eigen::Vector4f> rot;
 	std::vector<HierarchyNode> nodes;
-	
-	loader.loadDynamic(filename.c_str(), pos, shs, alphas, scales, rot, nodes);
+	int sh_size[] = {1,4,9, 16};
+	int sh_degree;
+	loader.loadDynamic(filename.c_str(), pos, shs, alphas, scales, rot, nodes, sh_degree);
 	
 	int P = pos.size();
 	
 	torch::TensorOptions options = torch::TensorOptions().dtype(torch::kFloat32).device(torch::kCPU);
 	torch::Tensor pos_tensor = torch::from_blob(pos.data(), {P, 3}, options).clone();
-	torch::Tensor shs_tensor = torch::from_blob(shs.data(), {P, 16, 3}, options).clone();
+	
+	torch::Tensor shs_tensor = torch::from_blob(shs.data(), {P, sh_size[sh_degree], 3}, options).clone();
 	torch::Tensor alpha_tensor = torch::from_blob(alphas.data(), {P, 1}, options).clone();
 	torch::Tensor scale_tensor = torch::from_blob(scales.data(), {P, 3}, options).clone();
 	torch::Tensor rot_tensor = torch::from_blob(rot.data(), {P, 4}, options).clone();
 	
 	int N = nodes.size();
+	printf("N: %d\n\n\n", N);
 	torch::TensorOptions intoptions = torch::TensorOptions().dtype(torch::kInt32).device(torch::kCPU);
 	
 	torch::Tensor nodes_tensor = torch::from_blob(nodes.data(), {N, 6}, intoptions).clone();
@@ -108,12 +111,14 @@ void WriteDynamicHierarchy(
 					torch::Tensor& opacities,
 					torch::Tensor& log_scales,
 					torch::Tensor& rotations,
-					torch::Tensor& nodes)
+					torch::Tensor& nodes,
+					int SH_degree)
 {
 	HierarchyWriter writer;
 	
 	int allP = pos.size(0);
 	int allN = nodes.size(0);
+	
 	
 	writer.writeDynamic(
 		filename.c_str(),
@@ -124,7 +129,7 @@ void WriteDynamicHierarchy(
 		opacities.cpu().contiguous().data_ptr<float>(),
 		(Eigen::Vector3f*)log_scales.cpu().contiguous().data_ptr<float>(),
 		(Eigen::Vector4f*)rotations.cpu().contiguous().data_ptr<float>(),
-		(HierarchyNode*)nodes.cpu().contiguous().data_ptr<int>()
+		(HierarchyNode*)nodes.cpu().contiguous().data_ptr<int>(), SH_degree
 	);
 }
 

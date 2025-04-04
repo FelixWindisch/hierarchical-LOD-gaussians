@@ -27,7 +27,8 @@ void WriteDynamicHierarchy(
     torch::Tensor &opacities,
     torch::Tensor &log_scales,
     torch::Tensor &rotations,
-    torch::Tensor &nodes);
+    torch::Tensor &nodes,
+    int SH_degree);
 
 torch::Tensor
 ExpandToTarget(torch::Tensor& nodes, int target);

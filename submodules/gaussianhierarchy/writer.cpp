@@ -283,7 +283,7 @@ void Writer::writeDynamicHierarchy(const char* filename, const std::vector<Gauss
 		opacities.data(),
 		log_scales.data(),
 		rotations.data(),
-		basenodes.data()
+		basenodes.data(), 3
 	);
 }
 
