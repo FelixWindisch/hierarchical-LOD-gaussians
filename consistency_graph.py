@@ -4,10 +4,15 @@ import networkx as nx
 import matplotlib.pyplot as plt
 import os
 import random
+import torch
 def pair_id_to_image_ids(pair_id, num_images):
     image_id2 = pair_id % 2147483647
     image_id1 = (pair_id - image_id2) / 2147483647
     return image_id1, image_id2
+
+
+
+
 
 
 def metropolis_hastings_walk(G, node):

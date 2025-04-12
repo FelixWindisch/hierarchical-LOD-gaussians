@@ -257,6 +257,7 @@ class GaussianModel:
                 self.SPT_min = torch.cat((self.SPT_min, SPT[:, 1]))
                 self.SPT_gaussian_indices = torch.cat((self.SPT_gaussian_indices, SPT[:, 0].to(torch.int32)))
                 SPT_root_hierarchy_indices.append(cut_node)
+                #print(f"SPT {len(SPT_root_hierarchy_indices)} finished")
                 #self.SPT_centers.append(torch.mean(self._xyz[SPT[:,0]].to(torch.int32)))
             else:
                 upper_tree_indices = torch.cat((upper_tree_indices, temp_additional_indices)) # SPT[:, 0].to(torch.int32)[1:]))
@@ -281,6 +282,7 @@ class GaussianModel:
         self.upper_tree_nodes[:, hierarchy_node_parent] = torch.searchsorted(upper_tree_indices.cuda(), self.upper_tree_nodes[:, hierarchy_node_parent])
         self.upper_tree_nodes[0, hierarchy_node_parent] = -1
         # Dont modify SPT leaves
+        # TODO: Update to torch.range(0, len(self.upper_tree_nodes), device=device)
         non_leaf = ~torch.isin(torch.range(0, len(self.upper_tree_nodes)-1, device=device), cut_SPT_indices.clone().detach())
         # if it is a normal leaf node without SPT, set child to -1, otherwise translate the first_child from self.nodes to self.upper_tree_nodes index
         self.upper_tree_nodes[non_leaf, hierarchy_node_first_child] = torch.where(self.upper_tree_nodes[non_leaf, hierarchy_node_first_child] == 0, -1, torch.searchsorted(upper_tree_indices.cuda(), self.upper_tree_nodes[non_leaf, hierarchy_node_first_child]).to(torch.int32))
@@ -425,7 +427,7 @@ class GaussianModel:
         return optimizer_state
         
     
-    def move_storage_to(self, device, max_number_of_gaussians):
+    def move_storage_to(self, device, max_number_of_gaussians, store_on_disk = False):
         self.size = len(self._xyz)
         names = ["xyz", "f_dc", "scaling", "rotation", "opacity", "f_rest", "nodes"]
         new_tensors = []
@@ -435,7 +437,11 @@ class GaussianModel:
             shape = list(tensor.size())
             shape[0] = max_number_of_gaussians
             shape = torch.Size(shape)
-            storage_tensor = torch.zeros(shape, dtype=tensor.cpu().dtype, device=device)
+            
+            if store_on_disk:
+                storage_tensor = torch.from_numpy(np.memmap(name + ".bin", dtype=tensor.cpu().detach().numpy().dtype, mode="w+", shape=shape))
+            else:
+                storage_tensor = torch.zeros(shape, dtype=tensor.cpu().dtype, device=device)
             #if device == 'cpu':
             #    storage_tensor = storage_tensor.pin_memory()    
             storage_tensor[:len(tensor)] = tensor
@@ -1699,6 +1705,12 @@ class GaussianModel:
             return 0
         print(f"Spawn {num_gs} new Gaussians")
         alive_indices=torch.where(self.nodes[:size, hierarchy_node_child_count] == 0)[0]
+        
+        # Torch.multionmial can only handle 16_000_000 elements. If there are more possible respawn locations, uniformly sample 16M
+        if len(alive_indices) > 16_000_000:
+            alive_indices = alive_indices[torch.randperm(len(alive_indices))[:16_000_000]]
+        probs = (self.opacity_activation(self._opacity[alive_indices, 0])) 
+        
         probs = self.opacity_activation(self._opacity[:size]).squeeze(-1)[alive_indices]
         
         

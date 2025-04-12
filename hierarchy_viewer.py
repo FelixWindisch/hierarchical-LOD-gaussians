@@ -82,12 +82,12 @@ Use_Occlusion_Culling = False
 Use_Frustum_Culling = True
 Use_MIP_respawn = False
 # SPTs
-Storage_Device = 'cuda'
+Storage_Device = 'cpu'
 lambda_hierarchy = 0.00
-SPT_Root_Volume = 0.025
-SPT_Target_Granularity = 0.00005
+SPT_Root_Volume = 100 #0.025
+SPT_Target_Granularity = 0.001
 Cache_SPTs = True
-Reuse_SPT_Tolerarance = 0.25
+Reuse_SPT_Tolerarance = 0.1
 #View Selection
 Use_Consistency_Graph = False
 # Rasterizer
@@ -148,9 +148,6 @@ def training(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoin
         gaussians.restore(model_params, opt)
         
     render_indices = torch.zeros(gaussians._xyz.size(0)).int().cuda()
-    parent_indices = torch.zeros(gaussians._xyz.size(0)).int().cuda()
-    nodes_for_render_indices = torch.zeros(gaussians._xyz.size(0)).int().cuda()
-    num_siblings = torch.zeros(gaussians._xyz.size(0)).int().cuda()
     
     #scene.dump_gaussians("Dump", only_leaves=True)
 
@@ -236,11 +233,11 @@ def training(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoin
                 else:
                     freeze_view = False
                     
-                if "distance_color" in slider and render_SPTs:    
+                if "distance_color" in slider:    
                     color_distance = slider["distance_color"] > 0
                 else:
                     color_distance = False
-                if "size_color" in slider and render_SPTs and not color_distance:    
+                if "size_color" in slider and not color_distance:    
                     color_size = slider["size_color"] > 0
                 else:
                     color_size = False
@@ -292,6 +289,7 @@ def training(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoin
                         if render_SPTs:
                             upper_tree_nodes_to_render = torch.empty(0, dtype=torch.int32, device='cuda')
 
+                        # SPT Nodes are those that have a child count of 0, but still have a child index
                         SPT_node_indices = leaf_nodes[gaussians.upper_tree_nodes[leaf_nodes, 3] >= 0]
                         SPT_distances = (gaussians.upper_tree_xyz[SPT_node_indices] - camera_position).pow(2).sum(1).sqrt() * distance_multiplier
                         if render_SPTs:
@@ -303,9 +301,11 @@ def training(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoin
                         valid[valid.clone()] &= (SPT_indices[SPTs_prev_to_new[valid]] == prev_SPT_indices[valid])
                         prev_distances_compare = prev_SPT_distances[valid]
                         distances_compare = SPT_distances[SPTs_prev_to_new[valid]]
-                        close_enough = torch.isclose(distances_compare, prev_distances_compare, rtol=Reuse_SPT_Tolerarance, atol=0.05)
+                        close_enough =  torch.isclose(distances_compare, prev_distances_compare, rtol=Reuse_SPT_Tolerarance, atol=0.05) #torch.zeros_like(distances_compare, dtype=torch.bool, device='cuda')
                         keep_SPT_indices = SPT_indices[SPTs_prev_to_new[valid][close_enough]]
-
+                        
+                        
+                        
                         valid_non_zero = torch.nonzero(valid, as_tuple=True)[0]
                         close_enough_non_zero = torch.nonzero(close_enough, as_tuple=True)[0]
                         SPT_keep_counts_indices = valid_non_zero[close_enough_non_zero]
@@ -322,12 +322,14 @@ def training(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoin
 
                         # Keep Skybox
                         keep_gaussians_mask[:gaussians.skybox_points] = True
-
+                        
 
                         mask = torch.isin(SPT_indices, keep_SPT_indices)
                         load_SPT_indices = SPT_indices[~mask]
-
-                        load_SPT_distances = (gaussians.upper_tree_xyz[load_SPT_indices] - camera_position).pow(2).sum(1).sqrt() * distance_multiplier
+                        load_SPT_distances = SPT_distances[~mask]
+                        #
+                        #load_SPT_distances = (gaussians.upper_tree_xyz[load_SPT_node_indices] - camera_position).pow(2).sum(1).sqrt() * distance_multiplier #torch.zeros(len(load_SPT_indices), dtype=torch.float32, device='cuda') 
+                        #load_SPT_distances = torch.ones(len(load_SPT_indices), dtype=torch.float32, device='cuda') 
                         if render_SPTs:
                             load_SPT_distances = torch.full((len(load_SPT_distances),), 100000000, device='cuda', dtype=torch.float)
                             #cut_SPTs = gaussians.SPT_
@@ -346,7 +348,7 @@ def training(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoin
                         for index, i in enumerate(SPT_keep_counts_indices):
                             SPT_counts_new[index] = prefix
                             if i == len(prev_SPT_counts)-1:
-                                to = len(render_indices)
+                                to = len(render_indices) - len(load_from_disk_indices)
                             else:
                                 to = prev_SPT_counts[i+1]
                             prefix += (to - prev_SPT_counts[i]).item()
@@ -356,9 +358,6 @@ def training(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoin
                         SPT_distances = torch.cat((prev_SPT_distances[SPT_keep_counts_indices], load_SPT_distances))
 
                         load_from_disk_indices = torch.cat((cut_SPTs,  upper_tree_nodes_to_render))
-
-                        write_back_mask = ~keep_gaussians_mask
-                        write_back_indices = render_indices[write_back_mask].to(Storage_Device)
 
                         render_indices = torch.cat((render_indices[keep_gaussians_mask], load_from_disk_indices))
 
@@ -395,6 +394,57 @@ def training(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoin
 
                         load_write_time = clock()
                         torch.cuda.empty_cache()
+                        ### LABEL GPU MEM
+                        
+                        render_indices.label = 'render_indices'
+                        means3D.label = "means3D"
+                        opacity.label = "opacity"
+                        scales.label = "scales" 
+                        rotations.label = "rotations" 
+                        features_dc.label = "features_dc"
+                        features_rest.label = "features_rest"
+                        shs.label = 'shs'
+                        SPT_counts_new.label = "SPT_counts_new"
+                        SPT_counts.label = "SPT_counts"
+                        SPT_indices.label = "SPT_indices"
+                        keep_SPT_indices.label = "keep_SPT_indices"
+                        SPTs_prev_to_new.label = "SPTs_prev_to_new"
+                        SPT_distances.label = "SPT_distances"
+                        SPT_node_indices.label = "SPT_node_indices"
+                        LOD_detail_cut.label = "LOD_detail_cut"
+                        coarse_cut.label = "coarse_cut"
+                        leaf_mask.label = "leaf_mask"
+                        leaf_nodes.label = "leaf_nodes"
+                        SPTs_prev_to_new.label = "SPTs_prev_to_new"
+                        valid.label = "valid"
+                        prev_distances_compare.label = "prev_distances_compare"
+                        distances_compare.label = "distances_compare"
+                        close_enough.label = "close_enough"
+                        valid_non_zero.label = "valid_non_zero"
+                        close_enough_non_zero.label = "close_enough_non_zero"
+                        SPT_keep_counts_indices.label = "SPT_keep_counts_indices"
+                        keep_gaussians_mask.label = "keep_gaussians_mask"
+                        mask.label = "mask"
+                        upper_tree_nodes_to_render.label = "upper_tree_nodes_to_render"
+                        cut_SPTs.label = "cut_SPTs"
+                        SPT_counts.label = "SPT_counts"
+                        SPT_counts_new.label = "SPT_counts_new"
+                        prev_SPT_indices.label = "prev_SPT_indices"
+                        prev_SPT_distances.label = "prev_SPT_distances"
+                        prev_SPT_counts.label = "prev_SPT_counts"
+                        gaussians.SPT_starts.label = "SPT_starts"
+                        gaussians.SPT_min.label = "SPT_min"
+                        gaussians.SPT_max.label = "SPT_max"
+                        gaussians.SPT_gaussian_indices.label = "SPT_gaussian_indices" 
+                        gaussians.upper_tree_nodes.label = "upper_tree_nodes"
+                        gaussians.upper_tree_xyz.label = "upper_tree_xyz"
+                        gaussians.upper_tree_scaling.label = "upper_tree_scaling"
+                        gaussians.min_distance_squared.label = "min_distance_squared"
+                        bounds.label = "bounds"
+                        planes.label = "planes"
+
+                        ### LABEL GPU MEM
+                        
                     
                     
                     
@@ -412,25 +462,44 @@ def training(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoin
                         sh_degree = gaussians.active_sh_degree)
                     elif Rasterizer == "Vanilla":
                         if color_distance:
-                            colors_precomp = torch.zeros_like(features_dc)
+                            colors_precomp = torch.zeros_like(scales, device='cuda')
                             SPT_distances_remapped = (SPT_distances - SPT_distances.min()) / (SPT_distances.max() - SPT_distances.min())
-                            colors_precomp[:, 0] = SPT_distances_remapped
-                            colors_precomp[:, 1] = SPT_distances_remapped
-                            colors_precomp[:, 2] = SPT_distances_remapped
+                            # Skybox is blue
+                            colors_precomp[:gaussians.skybox_points, 0] = 0
+                            colors_precomp[:gaussians.skybox_points, 1] = 0
+                            colors_precomp[:gaussians.skybox_points, 2] = 1
+                            for i in range(len(SPT_indices)):
+                                min_range = gaussians.skybox_points + SPT_counts_new[i]
+                                max_range = len(render_indices) if i+1 == len(SPT_indices) else gaussians.skybox_points + SPT_counts_new[i+1]
+                                colors_precomp[min_range:max_range, 0] = SPT_distances_remapped[i]
+                                colors_precomp[min_range:max_range, 1] = SPT_distances_remapped[i]
+                                colors_precomp[min_range:max_range, 2] = SPT_distances_remapped[i]
                         elif color_size:
-                            colors_precomp = torch.zeros_like(features_dc)
+                            colors_precomp = torch.zeros_like(scales, device='cuda')
                             SPT_sizes = SPT_counts_new
                             SPT_sizes_remapped = (SPT_sizes - SPT_sizes.min()) / (SPT_sizes.max() - SPT_sizes.min())
-                            colors_precomp[:, 0] = SPT_sizes_remapped
-                            colors_precomp[:, 1] = SPT_sizes_remapped
-                            colors_precomp[:, 2] = SPT_sizes_remapped
+                            # Skybox is blue
+                            colors_precomp[:gaussians.skybox_points, 0] = 0
+                            colors_precomp[:gaussians.skybox_points, 1] = 0
+                            colors_precomp[:gaussians.skybox_points, 2] = 1
+                            for i in range(len(SPT_indices)):
+                                min_range = gaussians.skybox_points + SPT_counts_new[i]
+                                max_range = len(render_indices) if i+1 == len(SPT_indices) else gaussians.skybox_points + SPT_counts_new[i+1]
+                                colors_precomp[min_range:max_range, 0] = SPT_sizes_remapped[i]
+                                colors_precomp[min_range:max_range, 1] = SPT_sizes_remapped[i]
+                                colors_precomp[min_range:max_range, 2] = SPT_sizes_remapped[i]
                         elif separate_SPTs:
-                            colors_precomp = torch.zeros_like(features_dc)
-                            color = torch.zeros_like(render_indices)
-                            color[-len(upper_tree_nodes_to_render):] = 1
-                            colors_precomp[:, 0] = color
-                            colors_precomp[:, 1] = 0.2
-                            colors_precomp[:, 2] = 0.2
+                            colors_precomp = torch.zeros_like(scales, device='cuda')
+                            # Skybox is blue
+                            colors_precomp[:gaussians.skybox_points, 0] = 0
+                            colors_precomp[:gaussians.skybox_points, 1] = 0
+                            colors_precomp[:gaussians.skybox_points, 2] = 1
+                            random_colors = torch.rand((len(SPT_indices), 3))
+                            for i in range(len(SPT_indices)):
+                                min_range = gaussians.skybox_points + SPT_counts_new[i]
+                                max_range = len(render_indices) if i+1 == len(SPT_indices) else gaussians.skybox_points + SPT_counts_new[i+1]
+                                colors_precomp[min_range:max_range, :] = random_colors[i]
+                            colors_precomp[-len(upper_tree_nodes_to_render):, :] = 1
                         else:
                             colors_precomp = None
                         render_pkg = render_vanilla(
@@ -472,6 +541,7 @@ def training(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoin
                     break
             except Exception as e:
                 print(e)
+                raise e
                 network_gui.conn = None
 ######## VIEWER
 

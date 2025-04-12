@@ -21,10 +21,10 @@ from diff_gaussian_rasterization import _C
 import numpy as np
 
 
-def occlusion_cull(indices, gaussians, camera, pipe, background):
+def occlusion_cull(indices, gaussians, camera, pipe, background, opacity_multiplier = 1, scale_multiplier = 1):
     means3D = gaussians._xyz[indices].cuda().contiguous()
-    opacity = gaussians.opacity_activation(gaussians._opacity[indices].cuda().contiguous())
-    scales = gaussians.scaling_activation(gaussians._scaling[indices].cuda().contiguous())
+    opacity = torch.clamp(gaussians.opacity_activation(gaussians._opacity[indices].cuda().contiguous()) * opacity_multiplier, 0, 1)
+    scales = gaussians.scaling_activation(gaussians._scaling[indices].cuda().contiguous()) * scale_multiplier
     rotations = gaussians.rotation_activation(gaussians._rotation[indices].cuda().contiguous())
     features_dc = gaussians._features_dc[indices].cuda().contiguous()
     features_rest = gaussians._features_rest[indices].cuda().contiguous()
@@ -623,7 +623,7 @@ def render_vanilla(viewpoint_camera,
         opacity,
         scales, 
         rotations,
-        dc, shs,   pipe, bg_color : torch.Tensor, sh_degree=3, scaling_modifier = 1.0, override_color = None, use_trained_exp=False):
+        dc, shs,   pipe, bg_color : torch.Tensor, sh_degree=3, scaling_modifier = 1.0, override_color = None, use_trained_exp=False, anti_aliasing=True):
     """
     Render the scene. 
     
@@ -650,7 +650,7 @@ def render_vanilla(viewpoint_camera,
         campos=viewpoint_camera.camera_center,
         prefiltered=False,
         debug=False,
-        antialiasing=False)
+        antialiasing=anti_aliasing)
 
     rasterizer = alt_gaussian_rasterization.GaussianRasterizer(raster_settings=raster_settings)
     size = len(means3D)
@@ -682,6 +682,8 @@ def render_vanilla(viewpoint_camera,
     #    sh2rgb = eval_sh(sh_degree, shs_view, dir_pp_normalized)
     #    colors_precomp = torch.clamp_min(sh2rgb + 0.5, 0.0)
     # Rasterize visible Gaussians to image, obtain their radii (on screen). 
+    if not override_color is None:
+        shs = None
     rendered_image, radii, x = rasterizer(
         means3D = means3D,
         means2D = means2D,

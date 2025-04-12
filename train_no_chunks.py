@@ -118,8 +118,8 @@ if __name__ == '__main__':
             model_params.images = images_dir
             model_params.model_path = os.path.join(output_dir, "scaffold")
             model_params.skybox_num = 100000
-            optimization_params.iterations = 30000
-            train_coarse.training(model_params, optimization_params, pipeline_params, [30000], [], False, -1)
+            optimization_params.iterations = 150000
+            train_coarse.training(model_params, optimization_params, pipeline_params, [150000], [], False, -1)
             #subprocess.run(train_coarse_args, shell=True, check=True)
         except subprocess.CalledProcessError as e:
             print(f"Error executing train_coarse: {e}")
@@ -129,16 +129,22 @@ if __name__ == '__main__':
     model_params.source_path = colmap_dir #os.path.join(colmap_dir, "../rectified/")
     model_params.images = images_dir
     
-    graph_path = os.path.join(colmap_dir, "consistency_graph.edge_list")
-    if not os.path.isfile(graph_path) or True:
-        if os.path.isfile(os.path.join(colmap_dir, "../unrectified/database.db")):   
-            # Build consistency graph
-            cg = consistency_graph.load_consistency_graph(os.path.join(colmap_dir, "../unrectified/"))
-            # remove training images
-            cg.remove_nodes_from([(i*10)+1 for i in range(0, len(cg.nodes())//10 + 2)])
-        else:
-            print("No COLMAP Database found for consistency graph!")
-            cg = None
+    graph_path = os.path.join(colmap_dir, "sparse/0/consistency_graph.edge_list")
+    
+    if os.path.isfile(graph_path):
+        cg = nx.read_edgelist(graph_path)
+        print("Read Camera Graph")
+    else:
+        cg = None
+    #if not os.path.isfile(graph_path) or True:
+    #    if os.path.isfile(os.path.join(colmap_dir, "../unrectified/database.db")):   
+    #        # Build consistency graph
+    #        cg = consistency_graph.load_consistency_graph(os.path.join(colmap_dir, "../unrectified/"))
+    #        # remove training images
+    #        cg.remove_nodes_from([(i*10)+1 for i in range(0, len(cg.nodes())//10 + 2)])
+    #    else:
+    #        print("No COLMAP Database found for consistency graph!")
+    #        cg = None
             
     model_params.source_path = colmap_dir #os.path.join(colmap_dir, "../rectified/")
     model_params.images = images_dir
@@ -223,7 +229,7 @@ if __name__ == '__main__':
     optimization_params.densification_interval=500
     optimization_params.opacity_reset_interval=3000
     optimization_params.densify_from_iter=1
-    optimization_params.densify_until_iter=25000
+    optimization_params.densify_until_iter=250000
     #optimization_params.densify_grad_threshold=0.015
     optimization_params.densify_grad_threshold=0.015
     optimization_params.depth_l1_weight_init=1.0
@@ -231,10 +237,10 @@ if __name__ == '__main__':
 
     
     #Standard 3DGS training parameters
-    optimization_params.iterations = 50_000
-    optimization_params.position_lr_init =  0.0000056 #0.0000016 #0.00016
+    optimization_params.iterations = 10_000
+    optimization_params.position_lr_init =  0.0000156 #0.0000016 #0.00016
     #     #optimization_params.position_lr_init = 0.016
-    optimization_params.position_lr_final = 0.00000001 #0.000000016 #0.0000016
+    optimization_params.position_lr_final = 0.0000001 #0.000000016 #0.0000016
     optimization_params.position_lr_delay_mult = 0.01
     optimization_params.position_lr_max_steps = 50_000
     optimization_params.feature_lr = 0.0025

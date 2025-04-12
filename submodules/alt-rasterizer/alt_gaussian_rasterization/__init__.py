@@ -98,7 +98,7 @@ class _RasterizeGaussians(torch.autograd.Function):
             num_rendered, num_buckets, color, invdepths, radii, geomBuffer, binningBuffer, imgBuffer, sampleBuffer = _C.rasterize_gaussians(*args)
         s = lambda a: a.element_size() * a.nelement()/10e9
         render_buffer_overhead = s(radii) + s(geomBuffer) + s(binningBuffer) + s(sampleBuffer) + s(color)
-        print(f"Render Buffer Overhead (GB): {render_buffer_overhead}")
+        #print(f"Render Buffer Overhead (GB): {render_buffer_overhead}")
         
         # Keep relevant tensors for backward
         ctx.raster_settings = raster_settings
