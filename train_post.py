@@ -68,7 +68,7 @@ lr_multiplier = 1
 Random_Hierarchy_Cut = True
 Only_Noise_Visible = True
 #MCMC
-Max_Cap = 140_000_000
+Max_Cap = 50_000_000
 MCMC_Densification = True
 MCMC_Noise_LR = 0  #5e5
 lambda_scaling = 0
@@ -90,7 +90,7 @@ SPT_Root_Volume = 100 # 0.02
 SPT_Target_Granularity = 0.00228
 Min_SPT_Size = 256
 Cache_SPTs = True
-Reuse_SPT_Tolerarance = 0.0
+Reuse_SPT_Tolerarance = 0.9
 Max_Gaussian_Budget = 100_000_000
 Distance_Multiplier_Until_Budget = 1.5
 #View Selection
@@ -238,11 +238,11 @@ def training(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoin
         for viewpoint_batch in training_generator:
             for viewpoint_cam in viewpoint_batch:
                 if Use_Consistency_Graph:
-                    current_camera_index = int(consistency_graph.metropolis_hastings_walk(cons_graph, (current_camera_index)))
+                    current_camera_index = int(consistency_graph.metropolis_hastings_walk(cons_graph, (str(current_camera_index))))
                     print(current_camera_index)
                     #current_camera_index = consistency_graph.random_walk_node(cons_graph, current_camera_index, train_image_counts)
                     #train_image_counts[current_camera_index] += 1
-                    viewpoint_cam = train_camera_data_set[current_camera_index]
+                    viewpoint_cam = train_camera_data_set[int(current_camera_index)]
                 #camera_direction = torch.tensor(viewpoint_cam.R[:, 2], dtype=torch.float32)
                 #viewpoint_cam = train_camera_data_set[0]
                 #recompute Gaussian weights
@@ -477,6 +477,10 @@ def training(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoin
                     prev_SPT_counts = SPT_counts_new
                     
                     load_write_time = clock()
+                    
+                    del write_back_mask
+                    del keep_gaussians_mask
+                    del write_back_indices
                     torch.cuda.empty_cache()
                     torch.cuda.synchronize()
                 # parent indices contains as many elements as indices
@@ -593,7 +597,7 @@ def training(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoin
                         param['exp_avgs_sqs'].label = param['name'] + '_exp_avgs_sqs'
                     SPT_counts_new.label = "SPT_counts_new"
                     SPT_counts.label = "SPT_counts"
-                    write_back_mask.label = "write_back_mask"
+                    #write_back_mask.label = "write_back_mask"
                     SPT_indices.label = "SPT_indices"
                     keep_SPT_indices.label = "keep_SPT_indices"
                     SPTs_prev_to_new.label = "SPTs_prev_to_new"
@@ -603,7 +607,6 @@ def training(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoin
                     coarse_cut.label = "coarse_cut"
                     leaf_mask.label = "leaf_mask"
                     leaf_nodes.label = "leaf_nodes"
-                    SPTs_prev_to_new.label = "SPTs_prev_to_new"
                     valid.label = "valid"
                     prev_distances_compare.label = "prev_distances_compare"
                     distances_compare.label = "distances_compare"
@@ -611,12 +614,10 @@ def training(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoin
                     valid_non_zero.label = "valid_non_zero"
                     close_enough_non_zero.label = "close_enough_non_zero"
                     SPT_keep_counts_indices.label = "SPT_keep_counts_indices"
-                    keep_gaussians_mask.label = "keep_gaussians_mask"
+                    #keep_gaussians_mask.label = "keep_gaussians_mask"
                     mask.label = "mask"
                     upper_tree_nodes_to_render.label = "upper_tree_nodes_to_render"
                     cut_SPTs.label = "cut_SPTs"
-                    SPT_counts.label = "SPT_counts"
-                    SPT_counts_new.label = "SPT_counts_new"
                     prev_SPT_indices.label = "prev_SPT_indices"
                     prev_SPT_distances.label = "prev_SPT_distances"
                     prev_SPT_counts.label = "prev_SPT_counts"

@@ -61,6 +61,7 @@ def construct_distance_graph(images_file):
                 G_knn.add_edge(i, neighbor_idx, weight=float(1000.0/(np.sqrt(dist) + 15)))
                 
         nx.write_edgelist(G_knn, "/home/felix-windisch/Datasets/BIGCITY/camera_calibration/aligned/sparse/0/consistency_graph.edge_list")
+        print(G_knn.nodes)
         exit()
         node = 0
         N=5000
