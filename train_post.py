@@ -94,7 +94,7 @@ Reuse_SPT_Tolerarance = 0.9
 Max_Gaussian_Budget = 100_000_000
 Distance_Multiplier_Until_Budget = 1.5
 #View Selection
-Use_Consistency_Graph = True
+Use_Consistency_Graph = False
 # Rasterizer
 Rasterizer = "Vanilla"
 Anti_Aliasing = True
@@ -320,6 +320,8 @@ def training(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoin
                     number_to_render = 1000000000
                     distance_multiplier = 1
                     while number_to_render > Max_Gaussian_Budget:
+                        if distance_multiplier > 1:
+                            print("Lowered Granularity")
                         ############# SPT Cache
                         if Use_Bounding_Spheres:
                             bounds = gaussians.bounding_sphere_radii
@@ -402,7 +404,7 @@ def training(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoin
                         for index, i in enumerate(SPT_keep_counts_indices):
                             SPT_counts_new[index] = prefix
                             if i == len(prev_SPT_counts)-1:
-                                to = len(render_indices)
+                                to = len(render_indices) - len(load_from_disk_indices)
                             else:
                                 to = prev_SPT_counts[i+1]
                             prefix += (to - prev_SPT_counts[i]).item()
