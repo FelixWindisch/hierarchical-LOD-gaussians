@@ -453,6 +453,108 @@ def _single_tensor_adam2(
 
 
 
+
+# use this if you want to step *all elements*
+def _global_single_tensor_adam2(
+    # 
+    params: List[Tensor],
+    # gradients for each param
+    grads: List[Tensor],
+    # velocity
+    exp_avgs: List[Tensor],
+    # momentum
+    exp_avg_sqs: List[Tensor],
+    # only used for AMSGrad
+    max_exp_avg_sqs: List[Tensor],
+    
+    state_steps: List[Tensor],
+    # WTF?
+    *,
+                        amsgrad: bool,
+                        beta1: float,
+                        beta2: float,
+                        lr: float,
+                        weight_decay: float,
+                        eps: float,
+                        maximize: bool,
+                        capturable: bool):
+
+    for i, parami in enumerate(params):
+        grad = grads[i] if not maximize else -grads[i]
+        exp_avg = exp_avgs[0]
+        exp_avg_sq = exp_avg_sqs[0]
+        exp_avg = exp_avg[tuple(0 for _ in range(exp_avg.dim()))]
+        exp_avg_sq = exp_avg_sq[tuple(0 for _ in range(exp_avg_sq.dim()))]
+        param = parami
+        step_t = state_steps[i]
+
+        if capturable:
+            assert param.is_cuda and step_t.is_cuda, "If capturable=True, params and state_steps must be CUDA tensors."
+
+        # update step
+        step_t += 1
+
+        if weight_decay != 0:
+            grad = grad.add(param, alpha=weight_decay)
+
+
+        # Decay the first and second moment running average coefficient
+        exp_avg.mul_(beta1).add_(grad.mean(), alpha=1 - beta1)
+        exp_avg_sq.mul_(beta2).addcmul_(grad.mean(), grad.conj().mean(), value=1 - beta2)
+
+        if capturable:
+            step = step_t
+
+            # 1 - beta1 ** step can't be captured in a CUDA graph, even if step is a CUDA tensor
+            # (incurs "RuntimeError: CUDA error: operation not permitted when stream is capturing")
+            bias_correction1 = 1 - torch.pow(beta1, step)
+            bias_correction2 = 1 - torch.pow(beta2, step)
+
+            step_size = lr / bias_correction1
+            step_size_neg = step_size.neg()
+
+            bias_correction2_sqrt = bias_correction2.sqrt()
+
+            if amsgrad:
+                # Maintains the maximum of all 2nd moment running avg. till now
+                torch.maximum(max_exp_avg_sqs[i], exp_avg_sq, out=max_exp_avg_sqs[i])
+                # Uses the max. for normalizing running avg. of gradient
+                # Folds in (admittedly ugly) 1-elem step_size math here to avoid extra param-set-sized read+write
+                # (can't fold it into addcdiv_ below because addcdiv_ requires value is a Number, not a Tensor)
+                denom = (max_exp_avg_sqs[i].sqrt() / (bias_correction2_sqrt * step_size_neg)).add_(eps / step_size_neg)
+            else:
+                denom = (exp_avg_sq.sqrt() / (bias_correction2_sqrt * step_size_neg)).add_(eps / step_size_neg)
+
+            param.addcdiv_(exp_avg, denom)
+        else:
+            step = step_t.item()
+
+            bias_correction1 = 1 - beta1 ** step
+            bias_correction2 = 1 - beta2 ** step
+
+            step_size = lr / bias_correction1
+
+
+            bias_correction2_sqrt = math.sqrt(bias_correction2)
+
+            if amsgrad:
+                # Maintains the maximum of all 2nd moment running avg. till now
+                torch.maximum(max_exp_avg_sqs[i], exp_avg_sq, out=max_exp_avg_sqs[i])
+                # Use the max. for normalizing running avg. of gradient
+                denom = (max_exp_avg_sqs[i].sqrt() / bias_correction2_sqrt).add_(eps)
+            else:
+                denom = (exp_avg_sq.sqrt() / bias_correction2_sqrt).add_(eps)
+
+
+            param.addcdiv_(exp_avg, denom, value=-step_size)
+
+
+            exp_avgs[0][tuple(0 for _ in range(exp_avgs[0].dim()))] = exp_avg
+            exp_avg_sqs[0][tuple(0 for _ in range(exp_avg_sqs[0].dim()))] = exp_avg_sq
+
+            parami = param
+
+
 def _multi_tensor_adam(params: List[Tensor],
                        grads: List[Tensor],
                        exp_avgs: List[Tensor],

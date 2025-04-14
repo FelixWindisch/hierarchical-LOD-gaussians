@@ -93,12 +93,16 @@ Cache_SPTs = True
 Reuse_SPT_Tolerarance = 0.9
 Max_Gaussian_Budget = 100_000_000
 Distance_Multiplier_Until_Budget = 1.5
+
+
+
 #View Selection
 Use_Consistency_Graph = False
 # Rasterizer
 Rasterizer = "Vanilla"
 Anti_Aliasing = True
-
+# Optimizer
+Global_ADAM = False
 
 non_blocking=False
 
@@ -579,7 +583,7 @@ def training(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoin
                 post_backward_peak = torch.cuda.max_memory_allocated(device='cuda')
                 torch.cuda.reset_peak_memory_stats()
                 ############## DEBUG LABELS
-                if True:
+                if False:
                     render_indices.label = 'render_indices'
                     means3D.label = "means3D"
                     opacity.label = "opacity"
@@ -796,7 +800,8 @@ def training(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoin
                         #relevant = (opacity.grad.flatten() != 0).nonzero()
                         relevant = torch.ones(len(render_indices), dtype=torch.bool)
                         for param in parameters:
-                            OurAdam._single_tensor_adam2([param["params"][0]], 
+                            optimizer_function = OurAdam._global_single_tensor_adam2 if Global_ADAM else OurAdam._single_tensor_adam2
+                            optimizer_function([param["params"][0]], 
                                                         [param["params"][0].grad], 
                                                         [param["exp_avgs"]], 
                                                         [param["exp_avgs_sqs"]],
