@@ -805,7 +805,8 @@ __global__ void binary_search_SPTs(int number_of_SPTs, int* SPT_starts, float* S
 		pivot = (low+high)/2;
 	}
 	//binary_search_indices[idx] = high;
-	interval_sizes[idx] = high - SPT_starts[index] - 1;
+
+	interval_sizes[idx] = high - SPT_starts[index];
 }
 
 __global__ void populate_SPT
@@ -890,8 +891,9 @@ int Switching::getSPTCut(
 	CHECK_CUDA(cudaMalloc((void**)&interval_sizes, sizeof(int) * number_of_SPTs), true);
 	int num_blocks = (number_of_SPTs + 255) / 256;
 	binary_search_SPTs <<<num_blocks, 256 >>>(number_of_SPTs, SPT_starts, SPT_max, SPT_indices, SPT_distances, interval_sizes);
+	//print_device_array<int>(interval_sizes, 10);
 	cudaDeviceSynchronize();
-	//print_device_array<int>(binary_search_indices, 100);
+	//
 	//cudaFree(binary_search_indices);
 	//print_device_array<int>(interval_sizes, 100);
 	//std::cout << binary_search_indices << std::endl;
