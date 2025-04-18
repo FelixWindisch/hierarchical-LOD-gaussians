@@ -33,7 +33,7 @@ class Camera(nn.Module):
                  image_name, uid,
                  trans=np.array([0.0, 0.0, 0.0]), scale=1.0, data_device = "cuda",
                  train_test_exp=False, is_test_dataset=False, is_test_view=False,
-                 image_path = "empty"):
+                 image_path = "empty", focal_length=0.0):
         super(Camera, self).__init__()
 
         self.uid = uid
@@ -44,6 +44,7 @@ class Camera(nn.Module):
         self.FoVy = FoVy
         self.image_name = image_name
         self.image_path = image_path
+        self.focal_length = focal_length
         try:
             self.data_device = torch.device(data_device)
         except Exception as e:

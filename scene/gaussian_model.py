@@ -219,7 +219,8 @@ class GaussianModel:
             max_distances = torch.zeros(1, device=device)
             max_distances[0] = SPT[0,1]
             bounding_sphere_radius = torch.max(self.scaling_activation(self._scaling[cut_node]), dim=-1)[0].item() * 3.0
-            temp_additional_indices = torch.empty(0, dtype=torch.int32, device=device)
+            temp_additional_indices = torch.zeros(1, dtype=torch.int32, device=device)
+            temp_additional_indices[0] = cut_node
             while len(stack) > 0:
                 
                 first_children = self.nodes[stack.to(device), hierarchy_node_first_child]
@@ -230,7 +231,6 @@ class GaussianModel:
                 
                 if len(stack) == 0:
                     break
-                
                 center_distances = torch.sqrt(torch.sum((self._xyz[stack] - SPT_center) ** 2, dim=1))
                 max_center_distances = torch.max(center_distances + torch.max(self.scaling_activation(self._scaling[stack]), dim=-1)[0] * 3).item()
                 bounding_sphere_radius = max(bounding_sphere_radius, max_center_distances)
@@ -255,12 +255,12 @@ class GaussianModel:
                 self.SPT_starts = torch.cat((self.SPT_starts, (self.SPT_starts[-1] + len(SPT)).unsqueeze(0)))
                 self.SPT_max = torch.cat((self.SPT_max, SPT[:, 2]))
                 self.SPT_min = torch.cat((self.SPT_min, SPT[:, 1]))
-                self.SPT_gaussian_indices = torch.cat((self.SPT_gaussian_indices, SPT[:, 0].to(torch.int32)))
+                self.SPT_gaussian_indices = torch.cat((self.SPT_gaussian_indices, temp_additional_indices.cuda()[sort_indices])) #torch.cat((self.SPT_gaussian_indices, SPT[:, 0].to(torch.int32)))
                 SPT_root_hierarchy_indices.append(cut_node)
                 #print(f"SPT {len(SPT_root_hierarchy_indices)} finished")
                 #self.SPT_centers.append(torch.mean(self._xyz[SPT[:,0]].to(torch.int32)))
             else:
-                upper_tree_indices = torch.cat((upper_tree_indices, temp_additional_indices)) # SPT[:, 0].to(torch.int32)[1:]))
+                upper_tree_indices = torch.cat((upper_tree_indices, temp_additional_indices[1:])) # SPT[:, 0].to(torch.int32)[1:]))
         
         upper_tree_indices = torch.sort(upper_tree_indices)[0]
         # make it contiguous for searchsorted()
@@ -427,7 +427,7 @@ class GaussianModel:
         return optimizer_state
         
     
-    def move_storage_to(self, device, max_number_of_gaussians, store_on_disk = False):
+    def move_storage_to(self, device, max_number_of_gaussians, store_on_disk = False, densify_radii = False):
         self.size = len(self._xyz)
         names = ["xyz", "f_dc", "scaling", "rotation", "opacity", "f_rest", "nodes"]
         new_tensors = []
@@ -457,6 +457,10 @@ class GaussianModel:
         self._opacity = new_tensors[4]
         self._features_rest = new_tensors[5]
         self.nodes = new_tensors[6]
+        
+        if densify_radii:
+            self._densification_radii = torch.zeros_like(self._opacity, device=device).squeeze()
+        
         return optimizer_state
     
     
@@ -569,7 +573,7 @@ class GaussianModel:
         
     def sort_morton(self):
         #pass
-        xyz = self._xyz[self.skybox_points:]
+        xyz = self._xyz[self.skybox_points:self.size].cuda()
         codes = torch.zeros_like(xyz[:, 0], dtype=torch.int64).cuda()
         get_morton_indices(xyz, torch.min(self._xyz[self.skybox_points:], dim=0)[0].cuda(), torch.max(self._xyz[self.skybox_points:], dim=0)[0].cuda(), codes)
         indices = torch.argsort(codes)
@@ -581,13 +585,13 @@ class GaussianModel:
         
         indices += self.skybox_points
         with torch.no_grad():
-            self._opacity[indices] = self._opacity[self.skybox_points:].clone().detach().requires_grad_(True)
-            self._xyz[indices] = self._xyz[self.skybox_points:].clone().detach().requires_grad_(True)
-            self._scaling[indices] = self._scaling[self.skybox_points:].clone().detach().requires_grad_(True)
-            self._rotation[indices] = self._rotation[self.skybox_points:].clone().detach().requires_grad_(True)
-            self._features_dc[indices] = self._features_dc[self.skybox_points:].clone().detach().requires_grad_(True)
-            self._features_rest[indices] = self._features_rest[self.skybox_points:].clone().detach().requires_grad_(True)
-            self.nodes[self.skybox_points:, hierarchy_node_parent] = indices[self.nodes[self.skybox_points:, hierarchy_node_parent] - self.skybox_points]
+            self._opacity[indices] = self._opacity[self.skybox_points:self.size].clone().detach().requires_grad_(True)
+            self._xyz[indices] = self._xyz[self.skybox_points:self.size].clone().detach().requires_grad_(True)
+            self._scaling[indices] = self._scaling[self.skybox_points:self.size].clone().detach().requires_grad_(True)
+            self._rotation[indices] = self._rotation[self.skybox_points:self.size].clone().detach().requires_grad_(True)
+            self._features_dc[indices] = self._features_dc[self.skybox_points:self.size].clone().detach().requires_grad_(True)
+            self._features_rest[indices] = self._features_rest[self.skybox_points:self.size].clone().detach().requires_grad_(True)
+            self.nodes[self.skybox_points:self.size, hierarchy_node_parent] = indices[self.nodes[self.skybox_points:self.size, hierarchy_node_parent] - self.skybox_points]
             sibling_mask = self.nodes[:, hierarchy_node_next_sibling] > 0
             #sibling_mask_with_skybox = torch.cat((torch.zeros(self.skybox_points, dtype=torch.bool), sibling_mask))
             self.nodes[sibling_mask, hierarchy_node_next_sibling] = indices[self.nodes[sibling_mask, hierarchy_node_next_sibling] - self.skybox_points]
@@ -596,7 +600,7 @@ class GaussianModel:
             self.nodes[child_mask, hierarchy_node_first_child] = indices[self.nodes[child_mask, hierarchy_node_first_child]- self.skybox_points]
             self.nodes[self.skybox_points, hierarchy_node_parent] = -1
             self.nodes[self.skybox_points, hierarchy_node_next_sibling] = 0
-            self.nodes[indices] = self.nodes.clone()[self.skybox_points:]
+            self.nodes[indices] = self.nodes.clone()[self.skybox_points:self.size]
             pass
         print("Morton Sort Complete")
             
@@ -1585,7 +1589,7 @@ class GaussianModel:
         ratio = torch.bincount(sampled_idxs).unsqueeze(-1)
         return sampled_idxs, ratio
     
-    def relocate_gs(self, dead_mask, size, optimizer_state, storage_device='cpu'):
+    def relocate_gs(self, dead_mask, size, optimizer_state, storage_device='cpu', densify_radii=False):
         if dead_mask.sum() == 0:
             return
         alive_mask = ~dead_mask
@@ -1612,6 +1616,9 @@ class GaussianModel:
         if len(alive_indices) > 16_000_000:
             alive_indices = alive_indices[torch.randperm(len(alive_indices))[:16_000_000]]
         probs = (self.opacity_activation(self._opacity[alive_indices, 0])) 
+
+        if densify_radii:
+            probs *= (self._densification_radii[alive_indices] + 1)
 
         if 0 in sibling_indices:
             print("Found 0 Sibling!")
@@ -1697,22 +1704,27 @@ class GaussianModel:
             optimizer_state[name]["exp_avgs"][sibling_indices] = 0
             optimizer_state[name]["exp_avgs_sqs"][sibling_indices] = 0
         
-    def add_new_gs(self, cap_max, size):
+    def add_new_gs(self, cap_max, size, densify_radii = False):
         device = self._xyz.device
         target_num = min(cap_max, int(1.05 * size))
         num_gs = max(0, target_num - size)
         if num_gs <= 0:
             return 0
         print(f"Spawn {num_gs} new Gaussians")
+        # Only Leaf nodes can be used for respawning 
         alive_indices=torch.where(self.nodes[:size, hierarchy_node_child_count] == 0)[0]
+        
+        
         
         # Torch.multionmial can only handle 16_000_000 elements. If there are more possible respawn locations, uniformly sample 16M
         if len(alive_indices) > 16_000_000:
             alive_indices = alive_indices[torch.randperm(len(alive_indices))[:16_000_000]]
-        probs = (self.opacity_activation(self._opacity[alive_indices, 0])) 
+        #probs = (self.opacity_activation(self._opacity[alive_indices, 0])) 
+        
         
         probs = self.opacity_activation(self._opacity[:size]).squeeze(-1)[alive_indices]
-        
+        if densify_radii:
+            probs *= (self._densification_radii[alive_indices] + 1)
         
         add_idx, ratio = self._sample_alives(probs=probs, num=num_gs, alive_indices=alive_indices)
         # make sure respawn gaussians are unique

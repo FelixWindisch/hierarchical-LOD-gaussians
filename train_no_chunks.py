@@ -170,23 +170,23 @@ if __name__ == '__main__':
 
         
     # ==================================== Scaffold finished ==============================
-    hierarchy_creator_args = "submodules/gaussianhierarchy/build/Release/GaussianHierarchyCreator.exe " if os_name == "Windows" else "submodules/gaussianhierarchy/build/GaussianHierarchyCreator "
-    hierarchy_creator_args = os.path.join(f_path.parent, hierarchy_creator_args)
-    try:
-        subprocess.run(
-        hierarchy_creator_args + " ".join([
-                os.path.join(output_dir, "scaffold/point_cloud/iteration_30000/point_cloud.ply"),
-                os.path.join(output_dir, "/../camera_calibration/aligned"),
-                os.path.join(output_dir, "scaffold/point_cloud/iteration_30000/")
-                ,os.path.join(output_dir, "scaffold/point_cloud/iteration_30000/")
-            ]),
-            shell=True, check=True, text=True
-        )
-    except subprocess.CalledProcessError as e:
-                print(f"Error executing hierarchy_creator: {e}")
-                # TODO: WTF is happening here?
-                if not args.keep_running and False:
-                    sys.exit(1)
+    #hierarchy_creator_args = "submodules/gaussianhierarchy/build/Release/GaussianHierarchyCreator.exe " if os_name == "Windows" else "submodules/gaussianhierarchy/build/GaussianHierarchyCreator "
+    #hierarchy_creator_args = os.path.join(f_path.parent, hierarchy_creator_args)
+    #try:
+    #    subprocess.run(
+    #    hierarchy_creator_args + " ".join([
+    #            os.path.join(output_dir, "scaffold/point_cloud/iteration_30000/point_cloud.ply"),
+    #            os.path.join(output_dir, "/../camera_calibration/aligned"),
+    #            os.path.join(output_dir, "scaffold/point_cloud/iteration_30000/")
+    #            ,os.path.join(output_dir, "scaffold/point_cloud/iteration_30000/")
+    #        ]),
+    #        shell=True, check=True, text=True
+    #    )
+    #except subprocess.CalledProcessError as e:
+    #            print(f"Error executing hierarchy_creator: {e}")
+    #            # TODO: WTF is happening here?
+    #            if not args.keep_running and False:
+    #                sys.exit(1)
                     
     # ==================================== Hierarchy finished ==============================
     
@@ -237,7 +237,7 @@ if __name__ == '__main__':
 
     
     #Standard 3DGS training parameters
-    optimization_params.iterations = 10_000
+    optimization_params.iterations = 250_000
     optimization_params.position_lr_init =  0.0000156 #0.0000016 #0.00016
     #     #optimization_params.position_lr_init = 0.016
     optimization_params.position_lr_final = 0.0000001 #0.000000016 #0.0000016
@@ -256,7 +256,7 @@ if __name__ == '__main__':
     optimization_params.densification_interval = 100
     optimization_params.opacity_reset_interval = 3000
     optimization_params.densify_from_iter = 100
-    optimization_params.densify_until_iter = 50_000
+    optimization_params.densify_until_iter = 250_000
     optimization_params.densify_grad_threshold = 0.15
     optimization_params.depth_l1_weight_init = 1.0
     optimization_params.depth_l1_weight_final = 0.01

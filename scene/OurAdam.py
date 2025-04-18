@@ -480,6 +480,8 @@ def _global_single_tensor_adam2(
                         capturable: bool):
 
     for i, parami in enumerate(params):
+        parami = parami + lr * grads[i]
+        return
         grad = grads[i] if not maximize else -grads[i]
         exp_avg = exp_avgs[0]
         exp_avg_sq = exp_avg_sqs[0]

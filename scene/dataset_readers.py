@@ -41,6 +41,7 @@ class CameraInfo(NamedTuple):
     width: int
     height: int
     is_test: bool
+    focal_length: float = None
 
 class SceneInfo(NamedTuple):
     point_cloud: BasicPointCloud
@@ -128,7 +129,7 @@ def readColmapCameras(cam_extrinsics, cam_intrinsics, depths_params, images_fold
 
         cam_info = CameraInfo(uid=uid, R=R, T=T, FovY=FovY, FovX=FovX, primx=primx, primy=primy, depth_params=depth_params,
                               image_path=image_path, mask_path=mask_path, depth_path=depth_path, image_name=image_name, 
-                              width=width, height=height, is_test=image_name in test_cam_names_list)
+                              width=width, height=height, is_test=image_name in test_cam_names_list, focal_length=focal_length_x)
         cam_infos.append(cam_info)
     sys.stdout.write('\n')
     return cam_infos
