@@ -19,7 +19,7 @@ import alt_gaussian_rasterization
 from utils.sh_utils import eval_sh
 from diff_gaussian_rasterization import _C
 import numpy as np
-
+import torchvision
 
 def occlusion_cull(indices, gaussians, camera, pipe, background, opacity_multiplier = 1, scale_multiplier = 1):
     means3D = gaussians._xyz[indices].cuda().contiguous()
@@ -29,8 +29,10 @@ def occlusion_cull(indices, gaussians, camera, pipe, background, opacity_multipl
     features_dc = gaussians._features_dc[indices].cuda().contiguous()
     features_rest = gaussians._features_rest[indices].cuda().contiguous()
     shs = torch.cat((features_dc, features_rest), dim=1).contiguous()
+    render_pkg = render_on_disk(camera, means3D, opacity, scales, rotations, shs, pipe, background)
     
-    return render_on_disk(camera, means3D, opacity, scales, rotations, shs, pipe, background)["seen"].to(torch.bool).cpu()
+    #torchvision.utils.save_image(render_pkg["render"], "occlusion.png")
+    return render_pkg["seen"].to(torch.bool).cpu(), render_pkg["render"]
 
 def render(
         viewpoint_camera, pc, 
@@ -706,7 +708,8 @@ def render_vanilla(viewpoint_camera,
     rendered_image = rendered_image.clamp(0, 1)
     out = {
         "render": rendered_image,
-        "viewspace_points": screenspace_points
+        #"viewspace_points": screenspace_points,
+        "radii": radii
         #,"render_buffer_overhead" : render_buffer_overhead
         }
     

@@ -40,6 +40,7 @@ from gaussian_hierarchy._C import  get_spt_cut_cuda
 from gaussian_renderer import occlusion_cull
 import psutil
 import gc
+import random
 # to check CPU RAM usage
 pid = os.getpid()
 
@@ -65,7 +66,7 @@ def direct_collate(x):
 
 Write_Tensor_Board = True
 #Standard
-densify_interval = 5000
+densify_interval = 500
 densify_radii = True
 lr_multiplier = 1
 #Unused
@@ -74,14 +75,10 @@ Only_Noise_Visible = True
 #MCMC
 Max_Cap = 60_000_000
 MCMC_Densification = True
-MCMC_Noise_LR = 0  #5e5
-lambda_scaling = 0
+MCMC_Noise_LR = 20 #20  #5e5
+lambda_scaling = 0.01
 lambda_opacity = 0.01
-#Hierarchical
-Gaussian_Interpolation = False
-# Upward Propagation D
-Gradient_Propagation = False
-Propagation_Strength = 1.0
+
 #Culling
 Use_Bounding_Spheres = False
 Use_Occlusion_Culling = False
@@ -90,8 +87,8 @@ Use_MIP_respawn = False
 # SPTs
 Storage_Device = 'cpu'
 lambda_hierarchy = 0.00
-SPT_Root_Volume = 500 # 0.02
-Target_Granularity_Pixels = 4
+SPT_Root_Volume = 100 # 0.02
+Target_Granularity_Pixels = 3
 
 Min_SPT_Size = 256
 Cache_SPTs = True
@@ -105,6 +102,7 @@ Distance_Multiplier_Until_Budget = 1.5
 Cache_Size = 15_000_000
 Cache_Size_After_Reduction = 12_000_000
 
+Revive_Gaussians = False
 #View Selection
 Use_Consistency_Graph = False
 # Rasterizer
@@ -135,10 +133,7 @@ def training(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoin
             "Random_Hierarchy_Cut": Random_Hierarchy_Cut,
             "Only_Noise_Visible": Only_Noise_Visible,
             "MCMC_Densification": MCMC_Densification,
-            "Gaussian_Interpolation": Gaussian_Interpolation,
-            "Gradient_Propagation": Gradient_Propagation,
             "Storage_Device": Storage_Device,
-            "Propagation_Strength": Propagation_Strength,
             "lambda_hierarchy": lambda_hierarchy,
             "SPT_Root_Volume": SPT_Root_Volume,
             "Target_Granularity_Pixels": Target_Granularity_Pixels,
@@ -185,10 +180,9 @@ def training(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoin
     
     optimizer_state = gaussians.move_storage_to(Storage_Device, int(round(Max_Cap * 1.1)), False, densify_radii=densify_radii)
     print(f"Moved to {Storage_Device}")
-    gaussians.sort_morton()
-    gaussians.build_hierarchical_SPT(SPT_Root_Volume, SPT_Target_Granularity, Min_SPT_Size, use_bounding_spheres=Use_Bounding_Spheres)
+    #gaussians.sort_morton()
+    gaussians.build_hierarchical_SPT(SPT_Root_Volume, SPT_Target_Granularity, Min_SPT_Size, use_bounding_spheres=Use_Bounding_Spheres, revive_gaussians=Revive_Gaussians)
     print("Built SPTs")
-    #scene.dump_gaussians("Dump", False, file_name="SPTNodes.ply", indices=spt_nodes.to(Storage_Device))
     bg_color = [1, 1, 1] if dataset.white_background else [0, 0, 0]
     background = torch.tensor(bg_color, dtype=torch.float32, device="cuda")
 
@@ -215,8 +209,7 @@ def training(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoin
         current_camera_index = list(cons_graph.nodes())[0]
     else:
         current_camera_index = 0
-    if Gradient_Propagation:
-        gaussians.recompute_weights()
+
     
     #means3D, opacity, scales, rotations, features_dc, features_rest, render_indices = torch.empty((0, 3), device='cuda', dtype=torch.float32), torch.empty((0, 1), device='cuda', dtype=torch.float32), torch.empty((0, 3), device='cuda', dtype=torch.float32), torch.empty((0,4), device='cuda', dtype=torch.float32), torch.empty((0, 1, 3), device='cuda', dtype=torch.float32), torch.empty((0,15, 3), device='cuda', dtype=torch.float32), torch.empty(0, device='cuda', dtype=torch.int32)
     if Cache_SPTs:
@@ -265,6 +258,8 @@ def training(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoin
                                                     lr_delay_mult=opt.position_lr_delay_mult,
                                                     max_steps=opt.position_lr_max_steps)
     print("Gaussians Initialized")
+    
+    #gaussians.revive_stuck_gaussians(SPT_Target_Granularity)
     #
     while iteration < opt.iterations + 1:
         for viewpoint_batch in training_generator:
@@ -275,12 +270,14 @@ def training(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoin
                     #current_camera_index = consistency_graph.random_walk_node(cons_graph, current_camera_index, train_image_counts)
                     #train_image_counts[current_camera_index] += 1
                     viewpoint_cam = train_camera_data_set[int(current_camera_index)]
+                    
+                    # reset to new random view every 100 iterations
+                    if iteration % 100 == 0:
+                        current_camera_index = random.randint(0, len(train_camera_data_set) - 1)
                 #camera_direction = torch.tensor(viewpoint_cam.R[:, 2], dtype=torch.float32)
                 #viewpoint_cam = train_camera_data_set[0]
                 #recompute Gaussian weights
-                if Gradient_Propagation and iteration % 10 == 0:
-                    gaussians.recompute_weights()
-                
+                #viewpoint_cam = train_camera_data_set[len(train_camera_data_set) - 1 - int(random.randint(0, 500))]
                 viewpoint_cam.world_view_transform = viewpoint_cam.world_view_transform.cuda()
                 viewpoint_cam.projection_matrix = viewpoint_cam.projection_matrix.cuda()
                 viewpoint_cam.full_proj_transform = viewpoint_cam.full_proj_transform.cuda()
@@ -590,9 +587,10 @@ def training(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoin
                         SPT_distances = SPT_distances[:-i]
                         SPT_indices = SPT_indices[:-i]
                     
-                    if iteration % 1000 == 0:
-                        cache_gaussians_mask = torch.zeros(len(gaussian_indices), dtype=torch.bool, device='cuda')
-                        number_cached_SPTs = 
+                    #if iteration % 1000 == 0:
+                    #    cache_gaussians_mask = torch.zeros(len(gaussian_indices), dtype=torch.bool, device='cuda')
+                    #    number_cached_SPTs = len(cache_SPT_indices)
+                        
 
                     write_back_mask = torch.logical_and(~reuse_gaussians_mask, ~cache_gaussians_mask)
                     #dont write back the skybox
@@ -775,8 +773,12 @@ def training(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoin
                 #loss = loss + lambda_hierarchy * hierarchy_loss
                 #MCMC
                 if MCMC_Densification:
-                    opacity_loss = torch.sum(torch.abs(gaussians.opacity_activation(opacity))) / len(gaussian_indices)
-                    scaling_loss = torch.sum(torch.abs(gaussians.scaling_activation(scales))) / len(gaussian_indices)
+                    opacity_loss = torch.sum(torch.abs(gaussians.opacity_activation(opacity[gaussians.skybox_points:]))) / (number_of_gaussians_to_render - gaussians.skybox_points)
+                    activated_scales = gaussians.scaling_activation(scales[gaussians.skybox_points:])
+                    scaling_loss = torch.sum(torch.abs(activated_scales))  / (number_of_gaussians_to_render - gaussians.skybox_points)
+                    #shape_extremeness = (torch.max(activated_scales, dim=-1)[0] / torch.min(activated_scales, dim=-1)[0])
+                    #resize_mask = shape_extremeness > 1000
+                    
                         # loss for active gaussians that have high opacity/scale
                         #all_indices = torch.cat((indices, parents)).unique()
                         #opacity_loss = torch.sum(torch.abs(gaussians.get_opacity.squeeze()[all_indices] * interpolation_weights[all_indices])) / len(all_indices)
@@ -786,6 +788,7 @@ def training(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoin
                     loss = loss + lambda_opacity * opacity_loss    
                 if lambda_scaling > 0:
                     loss = loss + lambda_scaling * scaling_loss
+                    
                 #MCMC
                 if math.isnan(loss):
                             torchvision.utils.save_image(image, os.path.join(scene.model_path, "Error" + ".png"))
@@ -971,9 +974,11 @@ def training(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoin
                         dead_indices = torch.where((gaussians._opacity[:gaussians.size] <= gaussians.inverse_opacity_activation(torch.tensor(0.005)).item()).squeeze(-1))[0]
 
                         # Find SPT root nodes
+                        prev_size = gaussians.size
                         gaussians.add_new_gs(cap_max=Max_Cap, size=gaussians.size, densify_radii=densify_radii)
+                        #scene.dump_gaussians("Dump", indices=torch.arange(prev_size, gaussians.size), file_name=f"Densification_{iteration}.ply")
                         if Use_MIP_respawn:
-                            SPT_root_hierarchy_indices = gaussians.build_hierarchical_SPT(SPT_Root_Volume, SPT_Target_Granularity, use_bounding_spheres=Use_Bounding_Spheres)
+                            SPT_root_hierarchy_indices = gaussians.build_hierarchical_SPT(SPT_Root_Volume, SPT_Target_Granularity, use_bounding_spheres=Use_Bounding_Spheres, revive_gaussians=Revive_Gaussians)
                         #torch.save(gaussians.SPT_min, "SPT_min.pt")
                         #torch.save(gaussians.SPT_max, "SPT_max.pt")
                         #torch.save(gaussians.SPT_starts, "SPT_starts.pt")
@@ -996,12 +1001,14 @@ def training(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoin
                         print(f"Respawn {torch.sum(dead_mask)} Gaussians")
                         gaussians.relocate_gs(dead_mask, gaussians.size, optimizer_state, storage_device=Storage_Device, densify_radii=densify_radii)
                            
-                        gaussians.build_hierarchical_SPT(SPT_Root_Volume, SPT_Target_Granularity, use_bounding_spheres=Use_Bounding_Spheres)
+                        gaussians.build_hierarchical_SPT(SPT_Root_Volume, SPT_Target_Granularity, use_bounding_spheres=Use_Bounding_Spheres, revive_gaussians=Revive_Gaussians)
+                        
+                        
+                        
                         
                         print(f"Max Train Image: {torch.max(train_image_counts)}, Min Train Image: {torch.min(train_image_counts)}")
                         torch.cuda.empty_cache()
-                        if Gradient_Propagation:
-                            gaussians.recompute_weights()
+
 
                         # Per-Densification Statistics
                         if Write_Tensor_Board:
@@ -1026,7 +1033,7 @@ def training(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoin
                         features_rest.grad[0:gaussians.skybox_points, :, :] = 0
                         opacity.grad[0:gaussians.skybox_points, :] = 0
                         scales.grad[0:gaussians.skybox_points, :] = 0
-                        if torch.sum(torch.isnan(opacity.grad)) > 0 or torch.sum(torch.isnan(means3D.grad)) > 0 or torch.sum(torch.isnan(scales.grad)) > 0:
+                        if torch.sum(torch.isnan(means3D.grad)) > 0 or torch.sum(torch.isnan(means3D.grad)) > 0 or torch.sum(torch.isnan(scales.grad)) > 0:
                             print("Gradients Collapsed :(")
                             pass
                         #relevant = (opacity.grad.flatten() != 0).nonzero()

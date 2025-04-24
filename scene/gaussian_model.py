@@ -181,7 +181,7 @@ class GaussianModel:
         return result, None, None
         
 
-    def build_hierarchical_SPT(self, SPT_Root_Volume, target_granularity, min_SPT_Size = 100, use_bounding_spheres=True):
+    def build_hierarchical_SPT(self, SPT_Root_Volume, target_granularity, min_SPT_Size = 100, use_bounding_spheres=True, revive_gaussians = False):
         SPT_scale = SPT_Root_Volume
         device = self._xyz.device
         
@@ -239,6 +239,24 @@ class GaussianModel:
                 stack_SPT[:, 0] = stack
                 min_distances = self.get_min_distance(stack, target_granularity) + center_distances
                 max_distances = torch.cat((max_distances, max_distances))
+                
+                
+                ### Revive
+                if(revive_gaussians):
+                    revive_indices = torch.where(min_distances > max_distances)[0]
+                    if len(revive_indices) > 0:
+                        revive_current_SPT_distances = self.get_min_distance(stack[revive_indices], target_granularity)
+                        revive_children1 = self.nodes[stack[revive_indices], hierarchy_node_first_child]
+                        revive_children2 = self.nodes[revive_children1, hierarchy_node_next_sibling]
+                        revive_children1_center_distances = torch.sqrt(torch.sum((self._xyz[revive_children1] - SPT_center) ** 2, dim=1))
+                        revive_children2_center_distances = torch.sqrt(torch.sum((self._xyz[revive_children1] - SPT_center) ** 2, dim=1))
+                        max_child_min_distance = torch.maximum(self.get_min_distance(revive_children1, target_granularity, False) + revive_children1_center_distances, self.get_min_distance(revive_children2, target_granularity, False) + revive_children2_center_distances)
+                        target_SPT_distances = (max_child_min_distance + max_distances[revive_indices]) / 2.0 - center_distances[revive_indices]
+                        multiplier = target_SPT_distances / revive_current_SPT_distances
+                        self._scaling[stack[revive_indices]] = self.scaling_inverse_activation(self.scaling_activation(self._scaling[stack[revive_indices]]) * multiplier.unsqueeze(1).cpu())
+                        min_distances[revive_indices] = target_SPT_distances
+                ### Revive
+                
                 stack_SPT[:, 1] = torch.where(min_distances < max_distances, min_distances, max_distances)
                 stack_SPT[:, 2] = max_distances
                 max_distances = stack_SPT[:, 1].clone()
@@ -253,8 +271,8 @@ class GaussianModel:
                 #self.SPT.append(SPT)
                 SPT_indices.append(cut_node)
                 self.SPT_starts = torch.cat((self.SPT_starts, (self.SPT_starts[-1] + len(SPT)).unsqueeze(0)))
-                self.SPT_max = torch.cat((self.SPT_max, SPT[:, 2]))
                 self.SPT_min = torch.cat((self.SPT_min, SPT[:, 1]))
+                self.SPT_max = torch.cat((self.SPT_max, SPT[:, 2]))
                 self.SPT_gaussian_indices = torch.cat((self.SPT_gaussian_indices, temp_additional_indices.cuda()[sort_indices])) #torch.cat((self.SPT_gaussian_indices, SPT[:, 0].to(torch.int32)))
                 SPT_root_hierarchy_indices.append(cut_node)
                 #print(f"SPT {len(SPT_root_hierarchy_indices)} finished")
@@ -328,11 +346,11 @@ class GaussianModel:
             
             
         
-    def get_min_distance(self, nodes, target_granularity):
+    def get_min_distance(self, nodes, target_granularity, leaves_are_negative_infinity = True):
         if nodes.numel() == 1:
-            if self.nodes[nodes, hierarchy_node_child_count] == 0:
+            if self.nodes[nodes, hierarchy_node_child_count] == 0 and leaves_are_negative_infinity:
                 return -1000000
-            scales = self.scaling_activation(self._scaling[nodes])
+            scales = self.scaling_activation(self._scaling[nodes.item()])
             return torch.sqrt((scales[ 0] * scales[ 1] + scales[0] * scales[2] + scales[1] * scales[2]))/target_granularity
             
         leaves = self.nodes[nodes, hierarchy_node_child_count] == 0
@@ -341,7 +359,8 @@ class GaussianModel:
         #ellipse surface
         
         min_distances = torch.sqrt(scales[:, 0] * scales[:, 1] + scales[:, 0] * scales[:, 2] + scales[:, 1] * scales[:, 2])/target_granularity
-        min_distances[leaves] = -1000000000
+        if leaves_are_negative_infinity:
+            min_distances[leaves] = -1000000000
         return min_distances
         
         
@@ -392,6 +411,38 @@ class GaussianModel:
         if return_upper_tree:
             return upper_tree, cut
         return cut
+    
+    # WAY TOO SLOW
+    def revive_stuck_gaussians(self, target_granularity):
+        stuck_indices = torch.where(self.SPT_min == self.SPT_max)[0]
+        for index in stuck_indices:
+            gaussian_index = self.SPT_gaussian_indices[index].cpu()
+            child1 = self.nodes[gaussian_index, hierarchy_node_first_child].cuda()
+            child2 = self.nodes[child1, hierarchy_node_next_sibling].cuda()
+            max_SPT_child_distance = max(self.get_SPT_min_at_index(child1, target_granularity), self.get_SPT_min_at_index( child2, target_granularity)).cuda()
+            
+            if max_SPT_child_distance < self.SPT_min[index]:
+                #resize Gaussian
+                SPT_index = torch.searchsorted(self.SPT_starts, index) -1
+                self_center_distance = (self._xyz[gaussian_index] - self._xyz[self.SPT_gaussian_indices[self.SPT_starts[SPT_index]]]).square().sum(-1).sqrt()
+                current_min_distance = self.get_min_distance(torch.tensor(gaussian_index), target_granularity)
+                target_min_distance = ((self.SPT_min[index] + max_SPT_child_distance)/2.0) - self_center_distance
+                multiplier = target_min_distance / current_min_distance
+                self._scaling[gaussian_index] = self.scaling_inverse_activation(self.scaling_activation(self._scaling[gaussian_index]) * multiplier.cpu())
+                self.SPT_min[index] = ((self.SPT_min[index] + max_SPT_child_distance)/2.0)
+                child1_index = torch.where(self.SPT_gaussian_indices == child1)[0]
+                child2_index = torch.where(self.SPT_gaussian_indices == child2)[0]
+                self.SPT_max[child1_index] = ((self.SPT_min[index] + max_SPT_child_distance)/2.0)
+                self.SPT_max[child2_index] = ((self.SPT_min[index] + max_SPT_child_distance)/2.0)
+                
+                
+                
+    def get_SPT_min_at_index(self, gaussian_index, target_granularity):
+        index = torch.where(self.SPT_gaussian_indices == gaussian_index)[0]
+        SPT_index = torch.searchsorted(self.SPT_starts, index) - 1
+        center_distance = (self._xyz[gaussian_index] - self._xyz[self.SPT_gaussian_indices[self.SPT_starts[SPT_index]].cpu()]).square().sum(-1).sqrt()
+        return self.get_min_distance(torch.tensor(gaussian_index), target_granularity, False) + center_distance
+    
     
     def get_leaf_cut(self):
         return torch.nonzero(self.nodes[:self.size, hierarchy_node_child_count] == 0, as_tuple=False).squeeze()
@@ -1192,7 +1243,7 @@ class GaussianModel:
     def save_ply(self, path, only_leaves=False, indices=None):
         mkdir_p(os.path.dirname(path))
         if only_leaves:
-            mask = self.nodes[:, hierarchy_node_child_count] == 0
+            mask = torch.where(self.nodes[:self.size, hierarchy_node_child_count] == 0)[0]
         elif indices is not None:
             mask = indices
         else:
