@@ -94,6 +94,26 @@ Use_Consistency_Graph = False
 Rasterizer = "Vanilla"
 
 
+SH_properties = [0, 3, 8, 15]
+SH_properties_single = SH_properties[1] 
+SH_properties = SH_properties[1] * 3
+xyz1 = 0
+xyz2 = 3
+scales1 = 3
+scales2 = 6
+rotation1 = 6
+rotation2 = 10
+features1 = 10
+features2 = 13
+opacity1 = 13
+opacity2 = 14
+features_rest1 = 14
+features_rest2 = 14 + SH_properties
+number_properties = features_rest2
+
+range1 = [xyz1, scales1, rotation1, features1, opacity1, features_rest1]
+range2 = [xyz2, scales2, rotation2, features2, opacity2, features_rest2]
+
 non_blocking=False
 def training(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoint_iterations, checkpoint, debug_from,  hierarchy_path):
     global Reuse_SPT_Tolerarance
@@ -133,7 +153,8 @@ def training(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoin
     first_iter = 0
     prepare_output_and_logger(dataset)
     gaussians = GaussianModel(dataset.sh_degree)
-    gaussians.active_sh_degree = dataset.sh_degree
+    gaussians.active_sh_degree = 1
+    gaussians.max_sh_degree = 1
     gaussians.scaffold_points = None
     with torch.no_grad():
         gaussians._features_dc = gaussians._features_dc.abs() 
@@ -155,7 +176,7 @@ def training(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoin
     
     #scene.dump_gaussians("Dump", only_leaves=True)
 
-    optimizer_state = gaussians.move_storage_to_render(Storage_Device, None)
+    gaussians.move_storage_to(Storage_Device, None, False, False, False)
 
     gaussians.build_hierarchical_SPT(SPT_Root_Volume, SPT_Target_Granularity, use_bounding_spheres=Use_Bounding_Spheres)
     print("Built SPTs")
@@ -184,12 +205,13 @@ def training(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoin
     #means3D, opacity, scales, rotations, features_dc, features_rest, gaussian_indices = torch.empty((0, 3), device='cuda', dtype=torch.float32), torch.empty((0, 1), device='cuda', dtype=torch.float32), torch.empty((0, 3), device='cuda', dtype=torch.float32), torch.empty((0,4), device='cuda', dtype=torch.float32), torch.empty((0, 1, 3), device='cuda', dtype=torch.float32), torch.empty((0,15, 3), device='cuda', dtype=torch.float32), torch.empty(0, device='cuda', dtype=torch.int32)
     if Cache_SPTs:
         gaussian_indices = torch.arange(0, gaussians.skybox_points, device='cuda')
-        means3D = gaussians._xyz[:gaussians.skybox_points].cuda().contiguous()
-        opacity = gaussians._opacity[:gaussians.skybox_points].cuda().contiguous()
-        scales = gaussians._scaling[:gaussians.skybox_points].cuda().contiguous()
-        rotations = gaussians._rotation[:gaussians.skybox_points].cuda().contiguous()
-        features_dc = gaussians._features_dc[:gaussians.skybox_points].cuda().contiguous()
-        features_rest = gaussians._features_rest[:gaussians.skybox_points].cuda().contiguous()
+        means3D = gaussians.properties[:gaussians.skybox_points, xyz1:xyz2].cuda().contiguous()
+        scales = gaussians.properties[:gaussians.skybox_points, scales1:scales2].cuda().contiguous()
+        rotations = gaussians.properties[:gaussians.skybox_points, rotation1:rotation2].cuda().contiguous()
+        features_dc = gaussians.properties[:gaussians.skybox_points, features1:features2].cuda().unsqueeze(1).contiguous()
+        opacity = gaussians.properties[:gaussians.skybox_points, opacity1].cuda().unsqueeze(1).contiguous()
+        features_rest = gaussians.properties[:gaussians.skybox_points, features_rest1: features_rest2].cuda().reshape(gaussians.skybox_points, 3, SH_properties_single).contiguous()
+        
     else:
         means3D, opacity, scales, rotations, features_dc, features_rest, gaussian_indices = torch.empty((0, 3), device='cuda', dtype=torch.float32), torch.empty((0, 1), device='cuda', dtype=torch.float32), torch.empty((0, 3), device='cuda', dtype=torch.float32), torch.empty((0,4), device='cuda', dtype=torch.float32), torch.empty((0, 1, 3), device='cuda', dtype=torch.float32), torch.empty((0,15, 3), device='cuda', dtype=torch.float32), torch.empty(0, device='cuda', dtype=torch.int32)
     
@@ -251,7 +273,7 @@ def training(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoin
                     highlight_leaves = False
                 if "show_occlusion" in slider:    
                     show_occlusion = slider["show_occlusion"] > 0
-                    Use_Occlusion_Culling = True
+                    Use_Occlusion_Culling = slider["show_occlusion"] > 0
                 else:
                     show_occlusion = False
                     
@@ -424,14 +446,17 @@ def training(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoin
                         assert(SPT_starts_new[-1] == len(gaussian_indices))
                         number_to_render = len(gaussian_indices)
                         distance_multiplier = distance_multiplier
+                        
+                        
+                        load_tensor = gaussians.properties[load_from_disk_indices, :].cuda(non_blocking=non_blocking)
 
-                        means3D = nn.Parameter(torch.cat((means3D[:gaussians.skybox_points], gaussians._xyz[load_from_disk_indices].cuda(non_blocking=non_blocking), means3D[reuse_gaussians_mask])).contiguous())
-                        opacity = nn.Parameter(torch.cat((opacity[:gaussians.skybox_points], gaussians._opacity[load_from_disk_indices].cuda(non_blocking=non_blocking), opacity[reuse_gaussians_mask])).contiguous())
-                        scales = nn.Parameter(torch.cat((scales[:gaussians.skybox_points], gaussians._scaling[load_from_disk_indices].cuda(non_blocking=non_blocking), scales[reuse_gaussians_mask])).contiguous())
-                        rotations = nn.Parameter(torch.cat((rotations[:gaussians.skybox_points], gaussians._rotation[load_from_disk_indices].cuda(non_blocking=non_blocking), rotations[reuse_gaussians_mask])).contiguous())
+                        means3D = nn.Parameter(torch.cat((means3D[:gaussians.skybox_points], load_tensor[:, xyz1:xyz2].cuda(non_blocking=non_blocking), means3D[reuse_gaussians_mask])).contiguous())
+                        opacity = nn.Parameter(torch.cat((opacity[:gaussians.skybox_points], load_tensor[:, opacity1:opacity2].cuda(non_blocking=non_blocking), opacity[reuse_gaussians_mask])).contiguous())
+                        scales = nn.Parameter(torch.cat((scales[:gaussians.skybox_points], load_tensor[:, scales1:scales2].cuda(non_blocking=non_blocking), scales[reuse_gaussians_mask])).contiguous())
+                        rotations = nn.Parameter(torch.cat((rotations[:gaussians.skybox_points], load_tensor[:, rotation1:rotation2].cuda(non_blocking=non_blocking), rotations[reuse_gaussians_mask])).contiguous())
                         # TODO: ABS?
-                        features_dc = nn.Parameter(torch.cat((features_dc[:gaussians.skybox_points], gaussians._features_dc[load_from_disk_indices].cuda(non_blocking=non_blocking), features_dc[reuse_gaussians_mask])).contiguous())
-                        features_rest = nn.Parameter(torch.cat((features_rest[:gaussians.skybox_points], gaussians._features_rest[load_from_disk_indices].cuda(non_blocking=non_blocking), features_rest[reuse_gaussians_mask])).contiguous())
+                        features_dc = nn.Parameter(torch.cat((features_dc[:gaussians.skybox_points], load_tensor[:, features1:features2].cuda(non_blocking=non_blocking).unsqueeze(1), features_dc[reuse_gaussians_mask])).contiguous())
+                        features_rest = nn.Parameter(torch.cat((features_rest[:gaussians.skybox_points], load_tensor[:, features_rest1:features_rest2].cuda(non_blocking=non_blocking).reshape(len(load_tensor), 3, SH_properties_single), features_rest[reuse_gaussians_mask])).contiguous())
 
 
                         prev_SPT_indices = SPT_indices
@@ -540,8 +565,8 @@ def training(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoin
                     
                     net_image = image.cpu()
                     net_image_bytes = memoryview((torch.clamp(net_image, min=0, max=1.0) * 255).byte().permute(1, 2, 0).contiguous().to('cpu').numpy())
-                train_params = {"Num_Rendered" : len(gaussian_indices), "Number_of_SPTs" : len(SPT_indices), "Percentage_Rendered" : len(gaussian_indices)/len(gaussians._xyz), "Percentage_SPTs" : len(SPT_indices)/len(gaussians.SPT_starts)}
-                network_gui.send(net_image_bytes, json.dumps({"iteration" : 99, "num_gaussians" : len(gaussians._xyz), "loss" : 0, "sh_degree":1, "error" : 0, "paused" : False, "train_params" : train_params})) #dataset.source_path)
+                train_params = {"Num_Rendered" : len(gaussian_indices), "Number_of_SPTs" : len(SPT_indices), "Percentage_Rendered" : len(gaussian_indices)/gaussians.size, "Percentage_SPTs" : len(SPT_indices)/len(gaussians.SPT_starts)}
+                network_gui.send(net_image_bytes, json.dumps({"iteration" : 99, "num_gaussians" : gaussians.size, "loss" : 0, "sh_degree":1, "error" : 0, "paused" : False, "train_params" : train_params})) #dataset.source_path)
                 if do_training and ((iteration < int(opt.iterations)) or not keep_alive_):
                     break
             except ValueError as e:

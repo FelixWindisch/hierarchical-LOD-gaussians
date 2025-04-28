@@ -237,8 +237,8 @@ if __name__ == '__main__':
 
     
     #Standard 3DGS training parameters
-    optimization_params.iterations = 250_000
-    optimization_params.position_lr_init =  0.0000156 #0.0000016 #0.00016
+    optimization_params.iterations = 2_000_000
+    optimization_params.position_lr_init =  0.0000156 /3.0#0.0000016 #0.00016
     #     #optimization_params.position_lr_init = 0.016
     optimization_params.position_lr_final = 0.0000001 #0.000000016 #0.0000016
     optimization_params.position_lr_delay_mult = 0.01
@@ -262,7 +262,7 @@ if __name__ == '__main__':
     optimization_params.depth_l1_weight_final = 0.01
 
 
-    train_post.training(model_params, optimization_params, pipeline_params, [], [], [], [], cg)
+    train_post.training(model_params, optimization_params, pipeline_params, [500000, 1500000], [500050, 1500050], [], [], cg)
     
     exit()
     post_opt_chunk_args =  " ".join([

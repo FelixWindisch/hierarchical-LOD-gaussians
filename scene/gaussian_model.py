@@ -38,6 +38,23 @@ SPT_index = 0
 SPT_min_distance = 1
 SPT_max_distance = 2
 
+
+
+number_properties = 23
+xyz1 = 0
+xyz2 = 3
+scales1 = 3
+scales2 = 6
+rotation1 = 6
+rotation2 = 10
+features1 = 10
+features2 = 13
+opacity1 = 13
+opacity2 = 14
+features_rest1 = 14
+features_rest2 = 23
+
+
 clock_start = True
 clock_time = time.time()
 def clock():
@@ -183,9 +200,9 @@ class GaussianModel:
 
     def build_hierarchical_SPT(self, SPT_Root_Volume, target_granularity, min_SPT_Size = 100, use_bounding_spheres=True, revive_gaussians = False):
         SPT_scale = SPT_Root_Volume
-        device = self._xyz.device
+        device = self.properties.device
         
-        condition = lambda indices : torch.prod(self.scaling_activation(self._scaling[indices]), dim=-1) > SPT_scale
+        condition = lambda indices : torch.prod(self.scaling_activation(self.properties[indices, scales1: scales2]), dim=-1) > SPT_scale
         upper_tree_indices, cut_indices = self.cut_hierarchy_on_condition(self.nodes, condition)
         
         
@@ -208,7 +225,7 @@ class GaussianModel:
             if self.nodes[cut_node, hierarchy_node_child_count] == 0:
                 continue
             #create SPT
-            SPT_center = self._xyz[cut_node]
+            SPT_center = self.properties[cut_node, xyz1:xyz2]
             SPT = torch.zeros(1, 3, device=device)
             SPT.requires_grad_(False)
             SPT[0, 0] = cut_node
@@ -218,7 +235,7 @@ class GaussianModel:
             stack[0] = cut_node
             max_distances = torch.zeros(1, device=device)
             max_distances[0] = SPT[0,1]
-            bounding_sphere_radius = torch.max(self.scaling_activation(self._scaling[cut_node]), dim=-1)[0].item() * 3.0
+            bounding_sphere_radius = torch.max(self.scaling_activation(self.properties[cut_node, scales1: scales2]), dim=-1)[0].item() * 3.0
             temp_additional_indices = torch.zeros(1, dtype=torch.int32, device=device)
             temp_additional_indices[0] = cut_node
             while len(stack) > 0:
@@ -231,8 +248,8 @@ class GaussianModel:
                 
                 if len(stack) == 0:
                     break
-                center_distances = torch.sqrt(torch.sum((self._xyz[stack] - SPT_center) ** 2, dim=1))
-                max_center_distances = torch.max(center_distances + torch.max(self.scaling_activation(self._scaling[stack]), dim=-1)[0] * 3).item()
+                center_distances = torch.sqrt(torch.sum((self.properties[stack, xyz1:xyz2] - SPT_center) ** 2, dim=1))
+                max_center_distances = torch.max(center_distances + torch.max(self.scaling_activation(self.properties[stack, scales1:scales2]), dim=-1)[0] * 3).item()
                 bounding_sphere_radius = max(bounding_sphere_radius, max_center_distances)
                 max_distances = max_distances[first_children > 0]
                 stack_SPT = torch.zeros(len(stack), 3, device=device)
@@ -248,13 +265,18 @@ class GaussianModel:
                         revive_current_SPT_distances = self.get_min_distance(stack[revive_indices], target_granularity)
                         revive_children1 = self.nodes[stack[revive_indices], hierarchy_node_first_child]
                         revive_children2 = self.nodes[revive_children1, hierarchy_node_next_sibling]
-                        revive_children1_center_distances = torch.sqrt(torch.sum((self._xyz[revive_children1] - SPT_center) ** 2, dim=1))
-                        revive_children2_center_distances = torch.sqrt(torch.sum((self._xyz[revive_children1] - SPT_center) ** 2, dim=1))
-                        max_child_min_distance = torch.maximum(self.get_min_distance(revive_children1, target_granularity, False) + revive_children1_center_distances, self.get_min_distance(revive_children2, target_granularity, False) + revive_children2_center_distances)
+                        revive_children1_center_distances = torch.sqrt(torch.sum((self.properties[revive_children1, xyz1:xyz2] - SPT_center) ** 2, dim=1))
+                        revive_children2_center_distances = torch.sqrt(torch.sum((self.properties[revive_children1, xyz1:xyz2] - SPT_center) ** 2, dim=1))
+                        max_child_min_distance = torch.maximum(self.get_min_distance(revive_children1, target_granularity, False) + revive_children1_center_distances, self.get_min_distance(revive_children2, target_granularity, False) + revive_children2_center_distances)[valid]
                         target_SPT_distances = (max_child_min_distance + max_distances[revive_indices]) / 2.0 - center_distances[revive_indices]
                         multiplier = target_SPT_distances / revive_current_SPT_distances
-                        self._scaling[stack[revive_indices]] = self.scaling_inverse_activation(self.scaling_activation(self._scaling[stack[revive_indices]]) * multiplier.unsqueeze(1).cpu())
+                        valid = torch.logical_and(self.get_surface_area(self.properties[stack[revive_indices], scales1:scales2]) > self.get_surface_area(self.properties[revive_children1, scales1:scales2]), \
+                                                  self.get_surface_area(self.properties[stack[revive_indices], scales1:scales2]) > self.get_surface_area(self.properties[revive_children2, scales1:scales2]), multiplier > 0) 
+
+                        self.properties[stack[revive_indices][valid], scales1:scales2] = self.scaling_inverse_activation(self.scaling_activation(self.properties[stack[revive_indices], scales1:scales2]) * multiplier.unsqueeze(1).cpu())
                         min_distances[revive_indices] = target_SPT_distances
+                        if self.properties[stack[revive_indices], scales1:scales2].isnan().any():
+                            pass
                 ### Revive
                 
                 stack_SPT[:, 1] = torch.where(min_distances < max_distances, min_distances, max_distances)
@@ -292,9 +314,9 @@ class GaussianModel:
         #self.upper_tree_nodes[cut_SPT_indices, hierarchy_node_first_child] = 0
         self.upper_tree_nodes[cut_SPT_indices, hierarchy_node_first_child] = torch.tensor(leaf_spt_children, dtype = torch.int32, device='cuda')
         
-        self.upper_tree_xyz = self._xyz[upper_tree_indices].cuda()
+        self.upper_tree_xyz = self.properties[upper_tree_indices, xyz1:xyz2].cuda()
         # unactivated!
-        self.upper_tree_scaling = self._scaling[upper_tree_indices].cuda()
+        self.upper_tree_scaling = self.properties[upper_tree_indices, scales1:scales2].cuda()
         
         self.upper_tree_nodes[:, hierarchy_node_max_side_length] = upper_tree_indices
         self.upper_tree_nodes[:, hierarchy_node_parent] = torch.searchsorted(upper_tree_indices.cuda(), self.upper_tree_nodes[:, hierarchy_node_parent])
@@ -341,7 +363,8 @@ class GaussianModel:
         
         #self.upper_tree_nodes[upper_tree_cut_indices, hierarchy_node_first_child] = torch.range(0, len(upper_tree_cut_indices)-1, dtype=torch.int32, device='cuda')
         
-        
+    def get_surface_area(self, scales):
+        return torch.sqrt(scales[:, 0] * scales[:, 1] + scales[:, 0] * scales[:, 2] + scales[:, 1] * scales[:, 2])
                 
             
             
@@ -350,12 +373,12 @@ class GaussianModel:
         if nodes.numel() == 1:
             if self.nodes[nodes, hierarchy_node_child_count] == 0 and leaves_are_negative_infinity:
                 return -1000000
-            scales = self.scaling_activation(self._scaling[nodes.item()])
+            scales = self.scaling_activation(self.properties[nodes.item(), scales1:scales2])
             return torch.sqrt((scales[ 0] * scales[ 1] + scales[0] * scales[2] + scales[1] * scales[2]))/target_granularity
             
         leaves = self.nodes[nodes, hierarchy_node_child_count] == 0
         #return self.scaling_activation(torch.max(self._scaling[nodes], dim=-1)[0])/target_granularity
-        scales = self.scaling_activation(self._scaling[nodes])
+        scales = self.scaling_activation(self.properties[nodes, scales1:scales2])
         #ellipse surface
         
         min_distances = torch.sqrt(scales[:, 0] * scales[:, 1] + scales[:, 0] * scales[:, 2] + scales[:, 1] * scales[:, 2])/target_granularity
@@ -477,74 +500,46 @@ class GaussianModel:
         
         return optimizer_state
         
+
     
-    def move_storage_to(self, device, max_number_of_gaussians, store_on_disk = False, densify_radii = False):
-        self.size = len(self._xyz)
-        names = ["xyz", "f_dc", "scaling", "rotation", "opacity", "f_rest", "nodes"]
-        new_tensors = []
-        optimizer_state = {}
-        tensors = [self._xyz, self._features_dc, self._scaling, self._rotation, self._opacity, self._features_rest, self.nodes]
-        for name, tensor in zip(names, tensors):
-            shape = list(tensor.size())
-            shape[0] = max_number_of_gaussians
-            shape = torch.Size(shape)
-            
-            if store_on_disk:
-                storage_tensor = torch.from_numpy(np.memmap(name + ".bin", dtype=tensor.cpu().detach().numpy().dtype, mode="w+", shape=shape))
-            else:
-                storage_tensor = torch.zeros(shape, dtype=tensor.cpu().dtype, device=device)
-            #if device == 'cpu':
-            #    storage_tensor = storage_tensor.pin_memory()    
-            storage_tensor[:len(tensor)] = tensor
-            new_tensors.append(storage_tensor)
-            # Can we reduce the 
-            exp_avgs = torch.zeros(shape, dtype=torch.float32, device=device)
-            exp_avgs_sqs = torch.zeros(shape, dtype=torch.float32, device=device)
-            optimizer_state[name] = {"exp_avgs" : exp_avgs, "exp_avgs_sqs" : exp_avgs_sqs}
-        self._xyz = new_tensors[0]
-        self._features_dc = new_tensors[1]
-        self._scaling = new_tensors[2]
-        self._rotation = new_tensors[3]
-        self._opacity = new_tensors[4]
-        self._features_rest = new_tensors[5]
-        self.nodes = new_tensors[6]
-        
+    
+    
+    def move_storage_to(self, device, max_number_of_gaussians, store_on_disk = False, densify_radii = False, training=True):
+        if max_number_of_gaussians is None:
+            max_number_of_gaussians = len(self._xyz)
+        number_gaussian_properties = [14, 23, 38, 59]
+        spherical_harmonics_properties = [0, 9, 24, 45][self.max_sh_degree]
+        # Momentum parameters are required during training
+        if training:
+            number_gaussian_properties = number_gaussian_properties[self.max_sh_degree] * 3
+        else:
+            number_gaussian_properties = number_gaussian_properties[self.max_sh_degree]
+        self.properties = torch.zeros((max_number_of_gaussians, number_gaussian_properties) , device=device)
         if densify_radii:
-            self._densification_radii = torch.zeros_like(self._opacity, device=device).squeeze()
-        
-        return optimizer_state
-    
-    
-    def move_storage_to_render(self, device, max_number_of_gaussians = None):
-        
+            self._densification_radii = torch.zeros(max_number_of_gaussians, device=device, dtype=torch.float)
         self.size = len(self._xyz)
-        if max_number_of_gaussians == None:
-            max_number_of_gaussians = self.size
-        names = ["xyz", "f_dc", "scaling", "rotation", "opacity", "f_rest", "nodes"]
-        new_tensors = []
-        optimizer_state = {}
-        tensors = [self._xyz, self._features_dc, self._scaling, self._rotation, self._opacity, self._features_rest, self.nodes]
-        for name, tensor in zip(names, tensors):
-            shape = list(tensor.size())
-            shape[0] = max_number_of_gaussians
-            shape = torch.Size(shape)
-            storage_tensor = torch.zeros(shape, dtype=tensor.cpu().dtype, device=device)
-            #if device == 'cpu':
-            #    storage_tensor = storage_tensor.pin_memory()    
-            storage_tensor[:len(tensor)] = tensor
-            new_tensors.append(storage_tensor)
-            # Can we reduce the 
-            #exp_avgs = torch.zeros(shape, dtype=torch.float32, device=device)
-            #exp_avgs_sqs = torch.zeros(shape, dtype=torch.float32, device=device)
-            optimizer_state[name] = {"exp_avgs" : None, "exp_avgs_sqs" : None}
-        self._xyz = new_tensors[0]
-        self._features_dc = new_tensors[1]
-        self._scaling = new_tensors[2]
-        self._rotation = new_tensors[3]
-        self._opacity = new_tensors[4]
-        self._features_rest = new_tensors[5]
-        self.nodes = new_tensors[6]
-        return optimizer_state
+        tensors = [self._xyz,  self._scaling, self._rotation, self._features_dc.squeeze(), self._opacity, self._features_rest.reshape(self.size, spherical_harmonics_properties)]
+        current_index = 0
+        for tensor in tensors:
+            size = tensor[0].nelement()
+            self.properties[:self.size, current_index:current_index+size] = tensor
+            current_index += size
+            
+            
+        new_nodes = torch.zeros((max_number_of_gaussians, 6), device=device, dtype=torch.int32)    
+        new_nodes[:len(self.nodes), :6] = self.nodes
+        self.nodes = new_nodes
+        
+        
+        
+        self._xyz = None
+        self._scaling= None
+        self._rotation= None
+        self._features_dc= None
+        self._opacity= None
+        self._features_rest= None
+    
+    
     
     # deprecated?
     def move_to_cpu(self, max_number_of_gaussians):
@@ -1167,15 +1162,15 @@ class GaussianModel:
         self._rotation = nn.Parameter(rots.cuda().requires_grad_(True))
         #self.max_radii2D = torch.zeros((self.get_xyz.shape[0]), device="cuda")
 
-    def save_hier(self):
-        print(f"Result hierarchy written to {self.hierarchy_path}_opt")
-        write_dynamic_hierarchy(self.hierarchy_path + "_opt",
-                        self._xyz,
-                        torch.cat((self._features_dc, self._features_rest), 1),
-                        self.opacity_activation(self._opacity),
-                        self._scaling,
-                        self._rotation,
-                        self.nodes,
+    def save_hier(self, file_name="opt"):
+        print(f"Result hierarchy written to {self.hierarchy_path}_{file_name}")
+        write_dynamic_hierarchy(self.hierarchy_path + f"_{file_name}",
+                        self.properties[:self.size, xyz1:xyz2],
+                        torch.cat((self.properties[:self.size, features1:features2], self.properties[:self.size, features_rest1:features_rest2]), 1),
+                        self.opacity_activation(self.properties[:self.size, opacity1:opacity2]),
+                        self.properties[:self.size, scales1:scales2],
+                        self.properties[:self.size, rotation1:rotation2],
+                        self.nodes[:self.size],
                         self.max_sh_degree)
 
     def update_learning_rate(self, iteration):
@@ -1371,12 +1366,14 @@ class GaussianModel:
 
     def densification_postfix_with_storage(self, new_xyz, new_features_dc, new_features_rest, new_opacities, new_scaling, new_rotation, reset_params=True):
         new_gaussians = new_xyz.size()[0]
-        self._xyz[self.size:self.size+new_gaussians] = new_xyz
-        self._features_dc[self.size:self.size+new_gaussians] = new_features_dc
-        self._features_rest[self.size:self.size+new_gaussians] = new_features_rest
-        self._opacity[self.size:self.size+new_gaussians] = new_opacities
-        self._scaling[self.size:self.size+new_gaussians] = new_scaling
-        self._rotation[self.size:self.size+new_gaussians] = new_rotation
+        self.properties[self.size:self.size+new_gaussians, xyz1:xyz2] = new_xyz
+        self.properties[self.size:self.size+new_gaussians, scales1:scales2] = new_scaling
+        self.properties[self.size:self.size+new_gaussians, rotation1:rotation2] = new_rotation
+        self.properties[self.size:self.size+new_gaussians, features1:features2] = new_features_dc
+        self.properties[self.size:self.size+new_gaussians, opacity1: opacity2] = new_opacities
+        self.properties[self.size:self.size+new_gaussians, features_rest1:features_rest2] = new_features_rest
+
+        
         
     # reset_params is from MCMC
     def densification_postfix(self, new_xyz, new_features_dc, new_features_rest, new_opacities, new_scaling, new_rotation, reset_params=True):
@@ -1623,14 +1620,14 @@ class GaussianModel:
     
     def _update_params(self, idxs, ratio):
         new_opacity, new_scaling = compute_relocation_cuda(
-            opacity_old=self.opacity_activation(self._opacity[idxs, 0]).cuda(),
-            scale_old=self.scaling_activation(self._scaling[idxs]).cuda(),
+            opacity_old=self.opacity_activation(self.properties[idxs, opacity1]).cuda(),
+            scale_old=self.scaling_activation(self.properties[idxs, scales1:scales2]).cuda(),
             N=ratio[idxs, 0].cuda() + 1
         )
         new_opacity = torch.clamp(new_opacity.unsqueeze(-1), max=1.0 - torch.finfo(torch.float32).eps, min=0.005)
         new_opacity = self.inverse_opacity_activation(new_opacity)
         new_scaling = self.scaling_inverse_activation(new_scaling.reshape(-1, 3))
-        return self._xyz[idxs], self._features_dc[idxs], self._features_rest[idxs], new_opacity, new_scaling, self._rotation[idxs]
+        return self.properties[idxs, xyz1:xyz2], self.properties[idxs, features1:features2], self.properties[idxs, features_rest1:features_rest2], new_opacity, new_scaling, self.properties[idxs, rotation1:rotation2]
     
     def _sample_alives(self, probs, num, alive_indices=None):
         probs = probs / (probs.sum() + torch.finfo(torch.float32).eps)
@@ -1666,7 +1663,7 @@ class GaussianModel:
         # Torch.multionmial can only handle 16_000_000 elements. If there are more possible respawn locations, uniformly sample 16M
         if len(alive_indices) > 16_000_000:
             alive_indices = alive_indices[torch.randperm(len(alive_indices))[:16_000_000]]
-        probs = (self.opacity_activation(self._opacity[alive_indices, 0])) 
+        probs = (self.opacity_activation(self.properties[alive_indices, opacity1])) 
 
         if densify_radii:
             probs *= (self._densification_radii[alive_indices] + 1)
@@ -1683,18 +1680,18 @@ class GaussianModel:
             sibling_indices = sibling_indices[:len(reinit_idx)]
         
         (
-            self._xyz[dead_indices], 
-            self._features_dc[dead_indices],
-            self._features_rest[dead_indices],
+            self.properties[dead_indices, xyz1:xyz2], 
+            self.properties[dead_indices, features1:features2],
+            self.properties[dead_indices, features_rest1:features_rest2],
             new_opacity,
             new_scaling,
-            self._rotation[dead_indices] 
+            self.properties[dead_indices, rotation1:rotation2] 
         ) = self._update_params(reinit_idx, ratio=ratio)
         
         new_opacity = new_opacity.to(storage_device)
         new_scaling = new_scaling.to(storage_device)
-        self._opacity[dead_indices] = new_opacity
-        self._scaling[dead_indices] = new_scaling
+        self.properties[dead_indices, opacity1:opacity2] = new_opacity
+        self.properties[dead_indices, scales1:scales2] = new_scaling
         
         # propogate the not-dead sibling to parent
         parent_indices = self.nodes[dead_indices, hierarchy_node_parent]
@@ -1702,12 +1699,14 @@ class GaussianModel:
             depth_mask = self.nodes[sibling_indices, hierarchy_node_depth] == depth
             sibling_depth = sibling_indices[depth_mask]
             parent_depth = parent_indices[depth_mask]
-            self._xyz[parent_depth] = self._xyz[sibling_depth]
-            self._opacity[parent_depth] = self._opacity[sibling_depth]
-            self._features_dc[parent_depth] = self._features_dc[sibling_depth]
-            self._features_rest[parent_depth] = self._features_rest[sibling_depth]
-            self._scaling[parent_depth] = self._scaling[sibling_depth]
-            self._rotation[parent_depth] = self._rotation[sibling_depth]
+            self.properties[parent_depth, :number_properties] = self.properties[sibling_depth, :number_properties] 
+            
+            #self._xyz[parent_depth] = self._xyz[sibling_depth]
+            #self._opacity[parent_depth] = self._opacity[sibling_depth]
+            #self._features_dc[parent_depth] = self._features_dc[sibling_depth]
+            #self._features_rest[parent_depth] = self._features_rest[sibling_depth]
+            #self._scaling[parent_depth] = self._scaling[sibling_depth]
+            #self._rotation[parent_depth] = self._rotation[sibling_depth]
         
         
             self.nodes[parent_depth, hierarchy_node_child_count] = self.nodes[sibling_depth, hierarchy_node_child_count]
@@ -1740,11 +1739,14 @@ class GaussianModel:
         self.nodes[sibling_indices, hierarchy_node_next_sibling] = 0
         
         # The sibling is a copy
-        self._xyz[sibling_indices] = self._xyz[dead_indices]
-        self._opacity[sibling_indices] = self._opacity[dead_indices]
-        self._features_dc[sibling_indices] = self._features_dc[dead_indices]
-        self._opacity[sibling_indices] = self._opacity[dead_indices]
-        self._scaling[sibling_indices] = self._scaling[dead_indices]
+        self.properties[sibling_indices, :number_properties] = self.properties[dead_indices, :number_properties] 
+
+        #self.properties[sibling_indices, xyz1:xyz2] = self.properties[dead_indices, xyz1:xyz2]
+        #self.properties[sibling_indices, opacity1:opacity2] = self.properties[dead_indices, opacity1:opacity2]
+        #self.properties[sibling_indices, features1:features2] = self.properties[dead_indices, features1:features2]
+        #self.properties[sibling_indices, features_rest1:features_rest2] = self.properties[dead_indices,features_rest1:features_rest2]
+        #self.properties[sibling_indices, rotation1:rotation2] = self.properties[dead_indices, rotation1:rotation2]
+        #self.properties[sibling_indices, scales1:scales2] = self.properties[dead_indices, scales1:scales2]
         
         
         # TODO: Implement Disk Equivalent
@@ -1752,12 +1754,14 @@ class GaussianModel:
         
         # Keep momentum for dead indices to encourage exploration?
         for name in ["xyz", "f_dc", "scaling", "rotation", "opacity", "f_rest", "nodes"]:
-            optimizer_state[name]["exp_avgs"][sibling_indices] = 0
-            optimizer_state[name]["exp_avgs_sqs"][sibling_indices] = 0
+            self.properties[sibling_indices, number_properties:] = 0
+            #optimizer_state[name]["exp_avgs"][sibling_indices] = 0
+            #
+            # optimizer_state[name]["exp_avgs_sqs"][sibling_indices] = 0
         
-    def add_new_gs(self, cap_max, size, densify_radii = False):
-        device = self._xyz.device
-        target_num = min(cap_max, int(1.05 * size))
+    def add_new_gs(self, cap_max, size, densify_radii = False, densify_percent = 1.05):
+        device = self.properties.device
+        target_num = min(cap_max, int(densify_percent * size))
         num_gs = max(0, target_num - size)
         if num_gs <= 0:
             return 0
@@ -1773,7 +1777,7 @@ class GaussianModel:
         #probs = (self.opacity_activation(self._opacity[alive_indices, 0])) 
         
         
-        probs = self.opacity_activation(self._opacity[:size]).squeeze(-1)[alive_indices]
+        probs = self.opacity_activation(self.properties[:size, opacity1:opacity2]).squeeze(-1)[alive_indices]
         if densify_radii:
             probs *= (self._densification_radii[alive_indices] + 1)
         

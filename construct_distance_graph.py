@@ -62,24 +62,29 @@ def construct_distance_graph(images_file):
                 
         nx.write_edgelist(G_knn, "/home/felix-windisch/Datasets/BIGCITY/camera_calibration/aligned/sparse/0/consistency_graph.edge_list")
         print(G_knn.nodes)
-        exit()
         node = 0
-        N=5000
+        N = 5000
+        colors = np.zeros((N, 3))
         walk = np.zeros(N, dtype=np.int32)
+        current_color = np.random.rand(3)
         for i in range(N):
+            colors[i] = current_color
             node = consistency_graph.metropolis_hastings_walk(G_knn, node)
             walk[i] = node
+            if i % 100 == 0:
+                i = random.randint(0, points.shape[0])
+                current_color = np.random.rand(3)
         neighbours = walk #np.array(list(nx.all_neighbors(G_knn, 5000)))
         print(neighbours)
         print(G_knn.number_of_edges())
         x = positions[neighbours, 0]
         y = positions[neighbours, 1]
-        z = positions[neighbours, 2]/4
+        z = positions[neighbours, 2]*10
         # Create 3D scatter plot
         fig = plt.figure()
         ax = fig.add_subplot(111, projection='3d')
-        ax.plot(x, y, z, color='blue', label='Path')
-        ax.scatter(x, y, z, c='blue', marker='o')
+       #ax.plot(x, y, z, color='blue', label='Path')
+        ax.scatter(x, y, z, c=colors, marker='o')
         # Optional: Add labels
         ax.set_xlabel('X')
         ax.set_ylabel('Y')
