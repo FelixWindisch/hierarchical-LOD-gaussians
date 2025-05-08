@@ -267,13 +267,14 @@ class GaussianModel:
                         revive_children2 = self.nodes[revive_children1, hierarchy_node_next_sibling]
                         revive_children1_center_distances = torch.sqrt(torch.sum((self.properties[revive_children1, xyz1:xyz2] - SPT_center) ** 2, dim=1))
                         revive_children2_center_distances = torch.sqrt(torch.sum((self.properties[revive_children1, xyz1:xyz2] - SPT_center) ** 2, dim=1))
-                        max_child_min_distance = torch.maximum(self.get_min_distance(revive_children1, target_granularity, False) + revive_children1_center_distances, self.get_min_distance(revive_children2, target_granularity, False) + revive_children2_center_distances)[valid]
+                        
+                        max_child_min_distance = torch.maximum(self.get_min_distance(revive_children1, target_granularity, False) + revive_children1_center_distances, self.get_min_distance(revive_children2, target_granularity, False) + revive_children2_center_distances)
                         target_SPT_distances = (max_child_min_distance + max_distances[revive_indices]) / 2.0 - center_distances[revive_indices]
                         multiplier = target_SPT_distances / revive_current_SPT_distances
                         valid = torch.logical_and(self.get_surface_area(self.properties[stack[revive_indices], scales1:scales2]) > self.get_surface_area(self.properties[revive_children1, scales1:scales2]), \
-                                                  self.get_surface_area(self.properties[stack[revive_indices], scales1:scales2]) > self.get_surface_area(self.properties[revive_children2, scales1:scales2]), multiplier > 0) 
-
-                        self.properties[stack[revive_indices][valid], scales1:scales2] = self.scaling_inverse_activation(self.scaling_activation(self.properties[stack[revive_indices], scales1:scales2]) * multiplier.unsqueeze(1).cpu())
+                                                  self.get_surface_area(self.properties[stack[revive_indices], scales1:scales2]) > self.get_surface_area(self.properties[revive_children2, scales1:scales2])) 
+                        
+                        self.properties[stack[revive_indices][valid], scales1:scales2] = self.scaling_inverse_activation(self.scaling_activation(self.properties[stack[revive_indices][valid], scales1:scales2]) * multiplier[valid].unsqueeze(1).cpu())
                         min_distances[revive_indices] = target_SPT_distances
                         if self.properties[stack[revive_indices], scales1:scales2].isnan().any():
                             pass
@@ -1188,14 +1189,14 @@ class GaussianModel:
     def construct_list_of_attributes(self):
         l = ['x', 'y', 'z', 'nx', 'ny', 'nz']
         # All channels except the 3 DC
-        for i in range(self._features_dc.shape[1]*self._features_dc.shape[2]):
+        for i in range(features2 - features1):
             l.append('f_dc_{}'.format(i))
-        for i in range(self._features_rest.shape[1]*self._features_rest.shape[2]):
+        for i in range(features_rest2 - features_rest1):
             l.append('f_rest_{}'.format(i))
         l.append('opacity')
-        for i in range(self._scaling.shape[1]):
+        for i in range(3):
             l.append('scale_{}'.format(i))
-        for i in range(self._rotation.shape[1]):
+        for i in range(4):
             l.append('rot_{}'.format(i))
         return l
 
@@ -1235,6 +1236,32 @@ class GaussianModel:
             f.write(rotation.numpy().tobytes())
 
 
+    def save_ply_coarse(self, path, only_leaves=False, indices=None):
+        mkdir_p(os.path.dirname(path))
+        if only_leaves:
+            mask = torch.where(self.nodes[:self.size, hierarchy_node_child_count] == 0)[0]
+        elif indices is not None:
+            mask = indices
+        else:
+            # all true mask
+            mask = torch.ones(len(self._opacity), dtype=torch.bool)
+        xyz = self._xyz.detach().cpu().numpy()
+        normals = np.zeros_like(xyz)
+        f_dc = self._features_dc.detach().unsqueeze(1).transpose(1, 2).flatten(start_dim=1).contiguous().cpu().numpy()
+        f_rest = self._features_rest.transpose(1, 2).flatten(start_dim=1).contiguous().cpu().numpy()
+        #opacities = self.inverse_opacity_activation(self._opacity[mask]).detach().cpu().numpy()
+        opacities = (self._opacity).detach().cpu().numpy()
+        scale = self._scaling.detach().cpu().numpy()
+        rotation = self._rotation.detach().cpu().numpy()
+
+        dtype_full = [(attribute, 'f4') for attribute in self.construct_list_of_attributes()]
+
+        elements = np.empty(xyz.shape[0], dtype=dtype_full)
+        attributes = np.concatenate((xyz, normals, f_dc, f_rest, opacities, scale, rotation), axis=1)
+        elements[:] = list(map(tuple, attributes))
+        el = PlyElement.describe(elements, 'vertex')
+        PlyData([el]).write(path)
+    
     def save_ply(self, path, only_leaves=False, indices=None):
         mkdir_p(os.path.dirname(path))
         if only_leaves:
@@ -1244,14 +1271,14 @@ class GaussianModel:
         else:
             # all true mask
             mask = torch.ones(len(self._opacity), dtype=torch.bool)
-        xyz = self._xyz[mask].detach().cpu().numpy()
+        xyz = self.properties[mask, xyz1:xyz2].detach().cpu().numpy()
         normals = np.zeros_like(xyz)
-        f_dc = self._features_dc[mask].detach().transpose(1, 2).flatten(start_dim=1).contiguous().cpu().numpy()
-        f_rest = self._features_rest[mask].detach().transpose(1, 2).flatten(start_dim=1).contiguous().cpu().numpy()
+        f_dc = self.properties[mask, features1:features2].detach().unsqueeze(1).transpose(1, 2).flatten(start_dim=1).contiguous().cpu().numpy()
+        f_rest = self.properties[mask, features_rest1:features_rest2].detach().reshape((len(mask), 3,3)).transpose(1, 2).flatten(start_dim=1).contiguous().cpu().numpy()
         #opacities = self.inverse_opacity_activation(self._opacity[mask]).detach().cpu().numpy()
-        opacities = (self._opacity[mask]).detach().cpu().numpy()
-        scale = self._scaling[mask].detach().cpu().numpy()
-        rotation = self._rotation[mask].detach().cpu().numpy()
+        opacities = (self.properties[mask, opacity1:opacity2]).detach().cpu().numpy()
+        scale = self.properties[mask, scales1:scales2].detach().cpu().numpy()
+        rotation = self.properties[mask, rotation1:rotation2].detach().cpu().numpy()
 
         dtype_full = [(attribute, 'f4') for attribute in self.construct_list_of_attributes()]
 

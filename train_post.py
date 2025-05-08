@@ -71,9 +71,9 @@ def direct_collate(x):
 
 Write_Tensor_Board = True
 #Standard
-densify_interval = 10000
-densify_radii = True
-Densify_Percent = 1.02
+densify_interval = 5000 #5000
+densify_radii = False
+Densify_Percent = 1.03
 lr_multiplier = 1
 #Unused
 Random_Hierarchy_Cut = True
@@ -81,9 +81,9 @@ Only_Noise_Visible = True
 #MCMC
 Max_Cap = 60_000_000
 MCMC_Densification = True
-MCMC_Noise_LR = 20 #20  #5e5
-lambda_scaling = 0.01
-lambda_opacity = 0.01
+MCMC_Noise_LR = 3 #20  #5e5
+lambda_scaling = 0.0
+lambda_opacity = 0.0
 
 #Culling
 Use_Bounding_Spheres = False
@@ -99,18 +99,18 @@ Target_Granularity_Pixels = 4
 Min_SPT_Size = 256
 Cache_SPTs = True
 
-Reuse_SPT_Tolerance_Closer = 3
-Reuse_SPT_Tolerance_Farther = 1.5
+Reuse_SPT_Tolerance_Closer = 2
+Reuse_SPT_Tolerance_Farther = 1.25
 
 Max_Gaussian_Budget = 70_000_000
 Distance_Multiplier_Until_Budget = 1.5
 
 Cache_Size = 15_000_000
 Cache_Size_After_Reduction = 12_000_000
-
+Clear_Cache_Iterations = 1000
 Revive_Gaussians = False
 #View Selection
-Use_Consistency_Graph = False
+Use_Consistency_Graph = True
 # Rasterizer
 Rasterizer = "Vanilla"
 Anti_Aliasing = True
@@ -144,6 +144,8 @@ range2 = [xyz2, scales2, rotation2, features2, opacity2, features_rest2]
 
 
 def training(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoint_iterations, checkpoint, debug_from, cons_graph):
+    global Cache_Size
+    global Cache_Size_After_Reduction
     post_backward_peak = 0
     opt.densification_interval = densify_interval
     prev_peak_memory =0
@@ -208,6 +210,10 @@ def training(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoin
     
     optimizer_state = gaussians.move_storage_to(Storage_Device, int(round(Max_Cap * 1.1)), False, densify_radii=densify_radii)
     print(f"Moved to {Storage_Device}")
+    
+    if checkpoint:
+        checkpoint_file = os.path.join(scene.model_path, f"chkpnt{checkpoint_iterations[0]}.pth")
+    
     #gaussians.sort_morton()
     gaussians.build_hierarchical_SPT(SPT_Root_Volume, SPT_Target_Granularity, Min_SPT_Size, use_bounding_spheres=Use_Bounding_Spheres, revive_gaussians=Revive_Gaussians)
     print("Built SPTs")
@@ -248,7 +254,7 @@ def training(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoin
         rotations = gaussians.properties[:gaussians.skybox_points, rotation1:rotation2].cuda().contiguous()
         features_dc = gaussians.properties[:gaussians.skybox_points, features1:features2].cuda().unsqueeze(1).contiguous()
         opacity = gaussians.properties[:gaussians.skybox_points, opacity1].cuda().unsqueeze(1).contiguous()
-        features_rest = gaussians.properties[:gaussians.skybox_points, features_rest1: features_rest2].cuda().reshape(gaussians.skybox_points, 3, SH_properties_single).contiguous()
+        features_rest = gaussians.properties[:gaussians.skybox_points, features_rest1: features_rest2].cuda().reshape(gaussians.skybox_points, SH_properties_single, 3).contiguous()
         
         if densify_radii:
             densification_radii = torch.zeros(gaussians.skybox_points, device='cuda', dtype=torch.float32)
@@ -261,7 +267,7 @@ def training(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoin
         scales_cache = torch.empty((0, 3), device='cuda', dtype=torch.float32)
         rotations_cache = torch.empty((0, 4), device='cuda', dtype=torch.float32)
         features_dc_cache = torch.empty((0, 1, 3), device='cuda', dtype=torch.float32)
-        features_rest_cache = torch.empty((0, 3, SH_properties_single), device='cuda', dtype=torch.float32)
+        features_rest_cache = torch.empty((0, SH_properties_single, 3), device='cuda', dtype=torch.float32)
     else:
         means3D, opacity, scales, rotations, features_dc, features_rest, gaussian_indices = torch.empty((0, 3), device='cuda', dtype=torch.float32), torch.empty((0, 1), device='cuda', dtype=torch.float32), torch.empty((0, 3), device='cuda', dtype=torch.float32), torch.empty((0,4), device='cuda', dtype=torch.float32), torch.empty((0, 1, 3), device='cuda', dtype=torch.float32), torch.empty((0,15, 3), device='cuda', dtype=torch.float32), torch.empty(0, device='cuda', dtype=torch.int32)
     
@@ -285,14 +291,14 @@ def training(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoin
                                                     lr_delay_mult=opt.position_lr_delay_mult,
                                                     max_steps=opt.position_lr_max_steps)
     print("Gaussians Initialized")
-    
+    prev_cam_center = torch.zeros(3, device='cuda', dtype=torch.float32)
     #gaussians.revive_stuck_gaussians(SPT_Target_Granularity)
     #
     while iteration < opt.iterations + 1:
         for viewpoint_batch in training_generator:
             for viewpoint_cam in viewpoint_batch:
                 if Use_Consistency_Graph:
-                    current_camera_index = int(consistency_graph.metropolis_hastings_walk(cons_graph, (str(current_camera_index))))
+                    current_camera_index = int(consistency_graph.random_walk_node(cons_graph, (str(current_camera_index))))
                     print(current_camera_index)
                     #current_camera_index = consistency_graph.random_walk_node(cons_graph, current_camera_index, train_image_counts)
                     #train_image_counts[current_camera_index] += 1
@@ -320,425 +326,380 @@ def training(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoin
 
                 clock()
                 
-                #if not Cache_SPTs:
-                #    ############# Individual Gaussian Cache
-                #    new_render_indices, SPT_indices, SPT_distances = gaussians.get_SPT_cut(viewpoint_cam.camera_center.cuda(),  viewpoint_cam.full_proj_transform.cuda(), 0, viewpoint_cam, pipe, Use_Bounding_Spheres, Use_Frustum_Culling, Use_Occlusion_Culling)
-                #    keep_mask = torch.isin(render_indices, new_render_indices).to(Storage_Device)
-                #    write_back_mask = ~keep_mask
-                #    write_back_indices = render_indices[write_back_mask].to(Storage_Device)
-                #    load_mask = ~torch.isin(new_render_indices, render_indices)
-                #    load_from_disk_indices = new_render_indices[load_mask].to(Storage_Device)
-                #    render_indices = torch.cat((render_indices[keep_mask], new_render_indices[load_mask]))
-                #    print(f"Load Percentage: {len(load_from_disk_indices) * 100.0 / len(render_indices):.2f}" )
-                #    
-                #    hierarchy_cut_time = clock()
-                #    clock()
-                #    
-                #    # Write back the training results
-                #    with torch.no_grad():
-                #        gaussians._xyz[write_back_indices, :] = means3D[write_back_mask, :].detach().to(Storage_Device, non_blocking=False)
-                #        gaussians._opacity[write_back_indices, :] = opacity[write_back_mask, :].detach().to(Storage_Device, non_blocking=False)
-                #        gaussians._features_dc[write_back_indices, :] = features_dc[write_back_mask, :,  :].detach().to(Storage_Device, non_blocking=False)
-                #        gaussians._features_rest[write_back_indices, :] = features_rest[write_back_mask, :].detach().to(Storage_Device, non_blocking=False)
-                #        gaussians._scaling[write_back_indices, :] = scales[write_back_mask, :].detach().to(Storage_Device, non_blocking=False)
-                #        gaussians._rotation[write_back_indices, :] = rotations[write_back_mask, :].detach().to(Storage_Device, non_blocking=False)
-                #    
-                #    means3D = nn.Parameter(torch.cat((means3D[keep_mask].detach(), gaussians._xyz[load_from_disk_indices].cuda(non_blocking=non_blocking))).contiguous())
-                #    opacity = nn.Parameter(torch.cat((opacity[keep_mask].detach(), gaussians._opacity[load_from_disk_indices].cuda(non_blocking=non_blocking))).contiguous())
-                #    scales = nn.Parameter(torch.cat((scales[keep_mask].detach(), gaussians._scaling[load_from_disk_indices].cuda(non_blocking=non_blocking))).contiguous())
-                #    rotations = nn.Parameter(torch.cat((rotations[keep_mask].detach(), gaussians._rotation[load_from_disk_indices].cuda(non_blocking=non_blocking))).contiguous())
-                #    # TODO: ABS?
-                #    features_dc = nn.Parameter(torch.cat((features_dc[keep_mask].detach(), gaussians._features_dc[load_from_disk_indices].cuda(non_blocking=non_blocking))).contiguous())
-                #    features_rest = nn.Parameter(torch.cat((features_rest[keep_mask].detach(), gaussians._features_rest[load_from_disk_indices].cuda(non_blocking=non_blocking))).contiguous())
-                #    torch.cuda.synchronize()
-                #    shs = torch.cat((features_dc, features_rest), dim=1).contiguous()
-                #    
-                #    #scene.dump_gaussians("Dump", False, file_name="View.ply", indices=render_indices.to(Storage_Device))
-                #    
-                #    parameters_new = []
-                #    for index, (values, name, lr) in enumerate(zip([means3D, features_dc, opacity, scales, rotations, features_rest], 
-                #                            ["xyz", "f_dc", "opacity", "scaling", "rotation", "f_rest"],
-                #                            [xyz_lr, opt.feature_lr, opt.opacity_lr, opt.scaling_lr, opt.rotation_lr, opt.feature_lr])):
-                #        optimizer_state[name]["exp_avgs"][write_back_indices] = parameters[index]["exp_avgs"][write_back_mask].to(Storage_Device)
-                #        optimizer_state[name]["exp_avgs_sqs"][write_back_indices] = parameters[index]["exp_avgs_sqs"][write_back_mask].to(Storage_Device)
-                #        exp_avgs = torch.cat((parameters[index]["exp_avgs"][keep_mask], optimizer_state[name]["exp_avgs"][load_from_disk_indices].cuda())).contiguous()
-                #        exp_avgs_sqs = torch.cat((parameters[index]["exp_avgs_sqs"][keep_mask], optimizer_state[name]["exp_avgs_sqs"][load_from_disk_indices].cuda())).contiguous()
-                #        parameters_new.append({'params': [values], 'lr': lr*lr_multiplier, "name": name, 
-                #         "exp_avgs" : exp_avgs, "exp_avgs_sqs" : exp_avgs_sqs})
-                #
-                #
-                #    #render_indices_cpu = indices
-                #    parameters = parameters_new
-                #    load_write_time = clock()
-                #    clock()
-                #    ############# Individual Gaussian Cache
                 
                 
-                #sample = torch.rand(1).item()
-                #limit = math.pow(2, sample * (math.log2(limmax) - math.log2(limmin)) + math.log2(limmin))
+                
+                number_to_render = 1000000000
+                distance_multiplier = 1 *  (base_focal_length / viewpoint_cam.focal_length)
+                #if iteration % 10 != 0:
+                #    distance_multiplier = distance_multiplier * (1 + torch.pow(torch.rand(1),4) * 5).cuda()
+                #while number_to_render > Max_Gaussian_Budget:
+                    
+                ############# SPT Cache
+                if Use_Bounding_Spheres:
+                    bounds = gaussians.bounding_sphere_radii
+                else: 
+                    bounds = (gaussians.scaling_activation(torch.max(gaussians.upper_tree_scaling, dim=-1)[0]) * 3.0)
+                planes = gaussians.extract_frustum_planes(viewpoint_cam.full_proj_transform.cuda())
+                if Use_Frustum_Culling:
+                    frustum_cull = lambda indices : gaussians.frustum_cull_spheres(gaussians.upper_tree_xyz[indices], bounds[indices], planes)
+                else:
+                    frustum_cull = lambda indices : torch.ones(len(indices), dtype = torch.bool)
+                camera_position = viewpoint_cam.camera_center.cuda()
+                LOD_detail_cut = lambda indices : gaussians.min_distance_squared[indices] > (camera_position - gaussians.upper_tree_xyz[indices]).square().sum(dim=-1) * distance_multiplier
+                # The coarse cut contains intermediate nodes from the upper tree and leaf nodes, with some leaf nodes containing SPTs
+                coarse_cut = gaussians.cut_hierarchy_on_condition(gaussians.upper_tree_nodes, LOD_detail_cut, return_upper_tree=False, root_node=0, leave_out_of_cut_condition=frustum_cull)
+
+                if Use_Occlusion_Culling:
+                    bg_color = [0, 0, 0]
+                    background = torch.tensor(bg_color, dtype=torch.float32, device="cuda")
+                    temp = len(coarse_cut)
+                    occlusion_indices = gaussians.upper_tree_nodes[coarse_cut, 5]
+                    occlusion_mask = occlusion_cull(occlusion_indices.to(Storage_Device), gaussians, viewpoint_cam, pipe, background).cuda()
+                    coarse_cut = coarse_cut[occlusion_mask]
+                    print(f"Occlusion Cull {temp - len(coarse_cut)} out of {temp} upper tree gaussians")
+                    
+                # leaf nodes have 0 children
+                cut_leaf_nodes = coarse_cut[gaussians.upper_tree_nodes[coarse_cut, 2] == 0]
+                # separate the cut into leafs that contain an SPT and those that don't
+                # The SPT indices are the child indices of those nodes that have a 0 child count
+                SPT_indices = gaussians.upper_tree_nodes[cut_leaf_nodes][gaussians.upper_tree_nodes[cut_leaf_nodes, 3] >= 0, 3]
                 
                 
-                if Cache_SPTs:
-                    number_to_render = 1000000000
-                    distance_multiplier = 1 *  (base_focal_length / viewpoint_cam.focal_length)
-                    if iteration % 10 != 0:
-                        distance_multiplier = distance_multiplier * (1 + torch.pow(torch.rand(1),4) * 5).cuda()
-                    #while number_to_render > Max_Gaussian_Budget:
-                        
-                    ############# SPT Cache
-                    if Use_Bounding_Spheres:
-                        bounds = gaussians.bounding_sphere_radii
-                    else: 
-                        bounds = (gaussians.scaling_activation(torch.max(gaussians.upper_tree_scaling, dim=-1)[0]) * 3.0)
-                    planes = gaussians.extract_frustum_planes(viewpoint_cam.full_proj_transform.cuda())
-                    if Use_Frustum_Culling:
-                        frustum_cull = lambda indices : gaussians.frustum_cull_spheres(gaussians.upper_tree_xyz[indices], bounds[indices], planes)
+                ### Band Aid Fix
+                if len(SPT_indices) == 0:
+                    # Just load whatever is already in memory
+                    SPT_indices = torch.zeros(1, dtype=torch.int32, device='cuda')
+                    if prev_SPT_indices.size(0) > 0:
+                        SPT_indices[0] = prev_SPT_indices[-1]
                     else:
-                        frustum_cull = lambda indices : torch.ones(len(indices), dtype = torch.bool)
-                    camera_position = viewpoint_cam.camera_center.cuda()
-                    LOD_detail_cut = lambda indices : gaussians.min_distance_squared[indices] > (camera_position - gaussians.upper_tree_xyz[indices]).square().sum(dim=-1) * distance_multiplier
-                    # The coarse cut contains intermediate nodes from the upper tree and leaf nodes, with some leaf nodes containing SPTs
-                    coarse_cut = gaussians.cut_hierarchy_on_condition(gaussians.upper_tree_nodes, LOD_detail_cut, return_upper_tree=False, root_node=0, leave_out_of_cut_condition=frustum_cull)
+                        # Or just load the first one, whatever
+                        SPT_indices[0] = torch.zeros(1, dtype=torch.int32, device='cuda')
+                    SPT_distances = torch.zeros(1, dtype=torch.int32, device='cuda')
+                    SPT_distances[0] = 100000
+                    print("No SPT in image")
+                    clock()
+                    continue
+                ### Band Aid Fix
+                upper_tree_nodes_to_render = gaussians.upper_tree_nodes[coarse_cut][gaussians.upper_tree_nodes[coarse_cut, 3] <= 0, 5]
 
-                    if Use_Occlusion_Culling:
-                        bg_color = [0, 0, 0]
-                        background = torch.tensor(bg_color, dtype=torch.float32, device="cuda")
-                        temp = len(coarse_cut)
-                        occlusion_indices = gaussians.upper_tree_nodes[coarse_cut, 5]
-                        occlusion_mask = occlusion_cull(occlusion_indices.to(Storage_Device), gaussians, viewpoint_cam, pipe, background).cuda()
-                        coarse_cut = coarse_cut[occlusion_mask]
-                        print(f"Occlusion Cull {temp - len(coarse_cut)} out of {temp} upper tree gaussians")
-                        
-                    # leaf nodes have 0 children
-                    cut_leaf_nodes = coarse_cut[gaussians.upper_tree_nodes[coarse_cut, 2] == 0]
-                    # separate the cut into leafs that contain an SPT and those that don't
-                    # The SPT indices are the child indices of those nodes that have a 0 child count
-                    SPT_indices = gaussians.upper_tree_nodes[cut_leaf_nodes][gaussians.upper_tree_nodes[cut_leaf_nodes, 3] >= 0, 3]
-                    
-                    
-                    ### Band Aid Fix
-                    if len(SPT_indices) == 0:
-                        # Just load whatever is already in memory
-                        SPT_indices = torch.zeros(1, dtype=torch.int32, device='cuda')
-                        if prev_SPT_indices.size(0) > 0:
-                            SPT_indices[0] = prev_SPT_indices[-1]
-                        else:
-                            # Or just load the first one, whatever
-                            SPT_indices[0] = torch.zeros(1, dtype=torch.int32, device='cuda')
-                        SPT_distances = torch.zeros(1, dtype=torch.int32, device='cuda')
-                        SPT_distances[0] = 100000
-                        print("No SPT in image")
-                        clock()
-                        continue
-                    ### Band Aid Fix
-                    upper_tree_nodes_to_render = gaussians.upper_tree_nodes[coarse_cut][gaussians.upper_tree_nodes[coarse_cut, 3] <= 0, 5]
+                SPT_upper_tree_indices = cut_leaf_nodes[gaussians.upper_tree_nodes[cut_leaf_nodes, 3] >= 0]
+                
+                SPT_distances = (gaussians.upper_tree_xyz[SPT_upper_tree_indices] - camera_position).pow(2).sum(1).sqrt() * distance_multiplier
 
-                    SPT_upper_tree_indices = cut_leaf_nodes[gaussians.upper_tree_nodes[cut_leaf_nodes, 3] >= 0]
-                    
-                    SPT_distances = (gaussians.upper_tree_xyz[SPT_upper_tree_indices] - camera_position).pow(2).sum(1).sqrt() * distance_multiplier
+                
+                prev_to_new_SPT_order = torch.searchsorted(SPT_indices, prev_SPT_indices)
+                
+                equal_SPT_cache_mask = (prev_to_new_SPT_order < len(SPT_indices)) & (SPT_indices[prev_to_new_SPT_order.clamp_max(len(SPT_indices)-1)] == prev_SPT_indices)
+                prev_equal_SPT_cache_indices = torch.nonzero(equal_SPT_cache_mask, as_tuple=True)[0]
+                equal_SPT_cache_indices = prev_to_new_SPT_order[equal_SPT_cache_mask]
 
-                    
-                    prev_to_new_SPT_order = torch.searchsorted(SPT_indices, prev_SPT_indices)
-                    
-                    equal_SPT_cache_mask = (prev_to_new_SPT_order < len(SPT_indices)) & (SPT_indices[prev_to_new_SPT_order.clamp_max(len(SPT_indices)-1)] == prev_SPT_indices)
-                    prev_equal_SPT_cache_indices = torch.nonzero(equal_SPT_cache_mask, as_tuple=True)[0]
-                    equal_SPT_cache_indices = prev_to_new_SPT_order[equal_SPT_cache_mask]
-
-                    prev_distances_compare = prev_SPT_distances[prev_equal_SPT_cache_indices]
-                    distances_compare = SPT_distances[equal_SPT_cache_indices]
-                    #close_enough = torch.isclose(distances_compare, prev_distances_compare, rtol=Reuse_SPT_Tolerarance, atol=0.05)
+                prev_distances_compare = prev_SPT_distances[prev_equal_SPT_cache_indices]
+                distances_compare = SPT_distances[equal_SPT_cache_indices]
+                #close_enough = torch.isclose(distances_compare, prev_distances_compare, rtol=Reuse_SPT_Tolerarance, atol=0.05)
+                if Cache_SPTs:
                     close_enough = (prev_distances_compare/distances_compare) > (1.0/  Reuse_SPT_Tolerance_Closer) #0.3
                     close_enough &= (prev_distances_compare/distances_compare) < Reuse_SPT_Tolerance_Farther #0.5
-                    reuse_SPT_indices = SPT_indices[equal_SPT_cache_indices[close_enough]]
+                else:
+                    close_enough = torch.zeros(len(prev_distances_compare), dtype=torch.bool, device='cuda')
+                
+                reuse_SPT_indices = SPT_indices[equal_SPT_cache_indices[close_enough]]
 
 
-                    prev_keep_SPT_cache_indices = prev_equal_SPT_cache_indices[close_enough]
+                prev_keep_SPT_cache_indices = prev_equal_SPT_cache_indices[close_enough]
 
-                    # Keep all the gaussians that are contained in an STP that is reused and close enough
-                    # Cumulative Sum Trick
-                    reuse_gaussians_mask = torch.zeros(len(gaussian_indices)+1, dtype=torch.int32, device='cuda')
-                    debug_x = prev_SPT_starts[prev_keep_SPT_cache_indices]
-                    if len(debug_x) > 0:
-                        if torch.max(debug_x, 0)[0].item() > len(reuse_gaussians_mask):
-                            print("Debug X is bigger than reuse_gaussians_mask")
-                        if torch.min(debug_x, 0)[0].item() < 0:
-                            print("Debug X is less than 0")
-                    reuse_gaussians_mask[debug_x] += 1
-                    debug_y = prev_SPT_starts[prev_keep_SPT_cache_indices+1]
-                    reuse_gaussians_mask[debug_y] -= 1
-                    reuse_gaussians_mask = reuse_gaussians_mask.cumsum(0)[:-1].bool()
-                    
-                    # Keep Skybox
-                    #keep_gaussians_mask[:gaussians.skybox_points] = True
+                # Keep all the gaussians that are contained in an STP that is reused and close enough
+                # Cumulative Sum Trick
+                reuse_gaussians_mask = torch.zeros(len(gaussian_indices)+1, dtype=torch.int32, device='cuda')
+                debug_x = prev_SPT_starts[prev_keep_SPT_cache_indices]
+                if len(debug_x) > 0:
+                    if torch.max(debug_x, 0)[0].item() > len(reuse_gaussians_mask):
+                        print("Debug X is bigger than reuse_gaussians_mask")
+                    if torch.min(debug_x, 0)[0].item() < 0:
+                        print("Debug X is less than 0")
+                reuse_gaussians_mask[debug_x] += 1
+                debug_y = prev_SPT_starts[prev_keep_SPT_cache_indices+1]
+                reuse_gaussians_mask[debug_y] -= 1
+                reuse_gaussians_mask = reuse_gaussians_mask.cumsum(0)[:-1].bool()
+                
+                # Keep Skybox
+                #keep_gaussians_mask[:gaussians.skybox_points] = True
 
-                    #mask = torch.isin(SPT_indices, keep_SPT_indices)
-                    
-                    load_SPT_mask = torch.zeros(len(SPT_indices), device='cuda', dtype=torch.bool)
-                    load_SPT_mask.scatter_(0, equal_SPT_cache_indices[close_enough].to(torch.int64), True)      
-                    load_SPT_mask = ~load_SPT_mask                  
-                    load_SPT_indices = SPT_indices[load_SPT_mask]
-                    load_SPT_distances = SPT_distances[load_SPT_mask]
+                #mask = torch.isin(SPT_indices, keep_SPT_indices)
+                
+                load_SPT_mask = torch.zeros(len(SPT_indices), device='cuda', dtype=torch.bool)
+                load_SPT_mask.scatter_(0, equal_SPT_cache_indices[close_enough].to(torch.int64), True)      
+                load_SPT_mask = ~load_SPT_mask                  
+                load_SPT_indices = SPT_indices[load_SPT_mask]
+                load_SPT_distances = SPT_distances[load_SPT_mask]
 
-                    if len(load_SPT_indices) > 0:
-                        #LOAD SPT CUT
-                        #load_SPT_distances = torch.full((len(load_SPT_indices),), 10000.0).cuda()
-                        load_SPT_gaussian_indices, load_SPT_starts = get_spt_cut_cuda(len(load_SPT_indices), gaussians.SPT_gaussian_indices, gaussians.SPT_starts, gaussians.SPT_max, gaussians.SPT_min, load_SPT_indices, load_SPT_distances)
-                    else:
-                        print("No SPTs loaded")
-                        load_SPT_gaussian_indices, load_SPT_starts = torch.empty(0, dtype=torch.int32, device='cuda'), torch.empty(0, dtype=torch.int32, device='cuda')
-                    #SPT_counts += gaussians.skybox_points
+                if len(load_SPT_indices) > 0:
+                    #LOAD SPT CUT
+                    #load_SPT_distances = torch.full((len(load_SPT_indices),), 10000.0).cuda()
+                    load_SPT_gaussian_indices, load_SPT_starts = get_spt_cut_cuda(len(load_SPT_indices), gaussians.SPT_gaussian_indices, gaussians.SPT_starts, gaussians.SPT_max, gaussians.SPT_min, load_SPT_indices, load_SPT_distances)
+                else:
+                    print("No SPTs loaded")
+                    load_SPT_gaussian_indices, load_SPT_starts = torch.empty(0, dtype=torch.int32, device='cuda'), torch.empty(0, dtype=torch.int32, device='cuda')
+                #SPT_counts += gaussians.skybox_points
+                
+                ### BAND AID FIX
+                difference = load_SPT_starts[1:] - load_SPT_starts[:-1]
+                empty_SPTs = torch.where(difference == 0)[0]
+                if len(empty_SPTs) > 0:
+                    print(f"Empty SPTs {empty_SPTs} encountered")
+                    mask = torch.ones(len(load_SPT_starts), dtype=torch.bool, device='cuda')
+                    mask.scatter_(0, empty_SPTs, False)
+                    load_SPT_starts = load_SPT_starts[mask]
+                    load_SPT_distances = load_SPT_distances[mask]
+                    load_SPT_indices = load_SPT_indices[mask]
+                if len(load_SPT_starts) > 0:    
+                    if len(load_SPT_gaussian_indices) == load_SPT_starts[-1]:
+                        print("Last SPT empty")
+                        load_SPT_starts = load_SPT_starts[:-1]
+                        load_SPT_distances = load_SPT_distances[:-1]
+                        load_SPT_indices = load_SPT_indices[:-1]
                     
-                    ### BAND AID FIX
-                    difference = load_SPT_starts[1:] - load_SPT_starts[:-1]
-                    empty_SPTs = torch.where(difference == 0)[0]
-                    if len(empty_SPTs) > 0:
-                        print(f"Empty SPTs {empty_SPTs} encountered")
-                        mask = torch.ones(len(load_SPT_starts), dtype=torch.bool, device='cuda')
-                        mask.scatter_(0, empty_SPTs, False)
-                        load_SPT_starts = load_SPT_starts[mask]
-                        load_SPT_distances = load_SPT_distances[mask]
-                        load_SPT_indices = load_SPT_indices[mask]
-                    if len(load_SPT_starts) > 0:    
-                        if len(load_SPT_gaussian_indices) == load_SPT_starts[-1]:
-                            print("Last SPT empty")
-                            load_SPT_starts = load_SPT_starts[:-1]
-                            load_SPT_distances = load_SPT_distances[:-1]
-                            load_SPT_indices = load_SPT_indices[:-1]
-                        
-                    ### BAND AID FIX
-                    
-                    assert(len(load_SPT_starts.unique()) == len(load_SPT_starts))
-                    cache_SPT_cache_indices = torch.where(~equal_SPT_cache_mask)[0]    
-                    cache_SPT_indices = prev_SPT_indices[cache_SPT_cache_indices]
-                    SPT_indices = torch.cat((load_SPT_indices, reuse_SPT_indices, cache_SPT_indices))
-                    
+                ### BAND AID FIX
+                
+                assert(len(load_SPT_starts.unique()) == len(load_SPT_starts))
+                cache_SPT_cache_indices = torch.where(~equal_SPT_cache_mask)[0]    
+                cache_SPT_indices = prev_SPT_indices[cache_SPT_cache_indices]
+                SPT_indices = torch.cat((load_SPT_indices, reuse_SPT_indices, cache_SPT_indices))
+                
 
-                    SPT_starts_new = torch.zeros(len(load_SPT_indices) + len(reuse_SPT_indices) + len(cache_SPT_indices) + 1,dtype=torch.int32, device='cuda')
-                    # compact the prefix sum of SPT_counts
-                    
-                    SPT_starts_new[:len(load_SPT_starts)] = load_SPT_starts + gaussians.skybox_points
-                    SPT_starts_new[len(load_SPT_starts)] = len(load_SPT_gaussian_indices) + gaussians.skybox_points
-                    #prefix = len(cut_SPTs) + gaussians.skybox_points
-                    #for index, i in enumerate(SPT_keep_counts_indices):
-                    #    SPT_counts_new[index + len(SPT_counts)] = prefix
+                SPT_starts_new = torch.zeros(len(load_SPT_indices) + len(reuse_SPT_indices) + len(cache_SPT_indices) + 1,dtype=torch.int32, device='cuda')
+                # compact the prefix sum of SPT_counts
+                
+                SPT_starts_new[:len(load_SPT_starts)] = load_SPT_starts + gaussians.skybox_points
+                SPT_starts_new[len(load_SPT_starts)] = len(load_SPT_gaussian_indices) + gaussians.skybox_points
+                #prefix = len(cut_SPTs) + gaussians.skybox_points
+                #for index, i in enumerate(SPT_keep_counts_indices):
+                #    SPT_counts_new[index + len(SPT_counts)] = prefix
+                #    prefix += (prev_SPT_counts[i+1] - prev_SPT_counts[i]).item()
+                
+                sizes = prev_SPT_starts[prev_keep_SPT_cache_indices + 1] - prev_SPT_starts[prev_keep_SPT_cache_indices]
+                SPT_starts_new[len(load_SPT_starts) + 1:len(load_SPT_starts) + 1 + len(sizes)] = torch.cumsum(sizes, dim=0) +  len(load_SPT_gaussian_indices) + gaussians.skybox_points
+
+                number_of_gaussians_to_render = SPT_starts_new[len(load_SPT_starts) + len(sizes)]
+                
+                if len(cache_SPT_indices) > 0:
+                    sizes = prev_SPT_starts[cache_SPT_cache_indices + 1] - prev_SPT_starts[cache_SPT_cache_indices]
+                    SPT_starts_new[-len(sizes):] = torch.cumsum(sizes, dim=0) + number_of_gaussians_to_render
+                    #for index, i in enumerate(NEW_SPT_keep_cache_counts):
+                    #    SPT_counts_new[index + len(SPT_counts) + len(SPT_keep_counts_indices)] = prefix
                     #    prefix += (prev_SPT_counts[i+1] - prev_SPT_counts[i]).item()
-                    
-                    sizes = prev_SPT_starts[prev_keep_SPT_cache_indices + 1] - prev_SPT_starts[prev_keep_SPT_cache_indices]
-                    SPT_starts_new[len(load_SPT_starts) + 1:len(load_SPT_starts) + 1 + len(sizes)] = torch.cumsum(sizes, dim=0) +  len(load_SPT_gaussian_indices) + gaussians.skybox_points
+                else:
+                    print("No cached SPTs")
+                
+                assert(len(SPT_starts_new.unique()) == len(SPT_starts_new))
+                SPT_distances = torch.cat((load_SPT_distances, prev_SPT_distances[prev_keep_SPT_cache_indices], prev_SPT_distances[cache_SPT_cache_indices]))
 
-                    number_of_gaussians_to_render = SPT_starts_new[len(load_SPT_starts) + len(sizes)]
-                    
-                    if len(cache_SPT_indices) > 0:
-                        sizes = prev_SPT_starts[cache_SPT_cache_indices + 1] - prev_SPT_starts[cache_SPT_cache_indices]
-                        SPT_starts_new[-len(sizes):] = torch.cumsum(sizes, dim=0) + number_of_gaussians_to_render
-                        #for index, i in enumerate(NEW_SPT_keep_cache_counts):
-                        #    SPT_counts_new[index + len(SPT_counts) + len(SPT_keep_counts_indices)] = prefix
-                        #    prefix += (prev_SPT_counts[i+1] - prev_SPT_counts[i]).item()
-                    else:
-                        print("No cached SPTs")
-                    
-                    assert(len(SPT_starts_new.unique()) == len(SPT_starts_new))
-                    SPT_distances = torch.cat((load_SPT_distances, prev_SPT_distances[prev_keep_SPT_cache_indices], prev_SPT_distances[cache_SPT_cache_indices]))
-
-                    load_from_disk_indices = torch.cat((upper_tree_nodes_to_render, load_SPT_gaussian_indices))
+                load_from_disk_indices = torch.cat((upper_tree_nodes_to_render, load_SPT_gaussian_indices))
+                
+                
+                # We need to cache all SPTs that are not in NEW_wrong_distance_SPT_indices
+                
+                #NEW_cache_mask = torch.zeros(len(render_indices), dtype=torch.bool, device='cuda')
+                #for i in NEW_SPT_keep_cache_counts:
+                #    NEW_cache_mask[prev_SPT_counts[i]:prev_SPT_counts[i+1]] = True
                     
                     
-                    # We need to cache all SPTs that are not in NEW_wrong_distance_SPT_indices
-                    
-                    #NEW_cache_mask = torch.zeros(len(render_indices), dtype=torch.bool, device='cuda')
-                    #for i in NEW_SPT_keep_cache_counts:
-                    #    NEW_cache_mask[prev_SPT_counts[i]:prev_SPT_counts[i+1]] = True
-                        
-                        
-                    # Cumulative Sum Trick
-                    cache_gaussians_mask = torch.zeros(len(gaussian_indices)+1, dtype=torch.int32, device='cuda')
-                    debug_x = prev_SPT_starts[cache_SPT_cache_indices]
-                    if len(debug_x) > 0:
-                        if torch.max(debug_x, 0)[0].item() > len(reuse_gaussians_mask):
-                            print("Debug X is bigger than reuse_gaussians_mask")
-                        if torch.min(debug_x, 0)[0].item() < 0:
-                            print("Debug X is less than 0")
-                    cache_gaussians_mask[debug_x] += 1
-                    debug_y = prev_SPT_starts[cache_SPT_cache_indices+1]
-                    cache_gaussians_mask[debug_y] -= 1
-                    cache_gaussians_mask = cache_gaussians_mask.cumsum(0)[:-1].bool()
-                    
-                    #NEW_prev_SPT_cache_age = NEW_SPT_cache_age
-                    #NEW_prev_cache_SPT_indices = prev_SPT_indices[-len(NEW_SPT_cache_age):] if len(NEW_SPT_cache_age) else torch.empty(0, dtype=torch.int32, device='cuda')
-                    #
-                    #mask = torch.isin(NEW_cache_SPT_indices, NEW_prev_cache_SPT_indices)
-                    #id2_filtered = NEW_cache_SPT_indices[mask]
+                # Cumulative Sum Trick
+                cache_gaussians_mask = torch.zeros(len(gaussian_indices)+1, dtype=torch.int32, device='cuda')
+                debug_x = prev_SPT_starts[cache_SPT_cache_indices]
+                if len(debug_x) > 0:
+                    if torch.max(debug_x, 0)[0].item() > len(reuse_gaussians_mask):
+                        print("Debug X is bigger than reuse_gaussians_mask")
+                    if torch.min(debug_x, 0)[0].item() < 0:
+                        print("Debug X is less than 0")
+                cache_gaussians_mask[debug_x] += 1
+                debug_y = prev_SPT_starts[cache_SPT_cache_indices+1]
+                cache_gaussians_mask[debug_y] -= 1
+                cache_gaussians_mask = cache_gaussians_mask.cumsum(0)[:-1].bool()
+                
+                #NEW_prev_SPT_cache_age = NEW_SPT_cache_age
+                #NEW_prev_cache_SPT_indices = prev_SPT_indices[-len(NEW_SPT_cache_age):] if len(NEW_SPT_cache_age) else torch.empty(0, dtype=torch.int32, device='cuda')
+                #
+                #mask = torch.isin(NEW_cache_SPT_indices, NEW_prev_cache_SPT_indices)
+                #id2_filtered = NEW_cache_SPT_indices[mask]
 #
-                    ## For each element in id2_filtered, find the index in id
-                    ## This assumes ids are unique in `id`
-                    #id_sorted, sorted_idx = NEW_prev_cache_SPT_indices.sort()
-                    #pos = torch.searchsorted(id_sorted, id2_filtered)
+                ## For each element in id2_filtered, find the index in id
+                ## This assumes ids are unique in `id`
+                #id_sorted, sorted_idx = NEW_prev_cache_SPT_indices.sort()
+                #pos = torch.searchsorted(id_sorted, id2_filtered)
 #
-                    ## Check if the found positions actually match the id2_filtered values
-                    #matched = id_sorted[pos] == id2_filtered
-                    #valid_pos = pos[matched]
+                ## Check if the found positions actually match the id2_filtered values
+                #matched = id_sorted[pos] == id2_filtered
+                #valid_pos = pos[matched]
 #
-                    ## Get the final ages using valid positions in original age tensor
-                    ## sorted_idx maps sorted positions back to original indices
-                    #final_indices = sorted_idx[valid_pos]
-                    #matched_ages = NEW_prev_SPT_cache_age[final_indices]
+                ## Get the final ages using valid positions in original age tensor
+                ## sorted_idx maps sorted positions back to original indices
+                #final_indices = sorted_idx[valid_pos]
+                #matched_ages = NEW_prev_SPT_cache_age[final_indices]
 #
-                    #
-                    #NEW_SPT_cache_age = torch.zeros(len(NEW_cache_SPT_indices), dtype=torch.int32, device='cuda') 
-                    #NEW_SPT_cache_age[mask] = matched_ages
-                    #NEW_SPT_cache_age += 1
+                #
+                #NEW_SPT_cache_age = torch.zeros(len(NEW_cache_SPT_indices), dtype=torch.int32, device='cuda') 
+                #NEW_SPT_cache_age[mask] = matched_ages
+                #NEW_SPT_cache_age += 1
+                
+                if iteration % Clear_Cache_Iterations == 0:
+                    temp1 = Cache_Size
+                    temp2 = Cache_Size_After_Reduction
+                    Cache_Size = 0
+                    Cache_Size_After_Reduction = 0
+                if len(gaussian_indices) > Cache_Size:
+                    print("Cache Size Exceeded")
+                    # write back the last few SPTs that have the highest age
+                    to_reduce = len(gaussian_indices) - Cache_Size_After_Reduction
+                    reduced = 0
+                    i = 0
+                    SPTs_to_write_back = []
+                    while(reduced < to_reduce and i < len(cache_SPT_indices)):
+                        i += 1
+                        SPTs_to_write_back.append(cache_SPT_indices[-i])
+                        reduced += SPT_starts_new[-i] - SPT_starts_new[-(i+1)]
+                    if i >= len(SPT_indices)-1:
+                        print("Not enough SPTs to write back")
+                        i -= 1
+                    SPTs_to_write_back = torch.tensor(SPTs_to_write_back, device='cuda')
+                    for index in SPTs_to_write_back:
+                        prev_index = (prev_SPT_indices == index).nonzero(as_tuple=True)[0].item()
+                        cache_gaussians_mask[prev_SPT_starts[prev_index] : prev_SPT_starts[prev_index+1]] = False
                     
-                    
-                    if len(gaussian_indices) > Cache_Size:
-                        print("Cache Size Exceeded")
-                        # write back the last few SPTs that have the highest age
-                        to_reduce = len(gaussian_indices) - Cache_Size_After_Reduction
-                        reduced = 0
-                        i = 0
-                        SPTs_to_write_back = []
-                        while(reduced < to_reduce and i < len(cache_SPT_indices)):
-                            i += 1
-                            SPTs_to_write_back.append(cache_SPT_indices[-i])
-                            reduced += SPT_starts_new[-i] - SPT_starts_new[-(i+1)]
-                        if i >= len(SPT_indices)-1:
-                            print("Not enough SPTs to write back")
-                            i -= 1
-                        SPTs_to_write_back = torch.tensor(SPTs_to_write_back, device='cuda')
-                        for index in SPTs_to_write_back:
-                            prev_index = (prev_SPT_indices == index).nonzero(as_tuple=True)[0].item()
-                            cache_gaussians_mask[prev_SPT_starts[prev_index] : prev_SPT_starts[prev_index+1]] = False
-                            
+                    if i > 0:
                         SPT_starts_new = SPT_starts_new[:-i]
                         SPT_distances = SPT_distances[:-i]
                         SPT_indices = SPT_indices[:-i]
-                    
-                    #if iteration % 1000 == 0:
-                    #    cache_gaussians_mask = torch.zeros(len(gaussian_indices), dtype=torch.bool, device='cuda')
-                    #    number_cached_SPTs = len(cache_SPT_indices)
-                        
-
-                    write_back_mask = torch.logical_and(~reuse_gaussians_mask, ~cache_gaussians_mask)
-                    #dont write back the skybox
-                    write_back_mask[:gaussians.skybox_points] = False
-                    write_back_indices = gaussian_indices[write_back_mask].detach().to(Storage_Device)
-
-                    
-                    gaussian_indices = torch.cat((gaussian_indices[:gaussians.skybox_points], load_from_disk_indices, gaussian_indices[reuse_gaussians_mask], gaussian_indices[cache_gaussians_mask]))
-                    #print(f"Load Percent: {len(load_from_disk_indices) * 100/ number_of_gaussians_to_render}")
-                    load_from_disk_indices = load_from_disk_indices.to(Storage_Device)
-                    SPT_starts_new += len(upper_tree_nodes_to_render)
-                    
-                    assert(SPT_starts_new[-1] == len(gaussian_indices))
-                    number_to_render = len(gaussian_indices)
-                        
-                        
-                    hierarchy_cut_time = clock()
-                    clock()
-                    
-                    # not sure why this is needed
-                    #with torch.no_grad():
-                    # Write back the training results
-                    #stream = torch.cuda.Stream()
-
-                    #with torch.cuda.stream(stream):
-                    means3D_full = torch.cat((means3D, means3D_cache)).detach()
-                    opacity_full = torch.cat((opacity, opacity_cache)).detach()
-                    scales_full = torch.cat((scales, scales_cache)).detach()
-                    rotations_full = torch.cat((rotations, rotations_cache)).detach()
-                    features_dc_full = torch.cat((features_dc, features_dc_cache)).detach()
-                    features_rest_full = torch.cat((features_rest, features_rest_cache)).detach()
-                    
-                    
-                    write_back_tensors = [means3D_full[write_back_mask],  scales_full[write_back_mask], rotations_full[write_back_mask], features_dc_full[write_back_mask].squeeze(1), opacity_full[write_back_mask], features_rest_full[write_back_mask].reshape(len(write_back_indices), SH_properties)]
-                    for index in range(6):
-                        if index == 5:
-                            write_back_tensors.append(parameters[index]["exp_avgs"][write_back_mask].reshape(len(write_back_indices), SH_properties))
-                        elif index == 3:
-                            write_back_tensors.append(parameters[index]["exp_avgs"][write_back_mask].squeeze(1))
-                        else:
-                            write_back_tensors.append(parameters[index]["exp_avgs"][write_back_mask])
-                    for index in range(6):
-                        if index == 5:
-                            write_back_tensors.append(parameters[index]["exp_avgs_sqs"][write_back_mask].reshape(len(write_back_indices), SH_properties))
-                        elif index ==3:
-                            write_back_tensors.append(parameters[index]["exp_avgs_sqs"][write_back_mask].squeeze(1))
-                        else:
-                            write_back_tensors.append(parameters[index]["exp_avgs_sqs"][write_back_mask])
-                    
-                    gaussians.properties[write_back_indices, :] = torch.cat((write_back_tensors), dim=1).cpu() 
+                if iteration % Clear_Cache_Iterations == 0:
+                    Cache_Size = temp1
+                    Cache_Size_After_Reduction = temp2
+                #if iteration % 1000 == 0:
+                #    cache_gaussians_mask = torch.zeros(len(gaussian_indices), dtype=torch.bool, device='cuda')
+                #    number_cached_SPTs = len(cache_SPT_indices)
                     
 
-                    full_mask = torch.cat((torch.where(reuse_gaussians_mask)[0], torch.where(cache_gaussians_mask)[0]))
-                    
-                    if densify_radii:
-                        densification_radii_full = torch.cat((densification_radii, densification_radii_cache)).detach()
-                        gaussians._densification_radii[write_back_indices] = densification_radii_full[write_back_mask].to(Storage_Device, non_blocking=non_blocking)
-                        densification_radii = torch.cat((densification_radii[:gaussians.skybox_points], gaussians._densification_radii[load_from_disk_indices].cuda(non_blocking=non_blocking), densification_radii_full[reuse_gaussians_mask])).detach()
-                        densification_radii_cache = densification_radii_full[cache_gaussians_mask]
-                    #means3D = means3D[keep_gaussians_mask].detach()
-                    #opacity = opacity[keep_gaussians_mask].detach()
-                    #scales = scales[keep_gaussians_mask].detach()
-                    #rotations = rotations[keep_gaussians_mask].detach()
-                    #features_dc = features_dc[keep_gaussians_mask].detach()
-                    #features_rest = features_rest[keep_gaussians_mask].detach()
-                    torch.cuda.empty_cache()
-                    #stream = torch.cuda.Stream()
+                write_back_mask = torch.logical_and(~reuse_gaussians_mask, ~cache_gaussians_mask)
+                #dont write back the skybox
+                write_back_mask[:gaussians.skybox_points] = False
+                write_back_indices = gaussian_indices[write_back_mask].detach().to(Storage_Device)
 
-                    #with torch.cuda.stream(stream):
+                
+                gaussian_indices = torch.cat((gaussian_indices[:gaussians.skybox_points], load_from_disk_indices, gaussian_indices[reuse_gaussians_mask], gaussian_indices[cache_gaussians_mask]))
+                #print(f"Load Percent: {len(load_from_disk_indices) * 100/ number_of_gaussians_to_render}")
+                load_from_disk_indices = load_from_disk_indices.to(Storage_Device)
+                SPT_starts_new += len(upper_tree_nodes_to_render)
+                
+                assert(SPT_starts_new[-1] == len(gaussian_indices))
+                number_to_render = len(gaussian_indices)
                     
-                    load_tensor = gaussians.properties[load_from_disk_indices, :].cuda(non_blocking=non_blocking)
                     
-                    
-                    means3D = nn.Parameter(torch.cat((means3D[:gaussians.skybox_points], load_tensor[:, xyz1:xyz2].cuda(non_blocking=non_blocking), means3D_full[reuse_gaussians_mask])).contiguous())
-                    scales = nn.Parameter(torch.cat((scales[:gaussians.skybox_points], load_tensor[:, scales1:scales2].cuda(non_blocking=non_blocking), scales_full[reuse_gaussians_mask])).contiguous())
-                    rotations = nn.Parameter(torch.cat((rotations[:gaussians.skybox_points], load_tensor[:, rotation1:rotation2].cuda(non_blocking=non_blocking), rotations_full[reuse_gaussians_mask])).contiguous())
-                    # TODO: ABS?
-                    features_dc = nn.Parameter(torch.cat((features_dc[:gaussians.skybox_points], load_tensor[:, features1:features2].cuda(non_blocking=non_blocking).unsqueeze(1), features_dc_full[reuse_gaussians_mask])).contiguous())
-                    opacity = nn.Parameter(torch.cat((opacity[:gaussians.skybox_points], load_tensor[:, opacity1].cuda(non_blocking=non_blocking).unsqueeze(1), opacity_full[reuse_gaussians_mask])).contiguous())
+                hierarchy_cut_time = clock()
+                clock()
+                
+                # not sure why this is needed
+                #with torch.no_grad():
+                # Write back the training results
+                #stream = torch.cuda.Stream()
 
-                    features_rest = nn.Parameter(torch.cat((features_rest[:gaussians.skybox_points], load_tensor[:, features_rest1:features_rest2].cuda(non_blocking=non_blocking).reshape(len(load_tensor), 3, SH_properties_single), features_rest_full[reuse_gaussians_mask])).contiguous())
+                #with torch.cuda.stream(stream):
+                means3D_full = torch.cat((means3D, means3D_cache)).detach()
+                opacity_full = torch.cat((opacity, opacity_cache)).detach()
+                scales_full = torch.cat((scales, scales_cache)).detach()
+                rotations_full = torch.cat((rotations, rotations_cache)).detach()
+                features_dc_full = torch.cat((features_dc, features_dc_cache)).detach()
+                features_rest_full = torch.cat((features_rest, features_rest_cache)).detach()
+                
+                
+                write_back_tensors = [means3D_full[write_back_mask],  scales_full[write_back_mask], rotations_full[write_back_mask], features_dc_full[write_back_mask].squeeze(1), opacity_full[write_back_mask], features_rest_full[write_back_mask].reshape(len(write_back_indices), SH_properties)]
+                for index in range(6):
+                    if index == 5:
+                        write_back_tensors.append(parameters[index]["exp_avgs"][write_back_mask].reshape(len(write_back_indices), SH_properties))
+                    elif index == 3:
+                        write_back_tensors.append(parameters[index]["exp_avgs"][write_back_mask].squeeze(1))
+                    else:
+                        write_back_tensors.append(parameters[index]["exp_avgs"][write_back_mask])
+                for index in range(6):
+                    if index == 5:
+                        write_back_tensors.append(parameters[index]["exp_avgs_sqs"][write_back_mask].reshape(len(write_back_indices), SH_properties))
+                    elif index ==3:
+                        write_back_tensors.append(parameters[index]["exp_avgs_sqs"][write_back_mask].squeeze(1))
+                    else:
+                        write_back_tensors.append(parameters[index]["exp_avgs_sqs"][write_back_mask])
+                
+                gaussians.properties[write_back_indices, :] = torch.cat((write_back_tensors), dim=1).cpu() 
+                
+
+                full_mask = torch.cat((torch.where(reuse_gaussians_mask)[0], torch.where(cache_gaussians_mask)[0]))
+                
+                if densify_radii:
+                    densification_radii_full = torch.cat((densification_radii, densification_radii_cache)).detach()
+                    gaussians._densification_radii[write_back_indices] = densification_radii_full[write_back_mask].to(Storage_Device, non_blocking=non_blocking)
+                    densification_radii = torch.cat((densification_radii[:gaussians.skybox_points], gaussians._densification_radii[load_from_disk_indices].cuda(non_blocking=non_blocking), densification_radii_full[reuse_gaussians_mask])).detach()
+                    densification_radii_cache = densification_radii_full[cache_gaussians_mask]
+                #means3D = means3D[keep_gaussians_mask].detach()
+                #opacity = opacity[keep_gaussians_mask].detach()
+                #scales = scales[keep_gaussians_mask].detach()
+                #rotations = rotations[keep_gaussians_mask].detach()
+                #features_dc = features_dc[keep_gaussians_mask].detach()
+                #features_rest = features_rest[keep_gaussians_mask].detach()
+                torch.cuda.empty_cache()
+                #stream = torch.cuda.Stream()
+
+                #with torch.cuda.stream(stream):
+                
+                load_tensor = gaussians.properties[load_from_disk_indices, :].cuda(non_blocking=non_blocking)
+                
+                
+                means3D = nn.Parameter(torch.cat((means3D[:gaussians.skybox_points], load_tensor[:, xyz1:xyz2].cuda(non_blocking=non_blocking), means3D_full[reuse_gaussians_mask])).contiguous())
+                scales = nn.Parameter(torch.cat((scales[:gaussians.skybox_points], load_tensor[:, scales1:scales2].cuda(non_blocking=non_blocking), scales_full[reuse_gaussians_mask])).contiguous())
+                rotations = nn.Parameter(torch.cat((rotations[:gaussians.skybox_points], load_tensor[:, rotation1:rotation2].cuda(non_blocking=non_blocking), rotations_full[reuse_gaussians_mask])).contiguous())
+                # TODO: ABS?
+                features_dc = nn.Parameter(torch.cat((features_dc[:gaussians.skybox_points], load_tensor[:, features1:features2].cuda(non_blocking=non_blocking).unsqueeze(1), features_dc_full[reuse_gaussians_mask])).contiguous())
+                opacity = nn.Parameter(torch.cat((opacity[:gaussians.skybox_points], load_tensor[:, opacity1].cuda(non_blocking=non_blocking).unsqueeze(1), opacity_full[reuse_gaussians_mask])).contiguous())
+
+                features_rest = nn.Parameter(torch.cat((features_rest[:gaussians.skybox_points], load_tensor[:, features_rest1:features_rest2].cuda(non_blocking=non_blocking).reshape(len(load_tensor), SH_properties_single, 3 ), features_rest_full[reuse_gaussians_mask])).contiguous())
+                
+                means3D_cache = means3D_full[cache_gaussians_mask]
+                scales_cache = scales_full[cache_gaussians_mask]
+                rotations_cache = rotations_full[cache_gaussians_mask]
+                features_dc_cache = features_dc_full[cache_gaussians_mask]
+                opacity_cache = opacity_full[cache_gaussians_mask]
+                features_rest_cache = features_rest_full[cache_gaussians_mask]
+                
+                #shs = torch.cat((features_dc, features_rest), dim=1).contiguous()
+                
+                #render_indices_cpu = render_indices.to(Storage_Device)
+                
+                parameters_new = []
+                for index, (values, name, lr) in enumerate(zip([means3D,  scales, rotations, features_dc, opacity, features_rest], 
+                                        ["xyz", "scaling", "rotation", "f_dc", "opacity", "f_rest"],
+                                        [xyz_lr, opt.scaling_lr, opt.rotation_lr, opt.feature_lr, opt.opacity_lr, opt.feature_lr])):
+                    if index == 5:
+                        exp_avgs = torch.cat((parameters[index]["exp_avgs"][:gaussians.skybox_points], load_tensor[:, range1[index] + number_properties:range2[index] + number_properties].cuda().reshape(len(load_tensor), SH_properties_single, 3), parameters[index]["exp_avgs"][full_mask])).contiguous()
+                        exp_avgs_sqs = torch.cat((parameters[index]["exp_avgs_sqs"][:gaussians.skybox_points], load_tensor[:, range1[index] + 2*number_properties:range2[index] + 2*number_properties].cuda().reshape(len(load_tensor), SH_properties_single, 3), parameters[index]["exp_avgs_sqs"][full_mask])).contiguous()
+                    elif index == 3:                            
+                        exp_avgs = torch.cat((parameters[index]["exp_avgs"][:gaussians.skybox_points], load_tensor[:, range1[index] + number_properties:range2[index] + number_properties].cuda().unsqueeze(1), parameters[index]["exp_avgs"][full_mask])).contiguous()
+                        exp_avgs_sqs = torch.cat((parameters[index]["exp_avgs_sqs"][:gaussians.skybox_points], load_tensor[:, range1[index] + 2*number_properties:range2[index] + 2*number_properties].cuda().unsqueeze(1), parameters[index]["exp_avgs_sqs"][full_mask])).contiguous()
+                    else:
+                        exp_avgs = torch.cat((parameters[index]["exp_avgs"][:gaussians.skybox_points], load_tensor[:, range1[index] + number_properties:range2[index] + number_properties].cuda(), parameters[index]["exp_avgs"][full_mask])).contiguous()
+                        exp_avgs_sqs = torch.cat((parameters[index]["exp_avgs_sqs"][:gaussians.skybox_points], load_tensor[:, range1[index] + 2*number_properties:range2[index] + 2*number_properties].cuda(), parameters[index]["exp_avgs_sqs"][full_mask])).contiguous()
                     
-                    means3D_cache = means3D_full[cache_gaussians_mask]
-                    scales_cache = scales_full[cache_gaussians_mask]
-                    rotations_cache = rotations_full[cache_gaussians_mask]
-                    features_dc_cache = features_dc_full[cache_gaussians_mask]
-                    opacity_cache = opacity_full[cache_gaussians_mask]
-                    features_rest_cache = features_rest_full[cache_gaussians_mask]
                     
-                    #shs = torch.cat((features_dc, features_rest), dim=1).contiguous()
-                    
-                    #render_indices_cpu = render_indices.to(Storage_Device)
-                    
-                    parameters_new = []
-                    for index, (values, name, lr) in enumerate(zip([means3D,  scales, rotations, features_dc, opacity, features_rest], 
-                                            ["xyz", "scaling", "rotation", "f_dc", "opacity", "f_rest"],
-                                            [xyz_lr, opt.scaling_lr, opt.rotation_lr, opt.feature_lr, opt.opacity_lr, opt.feature_lr])):
-                        if index == 5:
-                            exp_avgs = torch.cat((parameters[index]["exp_avgs"][:gaussians.skybox_points], load_tensor[:, range1[index] + number_properties:range2[index] + number_properties].cuda().reshape(len(load_tensor), 3, SH_properties_single), parameters[index]["exp_avgs"][full_mask])).contiguous()
-                            exp_avgs_sqs = torch.cat((parameters[index]["exp_avgs_sqs"][:gaussians.skybox_points], load_tensor[:, range1[index] + 2*number_properties:range2[index] + 2*number_properties].cuda().reshape(len(load_tensor), 3,SH_properties_single), parameters[index]["exp_avgs_sqs"][full_mask])).contiguous()
-                        elif index == 3:                            
-                            exp_avgs = torch.cat((parameters[index]["exp_avgs"][:gaussians.skybox_points], load_tensor[:, range1[index] + number_properties:range2[index] + number_properties].cuda().unsqueeze(1), parameters[index]["exp_avgs"][full_mask])).contiguous()
-                            exp_avgs_sqs = torch.cat((parameters[index]["exp_avgs_sqs"][:gaussians.skybox_points], load_tensor[:, range1[index] + 2*number_properties:range2[index] + 2*number_properties].cuda().unsqueeze(1), parameters[index]["exp_avgs_sqs"][full_mask])).contiguous()
-                        else:
-                            exp_avgs = torch.cat((parameters[index]["exp_avgs"][:gaussians.skybox_points], load_tensor[:, range1[index] + number_properties:range2[index] + number_properties].cuda(), parameters[index]["exp_avgs"][full_mask])).contiguous()
-                            exp_avgs_sqs = torch.cat((parameters[index]["exp_avgs_sqs"][:gaussians.skybox_points], load_tensor[:, range1[index] + 2*number_properties:range2[index] + 2*number_properties].cuda(), parameters[index]["exp_avgs_sqs"][full_mask])).contiguous()
-                        
-                        
-                        parameters_new.append({'params': [values], 'lr': lr*lr_multiplier, "name": name, 
-                         "exp_avgs" : exp_avgs, "exp_avgs_sqs" : exp_avgs_sqs})
-                    parameters = parameters_new
-                    
-                    prev_SPT_indices = SPT_indices
-                    prev_SPT_distances = SPT_distances
-                    prev_SPT_starts = SPT_starts_new
-                    
-                    load_write_time = clock()
-                    del load_tensor
-                    del write_back_mask
-                    del reuse_gaussians_mask
-                    del write_back_indices
-                    torch.cuda.empty_cache()
-                    torch.cuda.synchronize()
+                    parameters_new.append({'params': [values], 'lr': lr*lr_multiplier, "name": name, 
+                     "exp_avgs" : exp_avgs, "exp_avgs_sqs" : exp_avgs_sqs})
+                parameters = parameters_new
+                
+                prev_SPT_indices = SPT_indices
+                prev_SPT_distances = SPT_distances
+                prev_SPT_starts = SPT_starts_new
+                
+                load_write_time = clock()
+                del load_tensor
+                del write_back_mask
+                del reuse_gaussians_mask
+                del write_back_indices
+                torch.cuda.empty_cache()
+                torch.cuda.synchronize()
                 # parent indices contains as many elements as indices
                 #interpolation_weights = torch.zeros(gaussians._xyz.size(0), dtype=torch.float32, device = gaussians._xyz.device)
                 #print(f"{number_of_gaussians_to_render} rendered out of {len(gaussian_indices)} cached")
@@ -811,7 +772,7 @@ def training(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoin
                 #else:
                 Ll1 = l1_loss(image, gt_image) 
                 loss = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * (1.0 - fused_ssim(image.unsqueeze(0), gt_image.unsqueeze(0)))
-                    
+                image_loss = loss.clone().detach()
                 #parents = gaussians.nodes[indices, 1]
                 #hierarchy_loss = 0 #torch.sum(torch.clamp_min(torch.max(torch.abs(gaussians.get_scaling[indices]), dim=-1)[0] - torch.max(torch.abs(gaussians.get_scaling[parents]), dim=-1)[0], 0)) / len(indices)
                 #loss = loss + lambda_hierarchy * hierarchy_loss
@@ -837,6 +798,7 @@ def training(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoin
                 if math.isnan(loss):
                             torchvision.utils.save_image(image, os.path.join(scene.model_path, "Error" + ".png"))
                             print("gradients collapsed :(")
+                            continue
                 #make_dot(loss).render("graph", format="png"                
                 loss.backward()
                 if math.isnan(loss):
@@ -914,14 +876,19 @@ def training(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoin
                     opacity.grad[indices] = 0
                     scales.grad[indices] = 0
                     rotations.grad[indices] = 0
+                    with torch.no_grad():
+                        opacity[opacity[indices].isnan()] = 0.1
                 # Write values for every iteration
+                writer.add_scalar('Total Loss', image_loss, iteration)
+                writer.add_scalar('Distance_To_Last_view', torch.linalg.norm(viewpoint_cam.camera_center - prev_cam_center), iteration)
+                prev_cam_center = viewpoint_cam.camera_center
                 if Write_Tensor_Board and iteration % 10 == 0:
                     writer.add_scalar('VRAM usage', torch.cuda.memory_allocated(0), iteration)
                     process = psutil.Process(pid)
                     mem_info = process.memory_info()
                     writer.add_scalar('CPU RAM usage', mem_info.rss / 1024 ** 2, iteration)
                     writer.add_scalar('Peak VRAM usage', torch.cuda.max_memory_allocated(device='cuda'), iteration)
-                    writer.add_scalar('Total Loss', loss, iteration)
+                    
                     writer.add_scalar('Opacity Loss', opacity_loss, iteration)
                     writer.add_scalar('Scaling Loss', scaling_loss, iteration)
                     writer.add_scalar('Mean Opacity', torch.mean(gaussians.opacity_activation(opacity)), iteration)
@@ -972,7 +939,7 @@ def training(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoin
 
 
                     
-                    if MCMC_Densification and opt.densify_from_iter < iteration < opt.densify_until_iter and iteration % opt.densification_interval == 0 or iteration == 5:
+                    if MCMC_Densification and opt.densify_from_iter < iteration < opt.densify_until_iter and iteration % opt.densification_interval == 0:
                         print("-----------------DENSIFY!--------------------")
                             
                         #gaussians.properties[gaussian_indices, xyz1:xyz2] = torch.cat((means3D.detach(), means3D_cache)).to(Storage_Device)
@@ -1024,14 +991,14 @@ def training(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoin
                             scales = temp[:, scales1:scales2].cuda().detach().contiguous()
                             rotations = temp[:, rotation1:rotation2].cuda().detach().contiguous()
                             features_dc = temp[:, features1:features2].cuda().detach().unsqueeze(1).contiguous()
-                            features_rest = temp[:, features_rest1:features_rest2].cuda().detach().reshape(len(temp), 3, SH_properties_single).contiguous()
+                            features_rest = temp[:, features_rest1:features_rest2].cuda().detach().reshape(len(temp), SH_properties_single, 3).contiguous()
                             
                             means3D_cache = torch.empty((0, 3), device='cuda', dtype=torch.float32)
                             opacity_cache = torch.empty((0, 1), device='cuda', dtype=torch.float32)
                             scales_cache = torch.empty((0, 3), device='cuda', dtype=torch.float32)
                             rotations_cache = torch.empty((0, 4), device='cuda', dtype=torch.float32)
                             features_dc_cache = torch.empty((0, 1, 3), device='cuda', dtype=torch.float32)
-                            features_rest_cache = torch.empty((0, 3, 3), device='cuda', dtype=torch.float32)
+                            features_rest_cache = torch.empty((0, SH_properties_single, 3), device='cuda', dtype=torch.float32)
                             del temp
                             
                         parameters = []

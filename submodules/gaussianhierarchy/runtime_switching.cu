@@ -806,7 +806,7 @@ __global__ void binary_search_SPTs(int number_of_SPTs, int* SPT_starts, float* S
 	}
 	//binary_search_indices[idx] = high;
 
-	interval_sizes[idx] = high - SPT_starts[index];
+	interval_sizes[idx] = std::max(high - SPT_starts[index]-1, 1);
 }
 
 __global__ void populate_SPT
@@ -926,7 +926,7 @@ int Switching::getSPTCut(
 	CHECK_CUDA(cudaMemcpy(&sum, &prefix_sum[number_of_SPTs-1], sizeof(int),cudaMemcpyDeviceToHost), true);
 	int addition;
 	CHECK_CUDA(cudaMemcpy(&addition, &interval_sizes[number_of_SPTs-1], sizeof(int),cudaMemcpyDeviceToHost), true);
-	sum += addition;
+	sum += addition + 1;
 	int* result;
 	CHECK_CUDA(cudaMalloc((void**)&result, sizeof(int) * sum), true);
 	num_blocks = (sum + 255) / 256;

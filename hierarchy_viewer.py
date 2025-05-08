@@ -39,7 +39,7 @@ from gaussian_hierarchy._C import  get_spt_cut_cuda
 from stp_gaussian_rasterization import ExtendedSettings
 from gaussian_renderer import occlusion_cull
 import json
-
+import pickle
 
 clock_start = True
 clock_time = time.time()
@@ -115,7 +115,8 @@ range1 = [xyz1, scales1, rotation1, features1, opacity1, features_rest1]
 range2 = [xyz2, scales2, rotation2, features2, opacity2, features_rest2]
 
 non_blocking=False
-def training(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoint_iterations, checkpoint, debug_from,  hierarchy_path):
+def render(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoint_iterations, checkpoint, debug_from,  hierarchy_path, replay=False, cam_path_id=0):
+    camera_path_id = random.randint(0, 100000) if not replay else cam_path_id
     global Reuse_SPT_Tolerarance
     global Use_Occlusion_Culling
     opt.densification_interval = densify_interval
@@ -123,33 +124,6 @@ def training(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoin
     #torch.autograd.set_detect_anomaly(True)
     
     splat_settings = ExtendedSettings.from_json('/home/felix-windisch/hierarchical-LOD-gaussians/configs/vanilla.json')
-    if WriteTensorBoard:
-        writer = SummaryWriter()
-        hyper_params = {
-            "Max_Cap": Max_Cap,
-            "Random_Hierarchy_Cut": Random_Hierarchy_Cut,
-            "Only_Noise_Visible": Only_Noise_Visible,
-            "MCMC_Densification": MCMC_Densification,
-            "Gaussian_Interpolation": Gaussian_Interpolation,
-            "Gradient_Propagation": Gradient_Propagation,
-            "Storage_Device": Storage_Device,
-            "Propagation_Strength": Propagation_Strength,
-            "lambda_hierarchy": lambda_hierarchy,
-            "SPT_Root_Volume": SPT_Root_Volume,
-            "SPT_Target_Granularity": SPT_Target_Granularity,
-            "Cache_SPTs": Cache_SPTs,
-            "Reuse_SPT_Tolerarance": Reuse_SPT_Tolerarance,
-            "MCMC_Noise_LR": MCMC_Noise_LR,
-            "Use_Bounding_Spheres": Use_Bounding_Spheres,
-            "Use_Consistency_Graph" : Use_Consistency_Graph,
-            "Use_Frustum_Culling" : Use_Frustum_Culling,
-            "Use_Occlusion_Culling" : Use_Occlusion_Culling,
-            "lambda_scaling" : lambda_scaling,
-            "lambda_opacity" : lambda_opacity,
-            "Resterizer" : Rasterizer
-        }
-        metrics = {"empty" : 0}
-        writer.add_hparams(hyper_params, metrics)
     first_iter = 0
     prepare_output_and_logger(dataset)
     gaussians = GaussianModel(dataset.sh_degree)
@@ -162,7 +136,7 @@ def training(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoin
     dataset.hierarchy = hierarchy_path
     scene = Scene(dataset, gaussians, resolution_scales = [1], create_from_hier=True)
     gaussians.skybox_points = 100000
-    base_focal_length = scene.getTrainCameras()[0].focal_length
+    base_focal_length = 1000 #TODO ????
     SPT_Target_Granularity = (1.0/base_focal_length) * Target_Granularity_Pixels
     with torch.no_grad():
         gaussians._opacity.clamp_(0, 0.99999)
@@ -225,62 +199,83 @@ def training(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoin
                                                     lr_final=opt.position_lr_final*gaussians.spatial_lr_scale,
                                                     lr_delay_mult=opt.position_lr_delay_mult,
                                                     max_steps=opt.position_lr_max_steps)
-
-
-
+    if not replay:
+        with open(f"CameraPaths/camera_path_{camera_path_id}.txt", "w") as f:
+            f.write("")
+    else: 
+        cam_path_file = open(f"CameraPaths/camera_path_{camera_path_id}.txt", "rb")
     ######## VIEWER
-    network_gui.init("127.0.0.1", 6009)
+    if not replay:
+        network_gui.init("127.0.0.1", 6009)
     while True:
-        if network_gui.conn == None:
+        if network_gui.conn == None and not replay:
             print("Try Connect")
             network_gui.try_connect()
-        while network_gui.conn != None:
+        while network_gui.conn != None or replay:
             try:
                 net_image_bytes = None
-                custom_cam, do_training, keep_alive_, scaling_modifer, slider = network_gui.receive()
-                if "distance_multiplier" in slider:
-                    distance_multiplier = slider["distance_multiplier"]
+                if not replay:
+                    custom_cam, do_training, keep_alive_, scaling_modifer, slider = network_gui.receive()
+                    if "distance_multiplier" in slider:
+                        distance_multiplier = slider["distance_multiplier"]
+                    else:
+                        distance_multiplier = 1.0
+                    if "render_SPTs" in slider:
+                        render_SPTs = slider["render_SPTs"] > 0
+                        if render_SPTs:
+                            Reuse_SPT_Tolerarance = 0.0
+                    else:
+                        render_SPTs = False
+                    if "freeze_view" in slider:    
+                        freeze_view = slider["freeze_view"] > 0
+                    else:
+                        freeze_view = False
+
+                    if "distance_color" in slider:    
+                        color_distance = slider["distance_color"] > 0
+                    else:
+                        color_distance = False
+                    if "size_color" in slider and not color_distance:    
+                        color_size = slider["size_color"] > 0
+                    else:
+                        color_size = False
+                    if "reuse_SPT_tolerance" in slider and not render_SPTs:    
+                        Reuse_SPT_Tolerarance = slider["reuse_SPT_tolerance"]
+                    if "separate_SPTs" in slider and not render_SPTs:    
+                        separate_SPTs = slider["separate_SPTs"] > 0
+                    else:
+                        separate_SPTs = False
+                    if "highlight_leaves" in slider:    
+                        highlight_leaves = slider["highlight_leaves"] > 0
+                    else:
+                        highlight_leaves = False
+                    if "show_occlusion" in slider:    
+                        show_occlusion = slider["show_occlusion"] > 0
+                        Use_Occlusion_Culling = slider["show_occlusion"] > 0
+                    else:
+                        show_occlusion = False
+                    if "record_traj" in slider:    
+                        record_trajectory = slider["record_traj"] > 0
+                    else: 
+                        record_trajectory = False
                 else:
                     distance_multiplier = 1.0
-                if "render_SPTs" in slider:
-                    render_SPTs = slider["render_SPTs"] > 0
-                    if render_SPTs:
-                        Reuse_SPT_Tolerarance = 0.0
-                else:
-                    render_SPTs = False
-                if "freeze_view" in slider:    
-                    freeze_view = slider["freeze_view"] > 0
-                else:
                     freeze_view = False
-                    
-                if "distance_color" in slider:    
-                    color_distance = slider["distance_color"] > 0
-                else:
                     color_distance = False
-                if "size_color" in slider and not color_distance:    
-                    color_size = slider["size_color"] > 0
-                else:
                     color_size = False
-                if "reuse_SPT_tolerance" in slider and not render_SPTs:    
-                    Reuse_SPT_Tolerarance = slider["reuse_SPT_tolerance"]
-                if "separate_SPTs" in slider and not render_SPTs:    
-                    separate_SPTs = slider["separate_SPTs"] > 0
-                else:
                     separate_SPTs = False
-                if "highlight_leaves" in slider:    
-                    highlight_leaves = slider["highlight_leaves"] > 0
-                else:
                     highlight_leaves = False
-                if "show_occlusion" in slider:    
-                    show_occlusion = slider["show_occlusion"] > 0
-                    Use_Occlusion_Culling = slider["show_occlusion"] > 0
-                else:
                     show_occlusion = False
-                    
-                    
+                    record_trajectory = False
+                    custom_cam =  pickle.load(cam_path_file)
                 if custom_cam != None:
                     ####### RENDER
                     viewpoint_cam = custom_cam
+                    
+                    if record_trajectory:
+                        with open(f"CameraPaths/camera_path_{camera_path_id}.txt", "ab") as f:
+                            pickle.dump(custom_cam, f)
+                    
                     viewpoint_cam.world_view_transform = viewpoint_cam.world_view_transform.cuda()
                     #viewpoint_cam.projection_matrix = viewpoint_cam.projection_matrix.cuda()
                     viewpoint_cam.full_proj_transform = viewpoint_cam.full_proj_transform.cuda()
@@ -298,6 +293,7 @@ def training(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoin
                         else:
                             frustum_cull = lambda indices : torch.ones(len(indices), dtype = torch.bool)
                         camera_position = viewpoint_cam.camera_center.cuda()
+                        clock()
                         LOD_detail_cut = lambda indices : gaussians.min_distance_squared[indices] > (camera_position - gaussians.upper_tree_xyz[indices]).square().sum(dim=-1) * distance_multiplier
                         # The coarse cut contains intermediate nodes from the upper tree and leaf nodes, with some leaf nodes containing SPTs
                         coarse_cut = gaussians.cut_hierarchy_on_condition(gaussians.upper_tree_nodes, LOD_detail_cut, return_upper_tree=False, root_node=0, leave_out_of_cut_condition=frustum_cull)
@@ -318,28 +314,28 @@ def training(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoin
                         # The SPT indices are the child indices of those nodes that have a 0 child count
                         SPT_indices = gaussians.upper_tree_nodes[cut_leaf_nodes][gaussians.upper_tree_nodes[cut_leaf_nodes, 3] >= 0, 3]
 
-
-                        ### Band Aid Fix
-                        if len(SPT_indices) == 0:
-                            # Just load whatever is already in memory
-                            SPT_indices = torch.zeros(1, dtype=torch.int32, device='cuda')
-                            if prev_SPT_indices.size(0) > 0:
-                                SPT_indices[0] = prev_SPT_indices[-1]
-                            else:
-                                # Or just load the first one, whatever
-                                SPT_indices[0] = torch.zeros(1, dtype=torch.int32, device='cuda')
-                            SPT_distances = torch.zeros(1, dtype=torch.int32, device='cuda')
-                            SPT_distances[0] = 100000
-                            print("No SPT in image")
-                            clock()
-                            continue
-                        ### Band Aid Fix
                         upper_tree_nodes_to_render = gaussians.upper_tree_nodes[coarse_cut][gaussians.upper_tree_nodes[coarse_cut, 3] <= 0, 5]
 
                         SPT_upper_tree_indices = cut_leaf_nodes[gaussians.upper_tree_nodes[cut_leaf_nodes, 3] >= 0]
 
                         SPT_distances = (gaussians.upper_tree_xyz[SPT_upper_tree_indices] - camera_position).pow(2).sum(1).sqrt() * distance_multiplier
 
+                        ### Band Aid Fix
+                        #if len(SPT_indices) == 0:
+                            # Just load whatever is already in memory
+                            #SPT_indices = torch.zeros(1, dtype=torch.int32, device='cuda')
+                            #if prev_SPT_indices.size(0) > 0:
+                            #    SPT_indices[0] = prev_SPT_indices[-1]
+                            #else:
+                            #    # Or just load the first one, whatever
+                            #    SPT_indices[0] = torch.zeros(1, dtype=torch.int32, device='cuda')
+                            #SPT_distances = torch.zeros(1, dtype=torch.float32, device='cuda')
+                            #SPT_distances[0] = 100000.0
+                            #print("No SPT in image")
+                            #clock()
+                            
+                        ### Band Aid Fix
+                        
 
                         prev_to_new_SPT_order = torch.searchsorted(SPT_indices, prev_SPT_indices)
 
@@ -389,6 +385,7 @@ def training(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoin
                         else:
                             print("No SPTs loaded")
                             load_SPT_gaussian_indices, load_SPT_starts = torch.empty(0, dtype=torch.int32, device='cuda'), torch.empty(0, dtype=torch.int32, device='cuda')
+                        print(clock())
                         #SPT_counts += gaussians.skybox_points
 
                         ### BAND AID FIX
@@ -462,7 +459,6 @@ def training(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoin
                         prev_SPT_indices = SPT_indices
                         prev_SPT_distances = SPT_distances
                         prev_SPT_starts = SPT_starts_new
-                        load_write_time = clock()
                         torch.cuda.empty_cache()
                         
                         
@@ -563,12 +559,18 @@ def training(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoin
                     if show_occlusion:
                         image=occlusion_image
                     
-                    net_image = image.cpu()
-                    net_image_bytes = memoryview((torch.clamp(net_image, min=0, max=1.0) * 255).byte().permute(1, 2, 0).contiguous().to('cpu').numpy())
-                train_params = {"Num_Rendered" : len(gaussian_indices), "Number_of_SPTs" : len(SPT_indices), "Percentage_Rendered" : len(gaussian_indices)/gaussians.size, "Percentage_SPTs" : len(SPT_indices)/len(gaussians.SPT_starts)}
-                network_gui.send(net_image_bytes, json.dumps({"iteration" : 99, "num_gaussians" : gaussians.size, "loss" : 0, "sh_degree":1, "error" : 0, "paused" : False, "train_params" : train_params})) #dataset.source_path)
-                if do_training and ((iteration < int(opt.iterations)) or not keep_alive_):
-                    break
+                    
+                    if replay:
+                        torchvision.utils.save_image(image, f"CameraPaths/{camera_path_id}/frame_{iteration}.png")
+                        iteration += 1
+                    else:
+                        net_image = image.cpu()
+                        net_image_bytes = memoryview((torch.clamp(net_image, min=0, max=1.0) * 255).byte().permute(1, 2, 0).contiguous().to('cpu').numpy())
+                if not replay:
+                    train_params = {"Num_Rendered" : len(gaussian_indices), "Number_of_SPTs" : len(SPT_indices), "Percentage_Rendered" : len(gaussian_indices)/gaussians.size, "Percentage_SPTs" : len(SPT_indices)/len(gaussians.SPT_starts)}
+                    network_gui.send(net_image_bytes, json.dumps({"iteration" : 99, "num_gaussians" : gaussians.size, "loss" : 0, "sh_degree":1, "error" : 0, "paused" : False, "train_params" : train_params})) #dataset.source_path)
+                    if do_training and ((iteration < int(opt.iterations)) or not keep_alive_):
+                        break
             except ValueError as e:
                 print(e)
                 raise e
@@ -605,6 +607,8 @@ if __name__ == "__main__":
     parser.add_argument("--checkpoint_iterations", nargs="+", type=int, default=[])
     parser.add_argument("--start_checkpoint", type=str, default = None)
     parser.add_argument("--hierarchy_path", type=str, default = None)
+    parser.add_argument('--replay', type=bool, default=False)
+    parser.add_argument('--ID', type=int, default=0)
     args = parser.parse_args(sys.argv[1:])
     print(args)
     args.save_iterations.append(args.iterations)
@@ -616,6 +620,6 @@ if __name__ == "__main__":
 
     # Start GUI server, configure and run training
     torch.autograd.set_detect_anomaly(args.detect_anomaly)
-    training(lp.extract(args), op.extract(args), pp.extract(args), args.save_iterations, args.checkpoint_iterations, args.start_checkpoint, args.debug_from, args.hierarchy_path)
+    render(lp.extract(args), op.extract(args), pp.extract(args), args.save_iterations, args.checkpoint_iterations, args.start_checkpoint, args.debug_from, args.hierarchy_path, args.replay, args.ID)
 
     print("\nTraining complete.")

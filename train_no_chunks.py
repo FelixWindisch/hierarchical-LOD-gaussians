@@ -118,8 +118,8 @@ if __name__ == '__main__':
             model_params.images = images_dir
             model_params.model_path = os.path.join(output_dir, "scaffold")
             model_params.skybox_num = 100000
-            optimization_params.iterations = 150000
-            train_coarse.training(model_params, optimization_params, pipeline_params, [150000], [], False, -1)
+            optimization_params.iterations = 100_000
+            train_coarse.training(model_params, optimization_params, pipeline_params, [], [], False, -1)
             #subprocess.run(train_coarse_args, shell=True, check=True)
         except subprocess.CalledProcessError as e:
             print(f"Error executing train_coarse: {e}")
@@ -237,10 +237,10 @@ if __name__ == '__main__':
 
     
     #Standard 3DGS training parameters
-    optimization_params.iterations = 2_000_000
-    optimization_params.position_lr_init =  0.0000156 /3.0#0.0000016 #0.00016
+    optimization_params.iterations = 250_000
+    optimization_params.position_lr_init =  0.0000156/4.0 #/15.0#0.0000016 #0.00016
     #     #optimization_params.position_lr_init = 0.016
-    optimization_params.position_lr_final = 0.0000001 #0.000000016 #0.0000016
+    optimization_params.position_lr_final = 0.0000005 #0.000000016 #0.0000016
     optimization_params.position_lr_delay_mult = 0.01
     optimization_params.position_lr_max_steps = optimization_params.iterations
     optimization_params.feature_lr = 0.0025
@@ -262,7 +262,7 @@ if __name__ == '__main__':
     optimization_params.depth_l1_weight_final = 0.01
 
 
-    train_post.training(model_params, optimization_params, pipeline_params, [500000, 1500000], [500050, 1500050], [], [], cg)
+    train_post.training(model_params, optimization_params, pipeline_params, [500_000, 1_500_000], [500050, 1500050], [], [], cg)
     
     exit()
     post_opt_chunk_args =  " ".join([

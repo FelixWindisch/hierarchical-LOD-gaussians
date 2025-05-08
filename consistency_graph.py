@@ -34,7 +34,7 @@ def metropolis_hastings_walk(G, node):
         #   break  # Stop if there are no neighbors
         
         # Select a neighbor with probability proportional to edge weight
-        weights = [G[current_node][nbr]['weight'] for nbr in neighbors]
+        weights = [G[current_node][nbr]['weight'] * 100 for nbr in neighbors]
         proposed_node = random.choices(neighbors, weights=weights)[0]
         
         # Compute acceptance probability
@@ -47,13 +47,13 @@ def metropolis_hastings_walk(G, node):
             current_node = proposed_node    
             return current_node
 
-def random_walk_node(G, node, node_count):
+def random_walk_node(G, node, node_count = None):
     neighbors = list(G.neighbors(node))  # Get adjacent nodes
     if not neighbors:
         return None  # No adjacent nodes
 
     # Get the edge weights
-    weights = [(G[node][neighbor].get('weight', 1)/node_count[neighbor]) for neighbor in neighbors]
+    weights = [(G[node][neighbor].get('weight', 1)/1) for neighbor in neighbors]
 
     # Normalize weights to sum to 1
     total_weight = sum(weights)

@@ -8,6 +8,16 @@ opencv-python==4.9.0.80
 gradio_imageslider
 gradio==4.29.0
 matplotlib
+tqdm
+opencv-python
+plyfile
+matplotlib
+numpy
+scipy
+tensorboard
+torchviz
+psutil
 submodules/hierarchy-rasterizer
 submodules/simple-knn
 submodules/gaussianhierarchy
+git+https://github.com/rahul-goel/fused-ssim/

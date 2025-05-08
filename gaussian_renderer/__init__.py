@@ -655,7 +655,6 @@ def render_vanilla(viewpoint_camera,
         antialiasing=anti_aliasing)
 
     rasterizer = alt_gaussian_rasterization.GaussianRasterizer(raster_settings=raster_settings)
-    size = len(means3D)
     #means3D = torch.ones((size,3), device='cuda')
     #opacity = torch.ones(size, device='cuda')
     #scales = torch.ones((size,3), device='cuda')

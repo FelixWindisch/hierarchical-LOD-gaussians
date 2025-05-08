@@ -132,6 +132,7 @@ RasterizeGaussiansCUDA(
 		rendered = std::get<0>(tup);
 		num_buckets = std::get<1>(tup);
   }
+ 
   return std::make_tuple(rendered, num_buckets, out_color, out_invdepth, radii, geomBuffer, binningBuffer, imgBuffer, sampleBuffer);
 }
 

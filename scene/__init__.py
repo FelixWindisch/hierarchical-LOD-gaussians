@@ -114,7 +114,7 @@ class Scene:
             else:
                 print("save PLY")
                 print(self.model_path)
-                self.gaussians.save_ply(os.path.join(point_cloud_path, "point_cloud.ply"))
+                self.gaussians.save_ply_coarse(os.path.join(point_cloud_path, "point_cloud.ply"))
 
             exposure_dict = {
                 image_name: self.gaussians.get_exposure_from_name(image_name).detach().cpu().numpy().tolist()
