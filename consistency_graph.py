@@ -53,7 +53,7 @@ def random_walk_node(G, node, node_count = None):
         return None  # No adjacent nodes
 
     # Get the edge weights
-    weights = [(G[node][neighbor].get('weight', 1)/1) for neighbor in neighbors]
+    weights = [(1.0/(G[node][neighbor].get('weight', 1)+20)) for neighbor in neighbors]
 
     # Normalize weights to sum to 1
     total_weight = sum(weights)

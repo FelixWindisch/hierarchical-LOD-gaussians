@@ -40,6 +40,19 @@ from stp_gaussian_rasterization import ExtendedSettings
 from gaussian_renderer import occlusion_cull
 import json
 import pickle
+import colorsys
+
+def generate_colors(n, saturation=0.6, lightness=0.5):
+    colors = torch.zeros((n, 3), dtype=torch.float32, device='cuda')
+    for i in range(n):
+        hue = i / n  # evenly spaced hues
+        r, g, b = colorsys.hls_to_rgb(hue, lightness, saturation)
+        #rgb = tuple(int(x * 255) for x in (r, g, b))
+        colors[i, 0] = r
+        colors[i, 1] = g
+        colors[i, 2] = b
+    return colors
+
 
 clock_start = True
 clock_time = time.time()
@@ -54,9 +67,23 @@ def clock():
         return time.time()-clock_time
 
 
+sub_clock_start = True
+sub_clock_time = time.time()
+def sub_clock():
+    global sub_clock_start
+    global sub_clock_time
+    if sub_clock_start:
+        sub_clock_start = False
+        sub_clock_time = time.time()
+    else:
+        sub_clock_start = True
+        return time.time()-sub_clock_time
+
 def direct_collate(x):
     return x
 
+
+replay_stats = {"frame_time": [], "cut_time": [], "VRAM" : [], "number_rendered" : []}
 
 WriteTensorBoard = False
 #Standard
@@ -84,7 +111,7 @@ Use_MIP_respawn = False
 # SPTs
 Storage_Device = 'cpu'
 lambda_hierarchy = 0.00
-SPT_Root_Volume = 100 #0.025
+SPT_Root_Volume = 20#50 #100 #0.025
 Target_Granularity_Pixels = 2
 Cache_SPTs = True
 Reuse_SPT_Tolerarance = 0.1
@@ -207,6 +234,8 @@ def render(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoint_
     ######## VIEWER
     if not replay:
         network_gui.init("127.0.0.1", 6009)
+    torch.cuda.reset_max_memory_allocated()
+    
     while True:
         if network_gui.conn == None and not replay:
             print("Try Connect")
@@ -275,7 +304,7 @@ def render(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoint_
                     if record_trajectory:
                         with open(f"CameraPaths/camera_path_{camera_path_id}.txt", "ab") as f:
                             pickle.dump(custom_cam, f)
-                    
+                    clock()
                     viewpoint_cam.world_view_transform = viewpoint_cam.world_view_transform.cuda()
                     #viewpoint_cam.projection_matrix = viewpoint_cam.projection_matrix.cuda()
                     viewpoint_cam.full_proj_transform = viewpoint_cam.full_proj_transform.cuda()
@@ -293,7 +322,7 @@ def render(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoint_
                         else:
                             frustum_cull = lambda indices : torch.ones(len(indices), dtype = torch.bool)
                         camera_position = viewpoint_cam.camera_center.cuda()
-                        clock()
+                        sub_clock()
                         LOD_detail_cut = lambda indices : gaussians.min_distance_squared[indices] > (camera_position - gaussians.upper_tree_xyz[indices]).square().sum(dim=-1) * distance_multiplier
                         # The coarse cut contains intermediate nodes from the upper tree and leaf nodes, with some leaf nodes containing SPTs
                         coarse_cut = gaussians.cut_hierarchy_on_condition(gaussians.upper_tree_nodes, LOD_detail_cut, return_upper_tree=False, root_node=0, leave_out_of_cut_condition=frustum_cull)
@@ -348,6 +377,8 @@ def render(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoint_
                         #close_enough = torch.isclose(distances_compare, prev_distances_compare, rtol=Reuse_SPT_Tolerarance, atol=0.05)
                         close_enough = (prev_distances_compare/distances_compare) > 0.3
                         close_enough &= (prev_distances_compare/distances_compare) < 1.5
+                        close_enough &= (prev_distances_compare/distances_compare) < -1.5
+                        #close_enough &= (prev_distances_compare/distances_compare) < -1.5
                         reuse_SPT_indices = SPT_indices[equal_SPT_cache_indices[close_enough]]
 
 
@@ -385,9 +416,8 @@ def render(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoint_
                         else:
                             print("No SPTs loaded")
                             load_SPT_gaussian_indices, load_SPT_starts = torch.empty(0, dtype=torch.int32, device='cuda'), torch.empty(0, dtype=torch.int32, device='cuda')
-                        print(clock())
                         #SPT_counts += gaussians.skybox_points
-
+                        cut_time = sub_clock()
                         ### BAND AID FIX
                         #difference = load_SPT_starts[1:] - load_SPT_starts[:-1]
                         #empty_SPTs = torch.where(difference == 0)[0]
@@ -481,27 +511,29 @@ def render(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoint_
                         if color_distance:
                             colors_precomp = torch.zeros_like(scales, device='cuda')
                             SPT_distances_remapped = (SPT_distances - SPT_distances.min()) / (SPT_distances.max() - SPT_distances.min())
+                            #SPT_distances_remapped = (SPT_distances) / 500.0
+
                             # Skybox is blue
                             colors_precomp[:gaussians.skybox_points, 0] = 0
                             colors_precomp[:gaussians.skybox_points, 1] = 0
                             colors_precomp[:gaussians.skybox_points, 2] = 1
                             for i in range(len(SPT_indices)):
-                                min_range = gaussians.skybox_points + SPT_starts_new[i]
-                                max_range = len(gaussian_indices) if i+1 == len(SPT_indices) else gaussians.skybox_points + SPT_starts_new[i+1]
+                                min_range =  SPT_starts_new[i]
+                                max_range = len(gaussian_indices) if i+1 == len(SPT_indices) else  SPT_starts_new[i+1]
                                 colors_precomp[min_range:max_range, 0] = SPT_distances_remapped[i]
                                 colors_precomp[min_range:max_range, 1] = SPT_distances_remapped[i]
                                 colors_precomp[min_range:max_range, 2] = SPT_distances_remapped[i]
                         elif color_size:
                             colors_precomp = torch.zeros_like(scales, device='cuda')
-                            SPT_sizes = SPT_starts_new
+                            SPT_sizes = torch.abs(SPT_starts_new[1:] - SPT_starts_new[:-1]) / (gaussians.SPT_starts[SPT_indices+1] - gaussians.SPT_starts[SPT_indices])
                             SPT_sizes_remapped = (SPT_sizes - SPT_sizes.min()) / (SPT_sizes.max() - SPT_sizes.min())
                             # Skybox is blue
                             colors_precomp[:gaussians.skybox_points, 0] = 0
                             colors_precomp[:gaussians.skybox_points, 1] = 0
                             colors_precomp[:gaussians.skybox_points, 2] = 1
                             for i in range(len(SPT_indices)):
-                                min_range = gaussians.skybox_points + SPT_starts_new[i]
-                                max_range = len(gaussian_indices) if i+1 == len(SPT_indices) else gaussians.skybox_points + SPT_starts_new[i+1]
+                                min_range = SPT_starts_new[i]
+                                max_range = len(gaussian_indices) if i+1 == len(SPT_indices) else SPT_starts_new[i+1]
                                 colors_precomp[min_range:max_range, 0] = SPT_sizes_remapped[i]
                                 colors_precomp[min_range:max_range, 1] = SPT_sizes_remapped[i]
                                 colors_precomp[min_range:max_range, 2] = SPT_sizes_remapped[i]
@@ -511,10 +543,10 @@ def render(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoint_
                             colors_precomp[:gaussians.skybox_points, 0] = 0
                             colors_precomp[:gaussians.skybox_points, 1] = 0
                             colors_precomp[:gaussians.skybox_points, 2] = 1
-                            random_colors = torch.rand((len(SPT_indices), 3))
+                            random_colors = generate_colors(len(SPT_indices))
                             for i in range(len(SPT_indices)):
-                                min_range = gaussians.skybox_points + SPT_starts_new[i]
-                                max_range = len(gaussian_indices) if i+1 == len(SPT_indices) else gaussians.skybox_points + SPT_starts_new[i+1]
+                                min_range =  SPT_starts_new[i]
+                                max_range = len(gaussian_indices) if i+1 == len(SPT_indices) else  SPT_starts_new[i+1]
                                 colors_precomp[min_range:max_range, :] = random_colors[i]
                             colors_precomp[-len(upper_tree_nodes_to_render):, :] = 1
                         elif highlight_leaves:
@@ -555,6 +587,19 @@ def render(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoint_
 
 
                     image = render_pkg["render"]
+                    frame_time = clock()
+                    if replay:
+                        replay_stats["VRAM"].append(torch.cuda.max_memory_allocated())
+                        replay_stats["frame_time"].append(frame_time)
+                        replay_stats["cut_time"].append(cut_time)
+                        replay_stats["number_rendered"].append(len(gaussian_indices))
+                    if replay:
+                        print("STATS")
+                        print(replay_stats["VRAM"][-1])
+                        print(torch.tensor(replay_stats["frame_time"]).mean())
+                        print(torch.tensor(replay_stats["frame_time"]).max())
+                        print(torch.tensor(replay_stats["cut_time"]).mean())
+                        print(torch.tensor(replay_stats["cut_time"]).max())
                     ####### RENDER
                     if show_occlusion:
                         image=occlusion_image
@@ -571,7 +616,11 @@ def render(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoint_
                     network_gui.send(net_image_bytes, json.dumps({"iteration" : 99, "num_gaussians" : gaussians.size, "loss" : 0, "sh_degree":1, "error" : 0, "paused" : False, "train_params" : train_params})) #dataset.source_path)
                     if do_training and ((iteration < int(opt.iterations)) or not keep_alive_):
                         break
-            except ValueError as e:
+            except EOFError as e:
+                if replay:
+                        print(replay_stats["VRAM"][-1])
+                        print(torch.tensor(replay_stats["frame_time"]).mean())
+                        print(torch.tensor(replay_stats["cut_time"]).mean())
                 print(e)
                 raise e
                 network_gui.conn = None

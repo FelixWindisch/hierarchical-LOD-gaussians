@@ -75,7 +75,7 @@ class Camera(nn.Module):
             self.original_image *= self.alpha_mask
 
         self.invdepthmap = None
-        self.depth_reliable = False
+        self.depth_reliable = True
         if invdepthmap is not None and depth_params is not None and depth_params["scale"] > 0:
             invdepthmapScaled = invdepthmap * depth_params["scale"] + depth_params["offset"]
             invdepthmapScaled = cv2.resize(invdepthmapScaled, resolution)

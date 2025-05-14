@@ -208,7 +208,7 @@ def readColmapSceneInfo(path, images, masks, depths, eval, train_test_exp, llffh
 
         except FileNotFoundError:
             print(f"Error: depth_params.json file not found at path '{depth_params_file}'.")
-            sys.exit(1)
+            #sys.exit(1)
         except Exception as e:
             print(f"An unexpected error occurred when trying to open depth_params.json file: {e}")
             sys.exit(1)
@@ -253,7 +253,7 @@ def readColmapSceneInfo(path, images, masks, depths, eval, train_test_exp, llffh
     cam_infos_unsorted = readColmapCameras(
         cam_extrinsics=cam_extrinsics, cam_intrinsics=cam_intrinsics, depths_params=depths_params, 
         images_folder=os.path.join(path, reading_dir), masks_folder=masks_reading_dir,
-        depths_folder=os.path.join(path, depths) if depths != "" else "", test_cam_names_list=test_cam_names_list)
+        depths_folder=os.path.join(path, depths), test_cam_names_list=test_cam_names_list)
     cam_infos = sorted(cam_infos_unsorted.copy(), key = lambda x : x.image_name)
 
     train_cam_infos = [c for c in cam_infos if train_test_exp or not c.is_test]

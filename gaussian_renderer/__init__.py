@@ -685,7 +685,7 @@ def render_vanilla(viewpoint_camera,
     # Rasterize visible Gaussians to image, obtain their radii (on screen). 
     if not override_color is None:
         shs = None
-    rendered_image, radii, x = rasterizer(
+    rendered_image, radii, invdepth = rasterizer(
         means3D = means3D,
         means2D = means2D,
         dc = dc,
@@ -707,6 +707,7 @@ def render_vanilla(viewpoint_camera,
     rendered_image = rendered_image.clamp(0, 1)
     out = {
         "render": rendered_image,
+        "depth": invdepth,
         #"viewspace_points": screenspace_points,
         "radii": radii
         #,"render_buffer_overhead" : render_buffer_overhead

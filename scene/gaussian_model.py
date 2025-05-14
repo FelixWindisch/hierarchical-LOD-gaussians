@@ -523,7 +523,7 @@ class GaussianModel:
         current_index = 0
         for tensor in tensors:
             size = tensor[0].nelement()
-            self.properties[:self.size, current_index:current_index+size] = tensor
+            self.properties[:self.size, current_index:current_index+size] = tensor.detach().cpu()
             current_index += size
             
             
@@ -532,7 +532,7 @@ class GaussianModel:
         self.nodes = new_nodes
         
         
-        
+        del tensors
         self._xyz = None
         self._scaling= None
         self._rotation= None

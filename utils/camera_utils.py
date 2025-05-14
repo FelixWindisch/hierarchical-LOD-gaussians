@@ -39,7 +39,12 @@ def loadCam(args, id, cam_info, resolution_scale, is_test_dataset):
        
     if cam_info.depth_path != "":
         try:
-            invdepthmap = cv2.imread(cam_info.depth_path, -1).astype(np.float32) / float(2**16)
+            invdepthmap = cv2.imread(cam_info.depth_path, -1)
+            
+            if not invdepthmap is None: 
+                invdepthmap = invdepthmap.astype(np.float32) / float(2**16)
+            else:
+                print(f"Depth map read from {cam_info.depth_path} failed")
         except FileNotFoundError:
             print(f"Error: The depth file at path '{cam_info.depth_path}' was not found.")
             raise
@@ -50,6 +55,7 @@ def loadCam(args, id, cam_info, resolution_scale, is_test_dataset):
             print(f"An unexpected error occurred when trying to read depth at {cam_info.depth_path}: {e}")
             raise
     else:
+        print(f"Depth map read from {cam_info.depth_path} failed")
         invdepthmap = None
 
     orig_w, orig_h = image.size

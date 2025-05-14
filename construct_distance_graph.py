@@ -9,6 +9,20 @@ import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D  # Not strictly needed in newer versions, but safe to include
 from sklearn.neighbors import NearestNeighbors
 import consistency_graph
+import torch
+def getWorld2View2(R, t, translate=np.array([.0, .0, .0]), scale=1.0):
+    Rt = np.zeros((4, 4))
+    Rt[:3, :3] = R.transpose()
+    Rt[:3, 3] = t
+    Rt[3, 3] = 1.0
+
+    C2W = np.linalg.inv(Rt)
+    cam_center = C2W[:3, 3]
+    cam_center = (cam_center + translate) * scale
+    C2W[:3, 3] = cam_center
+    Rt = np.linalg.inv(C2W)
+    return np.float32(Rt)
+
 def qvec2rotmat(qvec):
     return np.array([
         [1 - 2 * qvec[2]**2 - 2 * qvec[3]**2,
@@ -26,6 +40,7 @@ def construct_distance_graph(images_file):
         lines = [line.rstrip() for line in file]
         positions = np.zeros((len(lines), 3))
         quats = np.zeros((len(lines), 4))
+        names = []
         for i, line in enumerate(lines):
             split = line.split(" ")
             positions[i, 0] = split[5]
@@ -35,7 +50,16 @@ def construct_distance_graph(images_file):
             quats[i, 1] = split[2]
             quats[i, 2] = split[3]
             quats[i, 3] = split[4]
+            names.append(split[10])
         print(positions.shape)
+        
+        # For some bullshit reason, camera objects are sorted in alphabetical order
+        sorted_indices = sorted(range(len(names)), key=lambda i: names[i])
+        sorted_indices = np.array(sorted_indices)
+        positions = positions[sorted_indices]
+        quats = quats[sorted_indices]
+        
+        
         
         for i in range(len(lines)):
             positions[i] = qvec2rotmat(quats[i]).transpose() @ positions[i]
@@ -43,7 +67,7 @@ def construct_distance_graph(images_file):
         
         points = positions
 
-        k = 1000
+        k = 100
         nbrs = NearestNeighbors(n_neighbors=k+1, algorithm='ball_tree').fit(points)
         distances, indices = nbrs.kneighbors(points)
 
@@ -58,7 +82,7 @@ def construct_distance_graph(images_file):
             for j in range(1, k+1):
                 neighbor_idx = indices[i][j]
                 dist = distances[i][j]
-                G_knn.add_edge(i, neighbor_idx, weight=float(1000.0/(np.sqrt(dist) + 15)))
+                G_knn.add_edge(i, neighbor_idx, weight= float(dist))#float(1000.0/(np.sqrt(dist) + 15)))
                 
         nx.write_edgelist(G_knn, "/home/felix-windisch/Datasets/BIGCITY/camera_calibration/aligned/sparse/0/consistency_graph.edge_list")
         print(G_knn.nodes)
@@ -92,8 +116,8 @@ def construct_distance_graph(images_file):
         ax.axis('equal')
         plt.show()
 
+DATASET_DIR = "/home/felix-windisch/Datasets/BIGCITY"
 
-
-construct_distance_graph("/home/felix-windisch/Datasets/BIGCITY/camera_calibration/aligned/sparse/0/images.txt")
+construct_distance_graph(DATASET_DIR + "/camera_calibration/aligned/sparse/0/images.txt")
 
 

@@ -81,7 +81,7 @@ Only_Noise_Visible = True
 #MCMC
 Max_Cap = 60_000_000
 MCMC_Densification = True
-MCMC_Noise_LR = 3 #20  #5e5
+MCMC_Noise_LR = 0 #20  #5e5
 lambda_scaling = 0.0
 lambda_opacity = 0.0
 
@@ -93,14 +93,14 @@ Use_MIP_respawn = False
 # SPTs
 Storage_Device = 'cpu'
 lambda_hierarchy = 0.00
-SPT_Root_Volume = 100 # 0.02
-Target_Granularity_Pixels = 4
+SPT_Root_Volume = 200 # 0.02
+Target_Granularity_Pixels = 3
 
 Min_SPT_Size = 256
 Cache_SPTs = True
 
 Reuse_SPT_Tolerance_Closer = 2
-Reuse_SPT_Tolerance_Farther = 1.25
+Reuse_SPT_Tolerance_Farther = 1.3
 
 Max_Gaussian_Budget = 70_000_000
 Distance_Multiplier_Until_Budget = 1.5
@@ -110,7 +110,7 @@ Cache_Size_After_Reduction = 12_000_000
 Clear_Cache_Iterations = 1000
 Revive_Gaussians = False
 #View Selection
-Use_Consistency_Graph = True
+Use_Consistency_Graph = False
 # Rasterizer
 Rasterizer = "Vanilla"
 Anti_Aliasing = True
@@ -216,7 +216,7 @@ def training(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoin
     
     #gaussians.sort_morton()
     gaussians.build_hierarchical_SPT(SPT_Root_Volume, SPT_Target_Granularity, Min_SPT_Size, use_bounding_spheres=Use_Bounding_Spheres, revive_gaussians=Revive_Gaussians)
-    print("Built SPTs")
+    print(f"Built {len(gaussians.SPT_starts)} SPTs")
     bg_color = [1, 1, 1] if dataset.white_background else [0, 0, 0]
     background = torch.tensor(bg_color, dtype=torch.float32, device="cuda")
 
@@ -290,6 +290,9 @@ def training(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoin
                                                     lr_final=opt.position_lr_final*gaussians.spatial_lr_scale,
                                                     lr_delay_mult=opt.position_lr_delay_mult,
                                                     max_steps=opt.position_lr_max_steps)
+    
+    
+    depth_l1_weight = get_expon_lr_func(1.0, 0.01, max_steps=opt.position_lr_max_steps)
     print("Gaussians Initialized")
     prev_cam_center = torch.zeros(3, device='cuda', dtype=torch.float32)
     #gaussians.revive_stuck_gaussians(SPT_Target_Granularity)
@@ -305,7 +308,7 @@ def training(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoin
                     viewpoint_cam = train_camera_data_set[int(current_camera_index)]
                     
                     # reset to new random view every 100 iterations
-                    if iteration % 42 == 0:
+                    if iteration % 12 == 0:
                         current_camera_index = random.randint(0, len(train_camera_data_set) - 1)
                 #camera_direction = torch.tensor(viewpoint_cam.R[:, 2], dtype=torch.float32)
                 #viewpoint_cam = train_camera_data_set[0]
@@ -753,7 +756,6 @@ def training(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoin
                 image = render_pkg["render"]#, render_pkg["viewspace_points"], render_pkg["visibility_filter"], render_pkg["radii"]
                 if densify_radii:
                     densification_radii += render_pkg["radii"]
-                #torchvision.utils.save_image(image, os.path.join(scene.model_path, str(iteration) + "Sky.png"))
                 #exit()
                 #if iteration == 500:
                 #    torch.cuda.memory._dump_snapshot("my_snapshot.pickle")
@@ -763,16 +765,33 @@ def training(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoin
                 gt_image = viewpoint_cam.original_image.cuda()
                 #if iteration == 1500:
                 #    gaussians.save_hier()
-                if iteration % 50 == 0 or iteration == 1:
-                    torchvision.utils.save_image(image, os.path.join(scene.model_path, str(iteration) + ".png"))
-                    #torchvision.utils.save_image(gt_image, os.path.join(scene.model_path, str(iteration) + "_gt.png"))
+                invDepth = render_pkg["depth"]
                 #if viewpoint_cam.alpha_mask is not None:
                 #    Ll1 = l1_loss(image * viewpoint_cam.alpha_mask.cuda(), gt_image)
                 #    loss = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * (1.0 - fused_ssim((image * viewpoint_cam.alpha_mask.cuda()).unsqueeze(0), gt_image.unsqueeze(0)))
                 #else:
                 Ll1 = l1_loss(image, gt_image) 
+                
+                
+                
+                
                 loss = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * (1.0 - fused_ssim(image.unsqueeze(0), gt_image.unsqueeze(0)))
                 image_loss = loss.clone().detach()
+                if viewpoint_cam.invdepthmap is not None:
+                    mono_invdepth = viewpoint_cam.invdepthmap.cuda()
+                    Ll1depth_pure = torch.abs((invDepth  - mono_invdepth)).mean()
+                    Ll1depth = depth_l1_weight(iteration) * Ll1depth_pure 
+                    loss += Ll1depth
+                    Ll1depth = Ll1depth.item()
+                    if iteration % 50 == 0 or iteration == 1:
+                        torchvision.utils.save_image(invDepth, os.path.join(scene.model_path, str(iteration) + "_depth.png"))
+                        torchvision.utils.save_image(mono_invdepth, os.path.join(scene.model_path, str(iteration) + "_mono_depth.png"))
+                else:
+                    Ll1depth = 0
+                    print("No depth map")
+                if iteration % 50 == 0 or iteration == 1:
+                    torchvision.utils.save_image(image, os.path.join(scene.model_path, str(iteration) + ".png"))
+                    
                 #parents = gaussians.nodes[indices, 1]
                 #hierarchy_loss = 0 #torch.sum(torch.clamp_min(torch.max(torch.abs(gaussians.get_scaling[indices]), dim=-1)[0] - torch.max(torch.abs(gaussians.get_scaling[parents]), dim=-1)[0], 0)) / len(indices)
                 #loss = loss + lambda_hierarchy * hierarchy_loss
@@ -877,7 +896,7 @@ def training(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoin
                     scales.grad[indices] = 0
                     rotations.grad[indices] = 0
                     with torch.no_grad():
-                        opacity[opacity[indices].isnan()] = 0.1
+                        opacity[indices[opacity[indices].isnan()[0]]] = 0.1
                 # Write values for every iteration
                 writer.add_scalar('Total Loss', image_loss, iteration)
                 writer.add_scalar('Distance_To_Last_view', torch.linalg.norm(viewpoint_cam.camera_center - prev_cam_center), iteration)
