@@ -118,8 +118,8 @@ if __name__ == '__main__':
             model_params.images = images_dir
             model_params.model_path = os.path.join(output_dir, "scaffold")
             model_params.skybox_num = 100000
-            optimization_params.iterations = 250000
-            train_coarse.training(model_params, optimization_params, pipeline_params, [250000-1], [], False, -1)
+            optimization_params.iterations = 60000
+            train_coarse.training(model_params, optimization_params, pipeline_params, [60000-1], [], False, -1)
             #subprocess.run(train_coarse_args, shell=True, check=True)
         except subprocess.CalledProcessError as e:
             print(f"Error executing train_coarse: {e}")
@@ -170,23 +170,23 @@ if __name__ == '__main__':
 
         
     # ==================================== Scaffold finished ==============================
-    #hierarchy_creator_args = "submodules/gaussianhierarchy/build/Release/GaussianHierarchyCreator.exe " if os_name == "Windows" else "submodules/gaussianhierarchy/build/GaussianHierarchyCreator "
-    #hierarchy_creator_args = os.path.join(f_path.parent, hierarchy_creator_args)
-    #try:
-    #    subprocess.run(
-    #    hierarchy_creator_args + " ".join([
-    #            os.path.join(output_dir, "scaffold/point_cloud/iteration_30000/point_cloud.ply"),
-    #            os.path.join(output_dir, "/../camera_calibration/aligned"),
-    #            os.path.join(output_dir, "scaffold/point_cloud/iteration_30000/")
-    #            ,os.path.join(output_dir, "scaffold/point_cloud/iteration_30000/")
-    #        ]),
-    #        shell=True, check=True, text=True
-    #    )
-    #except subprocess.CalledProcessError as e:
-    #            print(f"Error executing hierarchy_creator: {e}")
-    #            # TODO: WTF is happening here?
-    #            if not args.keep_running and False:
-    #                sys.exit(1)
+    hierarchy_creator_args = "submodules/gaussianhierarchy/build/Release/GaussianHierarchyCreator.exe " if os_name == "Windows" else "submodules/gaussianhierarchy/build/GaussianHierarchyCreator "
+    hierarchy_creator_args = os.path.join(f_path.parent, hierarchy_creator_args)
+    try:
+        subprocess.run(
+        hierarchy_creator_args + " ".join([
+                os.path.join(output_dir, "scaffold/point_cloud/iteration_30000/point_cloud.ply"),
+                os.path.join(output_dir, "/../camera_calibration/aligned"),
+                os.path.join(output_dir, "scaffold/point_cloud/iteration_30000/")
+                ,os.path.join(output_dir, "scaffold/point_cloud/iteration_30000/")
+            ]),
+            shell=True, check=True, text=True
+        )
+    except subprocess.CalledProcessError as e:
+                print(f"Error executing hierarchy_creator: {e}")
+                # TODO: WTF is happening here?
+                if not args.keep_running and False:
+                    sys.exit(1)
                     
     # ==================================== Hierarchy finished ==============================
     
@@ -238,10 +238,10 @@ if __name__ == '__main__':
     
     #Standard 3DGS training parameters
     
-    optimization_params.iterations = 500_000
-    optimization_params.position_lr_init =  0.0000156/4.0 *8#/15.0#0.0000016 #0.00016
+    optimization_params.iterations = 80_000
+    optimization_params.position_lr_init =  0.0000156/4.0 *2#/15.0#0.0000016 #0.00016
     #     #optimization_params.position_lr_init = 0.016
-    optimization_params.position_lr_final = 0.0000005 *8#0.000000016 #0.0000016
+    optimization_params.position_lr_final = 0.0000005 *2#0.000000016 #0.0000016
     optimization_params.position_lr_delay_mult = 0.01
     optimization_params.position_lr_max_steps = optimization_params.iterations
     optimization_params.feature_lr = 0.0025
@@ -263,7 +263,7 @@ if __name__ == '__main__':
     optimization_params.depth_l1_weight_final = 0.01
 
 
-    train_post.training(model_params, optimization_params, pipeline_params, [200_000, 400_000, 500_000, 1_500_000], [500050, 1500050], [], [], cg)
+    train_post.training(model_params, optimization_params, pipeline_params, [60_000, 70_000, 80_000, 100_000, 120_000, 150_000, 200_000, 400_000, 500_000, 1_500_000], [500050, 1500050], [], [], cg)
     
     exit()
     post_opt_chunk_args =  " ".join([

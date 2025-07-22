@@ -86,8 +86,8 @@ Use_MIP_respawn = False
 # SPTs
 Storage_Device = 'cpu'
 lambda_hierarchy = 0.00
-SPT_Root_Volume = 100#100 #0.025
-Target_Granularity_Pixels = 2
+SPT_Root_Volume = 3#100 #0.025
+Target_Granularity_Pixels = 1.5
 Cache_SPTs = True
 Reuse_SPT_Tolerarance = 0.1
 #View Selection
@@ -198,7 +198,7 @@ def render(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoint_
                                                     lr_delay_mult=opt.position_lr_delay_mult,
                                                     max_steps=opt.position_lr_max_steps)
     
-    training_generator = DataLoader(scene.getTrainCameras(), num_workers = 8, prefetch_factor = 1, persistent_workers = True, collate_fn=direct_collate, shuffle=False)
+    training_generator = DataLoader(scene.getTestCameras(), num_workers = 8, prefetch_factor = 1, persistent_workers = True, collate_fn=direct_collate, shuffle=False)
     psnrs = 0.0
     ssims = 0.0
     lpipss = 0.0
@@ -216,9 +216,24 @@ def render(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoint_
     street_images = 0
     aerial_images = 0
     distance_multiplier = 1
+    eval_campus = False
+    if (eval_campus):
+        random_images = torch.arange(0, len(scene.getTrainCameras()), 1)[torch.randperm(len(scene.getTrainCameras()))[:500]]
+    
+    i = 0
     for x in [0]:
         for viewpoint_batch in training_generator:
             for viewpoint_cam in viewpoint_batch:
+                if eval_campus:
+                    print(i)
+                    if i == 500:
+                        psnrs /= 500
+                        ssims /= 500
+                        lpipss /= 500
+                        print(f"FINAL PSNR: {psnrs:.5f} SSIM: {ssims:.5f} LPIPS: {lpipss:.5f}")
+                        exit(0)
+                    viewpoint_cam = scene.getTrainCameras()[random_images[i]]
+                i+=1
                 viewpoint_cam.world_view_transform = viewpoint_cam.world_view_transform.cuda()
                 #viewpoint_cam.projection_matrix = viewpoint_cam.projection_matrix.cuda()
                 viewpoint_cam.full_proj_transform = viewpoint_cam.full_proj_transform.cuda()
@@ -353,13 +368,13 @@ def render(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoint_
                 gt_image = viewpoint_cam.original_image.cuda()
                 
                 
-                #torchvision.utils.save_image(image,  "output/eval" + str(iteration) + ".png")
-                #torchvision.utils.save_image(gt_image,  "output/eval" + str(iteration) + "_gt.png")
+                
                 iteration += 1
                 psnr_current = psnr(image.detach(), gt_image).mean().double()
                 ssim_current = ssim(image.detach(), gt_image).mean().double()
                 lpips_current = 0 #lpips(image, gt_image, net_type='vgg').mean().double()
-                
+                torchvision.utils.save_image(image,  "output/" + viewpoint_cam.image_name + f"_{psnr_current}.png")
+                torchvision.utils.save_image(gt_image,  "output/" + viewpoint_cam.image_name + "_gt.png")
                 psnrs += psnr_current
                 print(psnr(image, gt_image).mean().double())
                 ssims += ssim_current
@@ -379,19 +394,25 @@ def render(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoint_
                     
                 print()
                 ####### RENDER
-    psnrs /= len(scene.getTrainCameras())
-    ssims /= len(scene.getTrainCameras())
-    lpipss /= len(scene.getTrainCameras())
-    psnr_aerial /= aerial_images
-    ssims_aerial /= aerial_images
-    lpipss_aerial /= aerial_images
-    psnr_street /= street_images
-    ssims_street /= street_images
-    lpipss_street /= street_images
+                
+    for i in range(1, len(training_generator)+1):
+        image = torchvision.io.read_image("output/eval" + str(i) + ".png")
+        gt_image = torchvision.io.read_image("output/eval" + str(i) + "_gt.png")
+        lpipss += lpips(image, gt_image, net_type='vgg').mean().double()
+        print(i)
+    psnrs /= len(training_generator)
+    ssims /= len(training_generator)
+    lpipss /= len(training_generator)
+    #psnr_aerial /= aerial_images
+    #ssims_aerial /= aerial_images
+    #lpipss_aerial /= aerial_images
+    #psnr_street /= street_images
+    #ssims_street /= street_images
+    #lpipss_street /= street_images
     print(f"FINAL PSNR: {psnrs:.5f} SSIM: {ssims:.5f} LPIPS: {lpipss:.5f}")
     print(f"AERIAL PSNR: {psnr_aerial:.5f} SSIM: {ssims_aerial:.5f} LPIPS: {lpipss_aerial:.5f}")
     print(f"STREET PSNR: {psnr_street:.5f} SSIM: {ssims_street:.5f} LPIPS: {lpipss_street:.5f}")
-                
+    exit()
 
                 
                 

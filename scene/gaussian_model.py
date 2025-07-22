@@ -216,10 +216,8 @@ class GaussianModel:
         #self.SPT = []
         SPT_indices = []
         leaf_spt_children = []
-        
         # indices of SPT roots in global hierarchy
         SPT_root_hierarchy_indices = []
-        
         for index, cut_node in enumerate(cut_indices):
             # do not build SPTs with only one element
             if self.nodes[cut_node, hierarchy_node_child_count] == 0:
@@ -411,6 +409,7 @@ class GaussianModel:
             
             if leave_out_of_cut_condition is not None:
                 leave_out_mask = leave_out_of_cut_condition(stack)
+                #print(f"Leave out {(leave_out_mask.sum())} out of {len(stack)}")
                 stack = stack[leave_out_mask]
             #TODO Should this be 3 lines above?
             cut = torch.cat((cut, stack[hierarchy[stack, hierarchy_node_child_count] == 0]))
@@ -521,9 +520,25 @@ class GaussianModel:
         self.size = len(self._xyz)
         tensors = [self._xyz,  self._scaling, self._rotation, self._features_dc.squeeze(), self._opacity, self._features_rest.reshape(self.size, spherical_harmonics_properties)]
         current_index = 0
-        for tensor in tensors:
+        for index, tensor in enumerate(tensors):
             size = tensor[0].nelement()
-            self.properties[:self.size, current_index:current_index+size] = tensor.detach().cpu()
+            print(index)
+            self.properties[:self.size, current_index:current_index+size] = tensor.cpu().detach()
+            if index == 0:
+                self._xyz = None
+            if index == 1:
+                self._scaling = None
+            if index == 2:
+                self._rotation = None
+            if index == 3:
+                self._features_dc = None
+            if index == 4:
+                self._opacity = None
+            if index == 5:
+                self._features_rest = None
+            tensors[index] = None
+            del tensor
+            torch.cuda.empty_cache()
             current_index += size
             
             
@@ -1643,7 +1658,7 @@ class GaussianModel:
         self._rotation = optimizable_tensors["rotation"] 
         # Thomas Bug
         torch.cuda.empty_cache()
-        return optimizable_tensors
+        return optimizable_tensor
     
     def _update_params(self, idxs, ratio):
         new_opacity, new_scaling = compute_relocation_cuda(
@@ -1807,13 +1822,14 @@ class GaussianModel:
         probs = self.opacity_activation(self.properties[:size, opacity1:opacity2]).squeeze(-1)[alive_indices]
         if densify_radii:
             probs *= (self._densification_radii[alive_indices] + 1)
+            add_idx = alive_indices[torch.where(self._densification_radii[alive_indices] > 0.001)]
+            ratio = torch.zeros((self.size, 1), device='cpu', dtype=torch.int32)
+        else:
+            add_idx, ratio = self._sample_alives(probs=probs, num=num_gs, alive_indices=alive_indices)
+            # make sure respawn gaussians are unique
+            add_idx = torch.where(ratio == 1)[0]
         
-        add_idx, ratio = self._sample_alives(probs=probs, num=num_gs, alive_indices=alive_indices)
-        # make sure respawn gaussians are unique
-        add_idx = torch.where(ratio == 1)[0]
-        ratio = torch.zeros_like(ratio)
         ratio[add_idx] = 1
-        
         (   new_xyz, 
             new_features_dc,
             new_features_rest,

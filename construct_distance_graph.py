@@ -10,6 +10,7 @@ from mpl_toolkits.mplot3d import Axes3D  # Not strictly needed in newer versions
 from sklearn.neighbors import NearestNeighbors
 import consistency_graph
 import torch
+import sys
 def getWorld2View2(R, t, translate=np.array([.0, .0, .0]), scale=1.0):
     Rt = np.zeros((4, 4))
     Rt[:3, :3] = R.transpose()
@@ -37,11 +38,14 @@ def qvec2rotmat(qvec):
 
 def construct_distance_graph(images_file):
     with open(images_file) as file:
+        
         lines = [line.rstrip() for line in file]
-        positions = np.zeros((len(lines), 3))
-        quats = np.zeros((len(lines), 4))
+        number_of_images = len(lines) //2 - 2
+        positions = np.zeros((number_of_images, 3))
+        quats = np.zeros((number_of_images, 4))
         names = []
-        for i, line in enumerate(lines):
+        for i, line in enumerate(lines[4::2]):
+            print(line)
             split = line.split(" ")
             positions[i, 0] = split[5]
             positions[i, 1] = split[6]
@@ -50,7 +54,7 @@ def construct_distance_graph(images_file):
             quats[i, 1] = split[2]
             quats[i, 2] = split[3]
             quats[i, 3] = split[4]
-            names.append(split[10])
+            names.append(split[-1])
         print(positions.shape)
         
         # For some bullshit reason, camera objects are sorted in alphabetical order
@@ -61,9 +65,9 @@ def construct_distance_graph(images_file):
         
         
         
-        for i in range(len(lines)):
+        for i in range(number_of_images):
             positions[i] = qvec2rotmat(quats[i]).transpose() @ positions[i]
-        positions[i, 2] /= 8
+        positions[i, 2] #/= 8
         
         points = positions
 
@@ -103,7 +107,7 @@ def construct_distance_graph(images_file):
         print(G_knn.number_of_edges())
         x = positions[neighbours, 0]
         y = positions[neighbours, 1]
-        z = positions[neighbours, 2]*10
+        z = positions[neighbours, 2]#*10
         # Create 3D scatter plot
         fig = plt.figure()
         ax = fig.add_subplot(111, projection='3d')
@@ -116,8 +120,8 @@ def construct_distance_graph(images_file):
         ax.axis('equal')
         plt.show()
 
-DATASET_DIR = "/home/felix-windisch/Datasets/BIGCITY"
+DATASET_DIR = sys.argv[1] #"/home/felix-windisch/Datasets/BIGCITY"
 
-construct_distance_graph(DATASET_DIR + "/camera_calibration/aligned/sparse/0/images.txt")
+construct_distance_graph(DATASET_DIR + "/camera_calibration/aligned/sparse/0_txt/images.txt")
 
 

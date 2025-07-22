@@ -708,7 +708,7 @@ def render_vanilla(viewpoint_camera,
     out = {
         "render": rendered_image,
         "depth": invdepth,
-        #"viewspace_points": screenspace_points,
+        "viewspace_points": screenspace_points,
         "radii": radii
         #,"render_buffer_overhead" : render_buffer_overhead
         }

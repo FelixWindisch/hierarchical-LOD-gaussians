@@ -106,12 +106,12 @@ Propagation_Strength = 1.0
 #Culling
 Use_Bounding_Spheres = False
 Use_Occlusion_Culling = False
-Use_Frustum_Culling = True
+Use_Frustum_Culling = False
 Use_MIP_respawn = False
 # SPTs
 Storage_Device = 'cpu'
 lambda_hierarchy = 0.00
-SPT_Root_Volume = 20#50 #100 #0.025
+SPT_Root_Volume =  100 # 0.05 #40#50 #100 #0.025
 Target_Granularity_Pixels = 2
 Cache_SPTs = True
 Reuse_SPT_Tolerarance = 0.1
@@ -309,6 +309,13 @@ def render(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoint_
                     #viewpoint_cam.projection_matrix = viewpoint_cam.projection_matrix.cuda()
                     viewpoint_cam.full_proj_transform = viewpoint_cam.full_proj_transform.cuda()
                     viewpoint_cam.camera_center = viewpoint_cam.camera_center.cuda()
+                    
+                    if replay:
+                        viewpoint_cam.image_width = 1100
+                        viewpoint_cam.image_height = 900
+                        viewpoint_cam.FoVx =viewpoint_cam.FoVx * 1.1
+                        viewpoint_cam.FoVy =viewpoint_cam.FoVy * 0.9
+                    print(freeze_view)
                     if not freeze_view:
 
                         ############# SPT Cache
@@ -377,7 +384,6 @@ def render(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoint_
                         #close_enough = torch.isclose(distances_compare, prev_distances_compare, rtol=Reuse_SPT_Tolerarance, atol=0.05)
                         close_enough = (prev_distances_compare/distances_compare) > 0.3
                         close_enough &= (prev_distances_compare/distances_compare) < 1.5
-                        close_enough &= (prev_distances_compare/distances_compare) < -1.5
                         #close_enough &= (prev_distances_compare/distances_compare) < -1.5
                         reuse_SPT_indices = SPT_indices[equal_SPT_cache_indices[close_enough]]
 
@@ -418,7 +424,7 @@ def render(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoint_
                             load_SPT_gaussian_indices, load_SPT_starts = torch.empty(0, dtype=torch.int32, device='cuda'), torch.empty(0, dtype=torch.int32, device='cuda')
                         #SPT_counts += gaussians.skybox_points
                         cut_time = sub_clock()
-                        ### BAND AID FIX
+                        ### BAND AID FIX\
                         #difference = load_SPT_starts[1:] - load_SPT_starts[:-1]
                         #empty_SPTs = torch.where(difference == 0)[0]
                         #if len(empty_SPTs) > 0:
@@ -595,15 +601,14 @@ def render(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoint_
                         replay_stats["number_rendered"].append(len(gaussian_indices))
                     if replay:
                         print("STATS")
-                        print(replay_stats["VRAM"][-1])
-                        print(torch.tensor(replay_stats["frame_time"]).mean())
-                        print(torch.tensor(replay_stats["frame_time"]).max())
-                        print(torch.tensor(replay_stats["cut_time"]).mean())
-                        print(torch.tensor(replay_stats["cut_time"]).max())
+                        #print(replay_stats["VRAM"][-1])
+                        #print(torch.tensor(replay_stats["frame_time"][5:]).mean())
+                        #print(torch.tensor(replay_stats["frame_time"]).max())
+                        #print(torch.tensor(replay_stats["cut_time"]).mean())
+                        #print(torch.tensor(replay_stats["cut_time"]).max())
                     ####### RENDER
                     if show_occlusion:
                         image=occlusion_image
-                    
                     
                     if replay:
                         torchvision.utils.save_image(image, f"CameraPaths/{camera_path_id}/frame_{iteration}.png")
@@ -621,6 +626,8 @@ def render(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoint_
                         print(replay_stats["VRAM"][-1])
                         print(torch.tensor(replay_stats["frame_time"]).mean())
                         print(torch.tensor(replay_stats["cut_time"]).mean())
+                        with open("render_timings.pkl", "wb") as file:
+                            pickle.dump(replay_stats["frame_time"], file)
                 print(e)
                 raise e
                 network_gui.conn = None
