@@ -113,13 +113,13 @@ class ParamGroup:
 
 class ModelParams(ParamGroup): 
     def __init__(self, parser, sentinel=False):
-        self.sh_degree = 3
+        self.sh_degree = 1
         self._source_path = ""
         self._model_path = ""
         self._exp_name = ""
         self._images = "images"
-        self._alpha_masks = ""
-        self._depths = ""
+        self._alpha_masks = "masks"
+        self._depths = "depths"
         self._resolution = -1
         self._white_background = False
         self.train_test_exp = False # Include the left half of the test images in the train set to optimize exposures
@@ -132,9 +132,11 @@ class ModelParams(ParamGroup):
         self.scaffold_file = ""
         self.bounds_file = ""
         self.skybox_locked = False
+        self.anti_aliasing = False
+        self.llff_hold = 50
         # MCMC
         #self.eval = True
-        self.cap_max = -1
+        
         #MCMC
         super().__init__(parser, "Loading Parameters", sentinel)
 
@@ -155,11 +157,14 @@ class PipelineParams(ParamGroup):
 
 class OptimizationParams(ParamGroup):
     def __init__(self, parser):
-        self.iterations = 30_000
+        self.iterations = 100_000
+        self.coarse_iterations = 60_000
+        self.SH_degree = 1
+        self.lr_multiplier = 1.0
         self.position_lr_init = 0.00002
         self.position_lr_final = 0.0000002
         self.position_lr_delay_mult = 0.01
-        self.position_lr_max_steps = 30_000
+        self.position_lr_max_steps = self.iterations
         self.feature_lr = 0.0025
         self.opacity_lr = 0.05
         self.scaling_lr = 0.005
@@ -168,22 +173,50 @@ class OptimizationParams(ParamGroup):
         self.exposure_lr_final = 0.0001
         self.exposure_lr_delay_steps = 5000
         self.exposure_lr_delay_mult = 0.001
-        self.percent_dense = 0.0001
+        self.percent_dense = 0.01
         self.lambda_dssim = 0.2
         self.densification_interval = 300
-        self.opacity_reset_interval = 3000
-        self.densify_from_iter = 500
-        self.densify_until_iter = 15_000
-        self.densify_grad_threshold = 0.015
+        self.densification = ["MCMC", "classic"][0]
+        self.opacity_reset_interval = 10e10
+        self.densify_from_iter = 100
+        self.densify_until_iter = self.iterations - 10000
+        self.densify_grad_threshold = 0.0015
         self.depth_l1_weight_init = 1.0
         self.depth_l1_weight_final = 0.01
         #MCMC
-        self.noise_lr = 5e5
-        self.scale_reg = 0.01
-        self.opacity_reg = 0.01
+        if self.densification == "MCMC":
+            self.noise_lr = 0 
+            self.lambda_scaling = 0.00
+            self.lambda_opacity = 0.00
+        else:
+            self.noise_lr = 5e5
+            self.lambda_scaling = 0.01
+            self.lambda_opacity = 0.01
+        self.densify_percent =  1.02
+        self.cap_max = 12_000_000
         #MCMC
-        super().__init__(parser, "Optimization Parameters")
+        #A LoD of Gaussians
+        self.graph_view_select = False
+        self.view_graph_k = 100
+        self.use_bounding_spheres = False
+        self.use_frustum_culling = True
+        self.use_occlusion_culling = False
 
+        self.storage_device = 'cpu'
+        self.SPT_root_volume = 10
+        self.target_granularity_pixels = 2
+        self.min_SPT_size = 256
+        
+        self.use_GPU_caching = True
+        self.cache_size = 15_000_000
+        self.cache_size_after_reduction = 12_000_000
+        self.clear_cache_interval = 1000
+        #A LoD of Gaussians
+        super().__init__(parser, "Optimization Parameters")
+    
+    def to_dict(self):
+        return self.__dict__
+    
 def get_combined_args(parser : ArgumentParser):
     cmdlne_string = sys.argv[1:]
     cfgfile_string = "Namespace()"

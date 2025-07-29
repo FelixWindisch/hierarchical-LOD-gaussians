@@ -20,19 +20,27 @@ from utils.sh_utils import eval_sh
 from diff_gaussian_rasterization import _C
 import numpy as np
 import torchvision
+from globals import *
 
 def occlusion_cull(indices, gaussians, camera, pipe, background, opacity_multiplier = 1, scale_multiplier = 1):
-    means3D = gaussians._xyz[indices].cuda().contiguous()
-    opacity = torch.clamp(gaussians.opacity_activation(gaussians._opacity[indices].cuda().contiguous()) * opacity_multiplier, 0, 1)
-    scales = gaussians.scaling_activation(gaussians._scaling[indices].cuda().contiguous()) * scale_multiplier
-    rotations = gaussians.rotation_activation(gaussians._rotation[indices].cuda().contiguous())
-    features_dc = gaussians._features_dc[indices].cuda().contiguous()
-    features_rest = gaussians._features_rest[indices].cuda().contiguous()
-    shs = torch.cat((features_dc, features_rest), dim=1).contiguous()
-    render_pkg = render_on_disk(camera, means3D, opacity, scales, rotations, shs, pipe, background)
-    
+    features_rest2 = 14 + number_SH_properties[gaussians.max_sh_degree] * 3
+    SH_properties_single = number_SH_properties[gaussians.max_sh_degree]
+    means3D = gaussians.properties[indices, xyz1:xyz2].cuda().contiguous()
+    opacity = torch.clamp(gaussians.opacity_activation(gaussians.properties[indices, opacity1].cuda().contiguous()) * opacity_multiplier, 0, 1)
+    scales = gaussians.scaling_activation(gaussians.properties[indices, scales1:scales2].cuda().contiguous()) * scale_multiplier
+    rotations = gaussians.rotation_activation(gaussians.properties[indices, rotation1:rotation2].cuda().contiguous())
+    features_dc = gaussians.properties[indices, features1:features2].cuda().contiguous()
+    features_rest = gaussians.properties[indices, features_rest1:features_rest2].cuda().reshape(len(indices), SH_properties_single, 3).contiguous()
+    #shs = torch.cat((features_dc, features_rest), dim=1).contiguous()
+    render_pkg = render_vanilla(camera, means3D, opacity, scales, rotations, features_dc, features_rest, pipe, background)
     #torchvision.utils.save_image(render_pkg["render"], "occlusion.png")
-    return render_pkg["seen"].to(torch.bool).cpu(), render_pkg["render"]
+    return render_pkg["contribution"] > 0, render_pkg["render"]
+
+def occlusion_cull_cached(gaussians, camera, pipe, background, opacity_multiplier = 1, scale_multiplier = 1):
+    #shs = torch.cat((features_dc, features_rest), dim=1).contiguous()
+    render_pkg = render_vanilla(camera, gaussians.SPT_means3D, gaussians.SPT_opacity, gaussians.SPT_scales, gaussians.SPT_rotations, gaussians.SPT_features_dc, gaussians.SPT_features_rest, pipe, background)
+    #torchvision.utils.save_image(render_pkg["render"], "occlusion.png")
+    return render_pkg["contribution"] > 0.00, render_pkg["render"]
 
 def render(
         viewpoint_camera, pc, 
@@ -655,12 +663,6 @@ def render_vanilla(viewpoint_camera,
         antialiasing=anti_aliasing)
 
     rasterizer = alt_gaussian_rasterization.GaussianRasterizer(raster_settings=raster_settings)
-    #means3D = torch.ones((size,3), device='cuda')
-    #opacity = torch.ones(size, device='cuda')
-    #scales = torch.ones((size,3), device='cuda')
-    #rotations = torch.zeros((size,4), device='cuda')
-    #rotations[:, 0] = 1
-    #shs = torch.ones((size, 16, 3))
     
     
     screenspace_points = torch.zeros_like(means3D, dtype=torch.float32, requires_grad=True, device="cuda") + 0
@@ -685,7 +687,7 @@ def render_vanilla(viewpoint_camera,
     # Rasterize visible Gaussians to image, obtain their radii (on screen). 
     if not override_color is None:
         shs = None
-    rendered_image, radii, invdepth = rasterizer(
+    rendered_image, radii, invdepth, contribution = rasterizer(
         means3D = means3D,
         means2D = means2D,
         dc = dc,
@@ -709,7 +711,8 @@ def render_vanilla(viewpoint_camera,
         "render": rendered_image,
         "depth": invdepth,
         "viewspace_points": screenspace_points,
-        "radii": radii
+        "radii": radii,
+        "contribution" : contribution 
         #,"render_buffer_overhead" : render_buffer_overhead
         }
     

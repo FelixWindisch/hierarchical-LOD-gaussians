@@ -8,9 +8,10 @@ import random
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D  # Not strictly needed in newer versions, but safe to include
 from sklearn.neighbors import NearestNeighbors
-import consistency_graph
+import view_graph_utils
 import torch
 import sys
+
 def getWorld2View2(R, t, translate=np.array([.0, .0, .0]), scale=1.0):
     Rt = np.zeros((4, 4))
     Rt[:3, :3] = R.transpose()
@@ -97,7 +98,7 @@ def construct_distance_graph(images_file):
         current_color = np.random.rand(3)
         for i in range(N):
             colors[i] = current_color
-            node = consistency_graph.metropolis_hastings_walk(G_knn, node)
+            node = view_graph_utils.metropolis_hastings_walk(G_knn, node)
             walk[i] = node
             if i % 100 == 0:
                 i = random.randint(0, points.shape[0])

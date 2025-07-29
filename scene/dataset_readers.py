@@ -124,9 +124,12 @@ def readColmapCameras(cam_extrinsics, cam_intrinsics, depths_params, images_fold
             image_path = os.path.join(images_folder, f"{extr.name[:-n_remove]}.png")
             image_name = f"{extr.name[:-n_remove]}.png"
 
-        mask_path = os.path.join(masks_folder, f"{extr.name[:-n_remove]}.png") if masks_folder != "" else ""
-        depth_path = os.path.join(depths_folder, f"{extr.name[:-n_remove]}.png") if depths_folder != "" else ""
-
+        mask_path = os.path.join(masks_folder , f"{extr.name[:-n_remove]}.png") if masks_folder != "" else ""
+        if not os.path.exists(mask_path):
+            mask_path = ""
+        depth_path = os.path.join(depths_folder , f"{extr.name[:-n_remove]}.png") if depths_folder != "" else ""
+        if not os.path.exists(depth_path):
+            depth_path = ""
         cam_info = CameraInfo(uid=uid, R=R, T=T, FovY=FovY, FovX=FovX, primx=primx, primy=primy, depth_params=depth_params,
                               image_path=image_path, mask_path=mask_path, depth_path=depth_path, image_name=image_name, 
                               width=width, height=height, is_test=image_name in test_cam_names_list, focal_length=focal_length_x)
@@ -233,9 +236,6 @@ def readColmapSceneInfo(path, images, masks, depths, eval, train_test_exp, llffh
         pcd = fetchPly(ply_path)
     eval = True
     if eval:
-        llffhold = 97
-        if "360" in path:
-            llffhold = 8
         if llffhold:
             print("------------LLFF HOLD-------------")
             cam_names = [cam_extrinsics[cam_id].name for cam_id in cam_extrinsics]
@@ -248,12 +248,12 @@ def readColmapSceneInfo(path, images, masks, depths, eval, train_test_exp, llffh
         test_cam_names_list = []
 
     reading_dir = "images" if images == None else images
-    masks_reading_dir = masks if masks == "" else os.path.join(path, masks)
+    masks_reading_dir = masks if masks == "" else os.path.join(path + "/../rectified", masks)
 
     cam_infos_unsorted = readColmapCameras(
         cam_extrinsics=cam_extrinsics, cam_intrinsics=cam_intrinsics, depths_params=depths_params, 
         images_folder=os.path.join(path, reading_dir), masks_folder=masks_reading_dir,
-        depths_folder=os.path.join(path, depths), test_cam_names_list=test_cam_names_list)
+        depths_folder=os.path.join(path + "/../rectified", depths), test_cam_names_list=test_cam_names_list)
     cam_infos = sorted(cam_infos_unsorted.copy(), key = lambda x : x.image_name)
 
     train_cam_infos = [c for c in cam_infos if train_test_exp or not c.is_test]

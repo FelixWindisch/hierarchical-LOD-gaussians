@@ -34,13 +34,15 @@ hierarchy_node_child_count = 2
 hierarchy_node_first_child = 3
 hierarchy_node_next_sibling = 4
 hierarchy_node_max_side_length = 5
-SPT_index = 0
-SPT_min_distance = 1
-SPT_max_distance = 2
 
 
 
-number_properties = 23
+Max_SH_Degree = 1
+
+number_SH_properties = [0, 3, 8, 15]
+SH_properties_single = number_SH_properties[Max_SH_Degree] 
+SH_properties = number_SH_properties[Max_SH_Degree] * 3
+
 xyz1 = 0
 xyz2 = 3
 scales1 = 3
@@ -52,7 +54,8 @@ features2 = 13
 opacity1 = 13
 opacity2 = 14
 features_rest1 = 14
-features_rest2 = 23
+features_rest2 = 14 + SH_properties
+number_properties = features_rest2
 
 
 clock_start = True
@@ -504,7 +507,7 @@ class GaussianModel:
     
     
     
-    def move_storage_to(self, device, max_number_of_gaussians, store_on_disk = False, densify_radii = False, training=True):
+    def compact_gaussians(self, device, max_number_of_gaussians, densification = False, training=True):
         if max_number_of_gaussians is None:
             max_number_of_gaussians = len(self._xyz)
         number_gaussian_properties = [14, 23, 38, 59]
@@ -515,14 +518,13 @@ class GaussianModel:
         else:
             number_gaussian_properties = number_gaussian_properties[self.max_sh_degree]
         self.properties = torch.zeros((max_number_of_gaussians, number_gaussian_properties) , device=device)
-        if densify_radii:
-            self._densification_radii = torch.zeros(max_number_of_gaussians, device=device, dtype=torch.float)
+        if densification:
+            self._densification_criterium = torch.zeros(max_number_of_gaussians, device=device, dtype=torch.float)
         self.size = len(self._xyz)
         tensors = [self._xyz,  self._scaling, self._rotation, self._features_dc.squeeze(), self._opacity, self._features_rest.reshape(self.size, spherical_harmonics_properties)]
         current_index = 0
         for index, tensor in enumerate(tensors):
             size = tensor[0].nelement()
-            print(index)
             self.properties[:self.size, current_index:current_index+size] = tensor.cpu().detach()
             if index == 0:
                 self._xyz = None
@@ -1053,18 +1055,22 @@ class GaussianModel:
         
     
     # scaffold file is only required for number of skybox points
-    def create_from_hier(self, path, spatial_lr_scale : float, scaffold_file : str):
+    def create_from_hier(self, path, spatial_lr_scale : float, scaffold_file : str, device="cpu"):
+        global SH_properties, Max_SH_Degree, features_rest2
         self.opacity_activation = torch.sigmoid
         self.inverse_opacity_activation = inverse_sigmoid
         self.is_hierarchy = True
         self.spatial_lr_scale = spatial_lr_scale
-        #xyz, shs_all, alpha, scales, rots, nodes, boxes = load_hierarchy(path)
         xyz, shs_all, alpha, scales, rots, nodes = load_dynamic_hierarchy(path)
         # set first child to 0 for all nodes that do not have children (because this is fucked up in some hierarchy files)
-        #alpha = torch.sigmoid((alpha))
-        #alpha = torch.sigmoid(alpha)
-        #scales = torch.log(scales)
-
+        SH_mapping = {4: 1, 9: 2, 16: 3}
+        self.max_sh_degree = SH_mapping[shs_all.shape[1]]
+        self.active_sh_degree = self.max_sh_degree
+        Max_SH_Degree = self.max_sh_degree
+        SH_properties = number_SH_properties[Max_SH_Degree] * 3
+        features_rest2 = 14 + SH_properties
+        
+        
         base = os.path.dirname(path)
 
         try:
@@ -1130,25 +1136,28 @@ class GaussianModel:
             nodes = torch.cat((torch.full((self.skybox_points, 6), -99, dtype=torch.int32), nodes)) 
             nodes[skybox_points:, 3] = torch.where(nodes[skybox_points:, 2]==2, nodes[skybox_points:, 3], torch.zeros_like(nodes[skybox_points:,3]))
 
-        self._xyz = xyz.cuda()
-        self._features_dc = shs_all.cuda()[:,:1,:].requires_grad_(True)
+        self._xyz = xyz.to(device)
+        self._features_dc = shs_all.to(device)[:,:1,:].requires_grad_(True)
         if self.max_sh_degree == 3:
             sh_coefficients = 15
         elif self.max_sh_degree == 2:
             sh_coefficients = 8
         elif self.max_sh_degree == 1:
             sh_coefficients = 3
-        self._features_rest = shs_all.cuda()[:,1:1+sh_coefficients,:].requires_grad_(True)
-        self._opacity = alpha.cuda().requires_grad_(True)
-        self._scaling = scales.cuda().requires_grad_(True)
-        self._rotation =rots.cuda().requires_grad_(True)
+        self._features_rest = shs_all.to(device)[:,1:1+sh_coefficients,:].requires_grad_(True)
+        self._opacity = alpha.to(device).requires_grad_(True)
+        self._scaling = scales.to(device).requires_grad_(True)
+        self._rotation =rots.to(device).requires_grad_(True)
         
-        #    self._xyz = nn.Parameter(xyz.cuda().requires_grad_(True))
-        #    self._features_dc = nn.Parameter(shs_all.cuda()[:,:1,:].requires_grad_(True))
-        #    self._features_rest = nn.Parameter(shs_all.cuda()[:,1:16,:].requires_grad_(True))
-        #    self._opacity = nn.Parameter(alpha.cuda().requires_grad_(True))
-        #    self._scaling = nn.Parameter(scales.cuda().requires_grad_(True))
-        #    self._rotation = nn.Parameter(rots.cuda().requires_grad_(True))
+        with torch.no_grad():
+            self._opacity.clamp_(0, 0.99999)
+            self._opacity = self.inverse_opacity_activation(self._opacity)
+        #    self._xyz = nn.Parameter(xyz.to(device).requires_grad_(True))
+        #    self._features_dc = nn.Parameter(shs_all.to(device)[:,:1,:].requires_grad_(True))
+        #    self._features_rest = nn.Parameter(shs_all.to(device)[:,1:16,:].requires_grad_(True))
+        #    self._opacity = nn.Parameter(alpha.to(device).requires_grad_(True))
+        #    self._scaling = nn.Parameter(scales.to(device).requires_grad_(True))
+        #    self._rotation = nn.Parameter(rots.to(device).requires_grad_(True))
         #self.max_radii2D = torch.zeros((self.get_xyz.shape[0]), device="cuda")
 
         #self.opacity_activation = torch.abs
@@ -1157,8 +1166,8 @@ class GaussianModel:
         self.hierarchy_path = path
         # zero out the last column
         nodes[:, -1] = 0
-        self.nodes = nodes.cuda()
-        #self.boxes = boxes.cuda()
+        self.nodes = nodes.to(device)
+        #self.boxes = boxes.to(device)
 
     def create_from_pt(self, path, spatial_lr_scale : float ):
         self.spatial_lr_scale = spatial_lr_scale
@@ -1679,7 +1688,7 @@ class GaussianModel:
         ratio = torch.bincount(sampled_idxs).unsqueeze(-1)
         return sampled_idxs, ratio
     
-    def relocate_gs(self, dead_mask, size, optimizer_state, storage_device='cpu', densify_radii=False):
+    def relocate_gs(self, dead_mask, size, storage_device='cpu', densification=False):
         if dead_mask.sum() == 0:
             return
         alive_mask = ~dead_mask
@@ -1707,8 +1716,8 @@ class GaussianModel:
             alive_indices = alive_indices[torch.randperm(len(alive_indices))[:16_000_000]]
         probs = (self.opacity_activation(self.properties[alive_indices, opacity1])) 
 
-        if densify_radii:
-            probs *= (self._densification_radii[alive_indices] + 1)
+        if densification == "classic":
+            probs *= (self._densification_criterium[alive_indices] + 1)
 
         if 0 in sibling_indices:
             print("Found 0 Sibling!")
@@ -1783,13 +1792,6 @@ class GaussianModel:
         # The sibling is a copy
         self.properties[sibling_indices, :number_properties] = self.properties[dead_indices, :number_properties] 
 
-        #self.properties[sibling_indices, xyz1:xyz2] = self.properties[dead_indices, xyz1:xyz2]
-        #self.properties[sibling_indices, opacity1:opacity2] = self.properties[dead_indices, opacity1:opacity2]
-        #self.properties[sibling_indices, features1:features2] = self.properties[dead_indices, features1:features2]
-        #self.properties[sibling_indices, features_rest1:features_rest2] = self.properties[dead_indices,features_rest1:features_rest2]
-        #self.properties[sibling_indices, rotation1:rotation2] = self.properties[dead_indices, rotation1:rotation2]
-        #self.properties[sibling_indices, scales1:scales2] = self.properties[dead_indices, scales1:scales2]
-        
         
         # TODO: Implement Disk Equivalent
         #self.replace_tensors_to_optimizer(inds=sibling_indices)
@@ -1797,38 +1799,41 @@ class GaussianModel:
         # Keep momentum for dead indices to encourage exploration?
         for name in ["xyz", "f_dc", "scaling", "rotation", "opacity", "f_rest", "nodes"]:
             self.properties[sibling_indices, number_properties:] = 0
-            #optimizer_state[name]["exp_avgs"][sibling_indices] = 0
-            #
-            # optimizer_state[name]["exp_avgs_sqs"][sibling_indices] = 0
-        
-    def add_new_gs(self, cap_max, size, densify_radii = False, densify_percent = 1.05):
+            
+    def add_new_gs(self, cap_max, size, densification, densify_percent = 1.05, densify_threshold = 0.01):
         device = self.properties.device
         target_num = min(cap_max, int(densify_percent * size))
         num_gs = max(0, target_num - size)
         if num_gs <= 0:
             return 0
-        print(f"Spawn {num_gs} new Gaussians")
+        
         # Only Leaf nodes can be used for respawning 
         alive_indices=torch.where(self.nodes[:size, hierarchy_node_child_count] == 0)[0]
         
         
         
-        # Torch.multionmial can only handle 16_000_000 elements. If there are more possible respawn locations, uniformly sample 16M
-        if len(alive_indices) > 16_000_000:
-            alive_indices = alive_indices[torch.randperm(len(alive_indices))[:16_000_000]]
+        
         #probs = (self.opacity_activation(self._opacity[alive_indices, 0])) 
         
         
-        probs = self.opacity_activation(self.properties[:size, opacity1:opacity2]).squeeze(-1)[alive_indices]
-        if densify_radii:
-            probs *= (self._densification_radii[alive_indices] + 1)
-            add_idx = alive_indices[torch.where(self._densification_radii[alive_indices] > 0.001)]
-            ratio = torch.zeros((self.size, 1), device='cpu', dtype=torch.int32)
+        
+        if densification == "classic":
+            #probs *= (self._densification_criterium[alive_indices] + 1)
+            #add_idx = alive_indices[torch.where(self._densification_criterium[alive_indices] > 0.001)]
+            #ratio = torch.zeros((self.size, 1), device='cpu', dtype=torch.int32)
+            add_idx = alive_indices[self._densification_criterium[alive_indices] > densify_threshold]
+            if (len(add_idx) * 2) + self.size > cap_max:
+                to_add = max(cap_max - self.size, 0) // 2
+                add_idx = add_idx[: to_add]
         else:
+            # Torch.multionmial can only handle 16_000_000 elements. If there are more possible respawn locations, uniformly sample 16M
+            if len(alive_indices) > 16_000_000:
+                alive_indices = alive_indices[torch.randperm(len(alive_indices))[:16_000_000]]
+            probs = self.opacity_activation(self.properties[:size, opacity1:opacity2]).squeeze(-1)[alive_indices]
             add_idx, ratio = self._sample_alives(probs=probs, num=num_gs, alive_indices=alive_indices)
             # make sure respawn gaussians are unique
             add_idx = torch.where(ratio == 1)[0]
-        
+        ratio = torch.zeros((self.size, 1), device=device, dtype=torch.int32)
         ratio[add_idx] = 1
         (   new_xyz, 
             new_features_dc,
@@ -1838,7 +1843,7 @@ class GaussianModel:
             new_rotation 
         ) = self._update_params(add_idx, ratio=ratio)
         
-        
+        print(f"Spawn {len(add_idx)} new Gaussians")
         new_xyz = new_xyz.repeat_interleave(repeats=2, dim=0)
         new_features_dc = new_features_dc.repeat_interleave(repeats=2, dim=0)
         new_features_rest = new_features_rest.repeat_interleave(repeats=2, dim=0)

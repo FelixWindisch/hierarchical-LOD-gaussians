@@ -181,9 +181,10 @@ void HierarchyLoader::load(const char* filename,
 		int number_of_nodes;
 		infile.read((char*)&number_of_nodes, sizeof(int));
 
-		printf("G: %d, SH: %d, N: %d\n", number_of_gaussians, SH_Degree, number_of_nodes);
 		number_of_nodes = number_of_gaussians;
 		nodes.resize(number_of_nodes);
+		printf("G: %d, SH: %d, N: %d\n", number_of_gaussians, SH_Degree, number_of_nodes);
+
 
 		infile.read((char*)nodes.data(), number_of_nodes * sizeof(HierarchyNode));
 	}

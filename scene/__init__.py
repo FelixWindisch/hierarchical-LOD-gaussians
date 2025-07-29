@@ -41,12 +41,11 @@ class Scene:
         self.train_cameras = {}
         self.test_cameras = {}
         print(args.source_path)
-        args.depths = '../rectified/depths'
         if os.path.exists(os.path.join(args.source_path, "sparse")):
             
-            scene_info = sceneLoadTypeCallbacks["Colmap"](args.source_path, args.images, args.alpha_masks, args.depths, args.eval, args.train_test_exp)
+            scene_info = sceneLoadTypeCallbacks["Colmap"](args.source_path, args.images, args.alpha_masks, args.depths, args.eval, args.train_test_exp, args.llff_hold)
         else:
-            assert False, "Could not recognize scene type!"
+            assert False, f"Could not recognize scene type!, No such directory {os.path.join(args.source_path, 'sparse')}"
 
         if not self.loaded_iter:
             with open(scene_info.ply_path, 'rb') as src_file, open(os.path.join(self.model_path, "input.ply") , 'wb') as dest_file:

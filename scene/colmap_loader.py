@@ -250,8 +250,9 @@ def read_extrinsics_text(path):
             if not line:
                 break
             line = line.strip()
-            if len(line) > 0 and line[0] != "#":
+            if len(line) > 0 and line[0] != "#" and len(line.split()) == 10:
                 elems = line.split()
+                
                 image_id = int(elems[0])
                 qvec = np.array(tuple(map(float, elems[1:5])))
                 tvec = np.array(tuple(map(float, elems[5:8])))

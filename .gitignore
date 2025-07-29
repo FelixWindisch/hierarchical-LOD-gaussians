@@ -4,3 +4,8 @@ output
 build
 tensorboard_3d
 screenshots
+*.pkl
+*.bin
+*.pt
+*.png
+

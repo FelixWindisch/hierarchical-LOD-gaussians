@@ -357,7 +357,8 @@ std::tuple<int,int> CudaRasterizer::Rasterizer::forward(
 	float* invdepth,
 	bool antialiasing,
 	int* radii,
-	bool debug)
+	bool debug,
+    float* contribution)
 {
 	const float focal_y = height / (2.0f * tan_fovy);
 	const float focal_x = width / (2.0f * tan_fovx);
@@ -490,7 +491,7 @@ std::tuple<int,int> CudaRasterizer::Rasterizer::forward(
 		background,
 		out_color,
 		geomState.depths,
-		invdepth), debug)
+		invdepth, contribution), debug)
 
 	CHECK_CUDA(cudaMemcpy(imgState.pixel_colors, out_color, sizeof(float) * width * height * NUM_CHANNELS_3DGS, cudaMemcpyDeviceToDevice), debug);
 	CHECK_CUDA(cudaMemcpy(imgState.pixel_invDepths, invdepth, sizeof(float) * width * height, cudaMemcpyDeviceToDevice), debug);

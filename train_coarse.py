@@ -61,8 +61,6 @@ def training(dataset, opt, pipe, saving_iterations, checkpoint_iterations, check
         if param_group["name"] == "xyz":
             param_group['lr'] = 0.0
             
-    #first_images = [0, 930, 1044, 2094, 2304]
-    #gaussians.save_ply("/home/felix-windisch/Datasets/matrix_city_road_down/output/scaffold/point_cloud/start.ply")
     while iteration < opt.iterations + 1:
         for viewpoint_batch in training_generator:
             for viewpoint_cam in viewpoint_batch:
@@ -133,7 +131,6 @@ def training(dataset, opt, pipe, saving_iterations, checkpoint_iterations, check
                     torchvision.utils.save_image(gt_image, os.path.join(scene.model_path, str(iteration) + "_gt.png"))
                 iter_end.record()
 
-                #gaussians.max_radii2D[visibility_filter] = torch.max(gaussians.max_radii2D[visibility_filter], radii)
 
                 with torch.no_grad():
                     # Progress bar

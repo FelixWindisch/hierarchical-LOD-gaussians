@@ -496,7 +496,6 @@ def read_model(path, ext=""):
         else:
             print("Provide model format: '.bin' or '.txt'")
             return
-
     if ext == ".txt":
         cameras = read_cameras_text(os.path.join(path, "cameras" + ext))
         images = read_images_text(os.path.join(path, "images" + ext))

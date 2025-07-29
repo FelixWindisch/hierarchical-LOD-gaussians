@@ -137,6 +137,12 @@ __device__ void computeColorFromSH(int idx, int deg, int max_coeffs, const glm::
 	// Account for normalization of direction
 	float3 dL_dmean = dnormvdv(float3{ dir_orig.x, dir_orig.y, dir_orig.z }, float3{ dL_ddir.x, dL_ddir.y, dL_ddir.z });
 
+
+	if (isnan(dL_dmean.x) || isnan(dL_dmean.y) || isnan(dL_dmean.z)) 
+	{
+            printf("NaN found at index %d\n in SH backward", idx);
+    }
+
 	// Gradients of loss w.r.t. Gaussian means, but only the portion 
 	// that is caused because the mean affects the view-dependent color.
 	// Additional mean gradient is accumulated in below methods.
@@ -315,11 +321,51 @@ __global__ void computeCov2DCUDA(int P,
 
 	// Account for transformation of mean to t
 	// t = transformPoint4x3(mean, view_matrix);
+
+
+	if (isnan(dL_dtx) || isnan(dL_dty) || isnan(dL_dtz)) 
+	{
+			printf("%f\n", denom2inv);
+			printf("%f\n", c_yy);
+			printf("%f\n", dL_dconic.x );
+			printf("%f\n", c_xy);
+
+			//denom2inv * (-c_yy * c_yy * dL_dconic.x + 2 * c_xy * c_yy * dL_dconic.y + (denom - c_xx * c_yy) * dL_dconic.z);
+			//printf("%f\n", dL_dx);
+			printf("%f\n", T[0][0]);
+			printf("%f\n", Vrk[0][0]);
+			printf("%f\n", dL_dc_xx);
+
+			printf("%f\n", dL_dT00);
+			printf("%f\n", dL_dT10);
+			printf("%f\n", dL_dT01);
+			printf("%f\n", dL_dT11);
+
+			printf("%f\n", dL_dJ02);
+			printf("%f\n", dL_dJ12);
+			printf("%f\n", dL_dJ11);
+			printf("%f\n", dL_dJ00);
+			printf("%f\n", x_grad_mul);
+			printf("%f\n", h_x);
+			printf("%f\n", tz2);
+			printf("%f\n", dL_dtx);
+			printf("%f\n", dL_dty);
+			printf("%f\n", dL_dtz);
+            printf("NaN found at index %d in cov2D backward", idx);
+			printf(" %f %f %f %f %f %f %f %f %f\n", view_matrix[0], view_matrix[4], view_matrix[8],
+		view_matrix[1], view_matrix[5], view_matrix[9],
+		view_matrix[2], view_matrix[6], view_matrix[10]);
+    }
+
 	float3 dL_dmean = transformVec4x3Transpose({ dL_dtx, dL_dty, dL_dtz }, view_matrix);
 
 	// Gradients of loss w.r.t. Gaussian means, but only the portion 
 	// that is caused because the mean affects the covariance matrix.
 	// Additional mean gradient is accumulated in BACKWARD::preprocess.
+	if (isnan(dL_dmean.x) || isnan(dL_dmean.y) || isnan(dL_dmean.z)) 
+	{
+            printf("NaN found at index %d\n in cov2D backward", idx);
+    }
 	dL_dmeans[idx] = dL_dmean;
 }
 
@@ -437,6 +483,10 @@ __global__ void preprocessCUDA(
 
 	// That's the second part of the mean gradient. Previous computation
 	// of cov2D and following SH conversion also affects it.
+	if (isnan(dL_dmean.x) || isnan(dL_dmean.y) || isnan(dL_dmean.z)) 
+	{
+            printf("NaN found at index %d\n in preprocess backward", idx);
+    }
 	dL_dmeans[idx] += dL_dmean;
 
 	// Compute gradient updates due to computing colors from SHs

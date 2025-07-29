@@ -37,7 +37,7 @@ def loadCam(args, id, cam_info, resolution_scale, is_test_dataset):
     else:
         alpha_mask = None
        
-    if cam_info.depth_path != "" and False:
+    if cam_info.depth_path != "":
         try:
             invdepthmap = cv2.imread(cam_info.depth_path, -1)
             
@@ -134,10 +134,6 @@ class CameraDataset(torch.utils.data.Dataset):
 
   def __getitem__(self, index):
         'Generates one sample of data'
-
-        # Select sample
-        if index == 1809:
-            index = 1808
         info = self.list_cam_infos[index]
         X = loadCam(self.args, index, info, self.resolution_scales, self.is_test)
 

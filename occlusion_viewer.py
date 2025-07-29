@@ -37,11 +37,12 @@ from scipy.spatial import KDTree
 import numpy as np
 from gaussian_hierarchy._C import  get_spt_cut_cuda
 from stp_gaussian_rasterization import ExtendedSettings
-from gaussian_renderer import occlusion_cull
+from gaussian_renderer import occlusion_cull, occlusion_cull_cached
 import json
 import pickle
 import colorsys
 import argparse
+from globals import *
 def generate_colors(n, saturation=0.6, lightness=0.5):
     colors = torch.zeros((n, 3), dtype=torch.float32, device='cuda')
     for i in range(n):
@@ -148,7 +149,47 @@ def render(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoint_
 
     gaussians.compact_gaussians(opt.storage_device, max_number_of_gaussians=None, densification=False, training=False)
 
-    gaussians.build_hierarchical_SPT(opt.SPT_root_volume, SPT_Target_Granularity, opt.use_bounding_spheres)
+    opt.min_SPT_size = 5
+    
+    SPT_cache_path = (os.path.splitext(hierarchy_path)[0] + '_SPT_cache.pt')
+    if((not os.path.exists(SPT_cache_path) )or gaussians.size < 10_000_000):
+        gaussians.build_hierarchical_SPT(opt.SPT_root_volume, SPT_Target_Granularity, opt.use_bounding_spheres, opt.min_SPT_size)
+        SPTs = {
+            'min': gaussians.SPT_min,
+            'max': gaussians.SPT_max,
+            'index': gaussians.SPT_gaussian_indices,
+            'starts': gaussians.SPT_starts,
+            'upper_tree_nodes': gaussians.upper_tree_nodes,
+            'upper_tree_xyz': gaussians.upper_tree_xyz,
+            'upper_tree_scales': gaussians.upper_tree_scaling,
+            'min_distance_squared': gaussians.min_distance_squared
+            }
+        print(f"Write computed SPTs to {SPT_cache_path}")
+        torch.save(SPTs, SPT_cache_path)
+    else:
+        print(f"Loaded computed SPTs from {SPT_cache_path}")
+        loaded_SPTs = torch.load(SPT_cache_path)
+        
+        gaussians.SPT_min = loaded_SPTs['min']
+        gaussians.SPT_max = loaded_SPTs['max']
+        gaussians.SPT_gaussian_indices = loaded_SPTs['index']
+        gaussians.SPT_starts = loaded_SPTs['starts']
+        
+        gaussians.upper_tree_nodes = loaded_SPTs['upper_tree_nodes']
+        gaussians.upper_tree_xyz = loaded_SPTs['upper_tree_xyz']
+        gaussians.upper_tree_scaling = loaded_SPTs['upper_tree_scales']
+        gaussians.min_distance_squared = loaded_SPTs['min_distance_squared']
+
+    SPT_root_indices = gaussians.upper_tree_nodes[torch.logical_and(gaussians.upper_tree_nodes[:, hierarchy_node_child_count] == 0, gaussians.upper_tree_nodes[:, hierarchy_node_first_child] >= 0), 5].cpu()
+    all_SPT_indices = gaussians.upper_tree_nodes[torch.logical_and(gaussians.upper_tree_nodes[:, hierarchy_node_child_count] == 0, gaussians.upper_tree_nodes[:, hierarchy_node_first_child] >= 0), hierarchy_node_first_child]
+    upper_SPT_indices = torch.where(torch.logical_and(gaussians.upper_tree_nodes[:, hierarchy_node_child_count] == 0, gaussians.upper_tree_nodes[:, hierarchy_node_first_child] >= 0))[0]
+    gaussians.SPT_means3D = gaussians.properties[SPT_root_indices, xyz1:xyz2].cuda().contiguous()
+    gaussians.SPT_scales = gaussians.scaling_activation(gaussians.properties[SPT_root_indices, scales1:scales2].cuda().contiguous())
+    gaussians.SPT_rotations = gaussians.rotation_activation(gaussians.properties[SPT_root_indices, rotation1:rotation2].cuda().contiguous())
+    gaussians.SPT_features_dc = gaussians.properties[SPT_root_indices, features1:features2].cuda().unsqueeze(1).contiguous()
+    gaussians.SPT_opacity = gaussians.opacity_activation(gaussians.properties[SPT_root_indices, opacity1].cuda().unsqueeze(1).contiguous())
+    gaussians.SPT_features_rest = gaussians.properties[SPT_root_indices, features_rest1: features_rest2].cuda().reshape(len(SPT_root_indices), SH_properties_single, 3).contiguous()
+    
     print("Built SPTs")
     bg_color = [1, 1, 1] if dataset.white_background else [0, 0, 0]
     background = torch.tensor(bg_color, dtype=torch.float32, device="cuda")
@@ -181,6 +222,7 @@ def render(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoint_
     # for each SPT, store the distance, index and start in the rendering set from the previous iteration
     prev_SPT_distances = torch.empty(0, dtype = torch.float32, device='cuda')
     prev_SPT_indices = torch.empty(0, dtype = torch.int32, device='cuda')
+    prev_occlusion_mask = torch.zeros(len(gaussians.SPT_starts)-1, dtype = torch.bool, device='cuda')
     prev_SPT_starts = torch.empty(0, dtype = torch.int32, device='cuda')    
 
     if not replay:
@@ -245,51 +287,43 @@ def render(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoint_
                     if not viewer_options["freeze_view"]:
 
                         ############# SPT Cache
-                        if opt.use_bounding_spheres:
-                            bounds = gaussians.bounding_sphere_radii
-                        else: 
-                            bounds = (gaussians.scaling_activation(torch.max(gaussians.upper_tree_scaling, dim=-1)[0]) * 3.0)
-                        planes = gaussians.extract_frustum_planes(viewpoint_cam.full_proj_transform.cuda())
-                        if opt.use_frustum_culling:
-                            frustum_cull = lambda indices : gaussians.frustum_cull_spheres(gaussians.upper_tree_xyz[indices], bounds[indices], planes)
-                        else:
-                            frustum_cull = lambda indices : torch.ones(len(indices), dtype = torch.bool)
-                        camera_position = viewpoint_cam.camera_center.cuda()
-                        sub_clock()
-                        LOD_detail_cut = lambda indices : gaussians.min_distance_squared[indices] > (camera_position - gaussians.upper_tree_xyz[indices]).square().sum(dim=-1) * viewer_options["distance_multiplier"]
+                        
                         # The coarse cut contains intermediate nodes from the upper tree and leaf nodes, with some leaf nodes containing SPTs
-                        coarse_cut = gaussians.cut_hierarchy_on_condition(gaussians.upper_tree_nodes, LOD_detail_cut, return_upper_tree=False, root_node=0, leave_out_of_cut_condition=frustum_cull)
 
-                        if viewer_options["use_occlusion_culling"]: #opt.use_occlusion_culling:
-                            bg_color = [0, 0, 0]
-                            background = torch.tensor(bg_color, dtype=torch.float32, device="cuda")
-                            temp = len(coarse_cut)
-                            occlusion_indices = gaussians.upper_tree_nodes[coarse_cut, 5]
-                            occlusion_mask, occlusion_image = occlusion_cull(occlusion_indices.to(opt.storage_device), gaussians, viewpoint_cam, pipe, background)
-                            occlusion_mask = occlusion_mask.cuda()
-                            coarse_cut = coarse_cut[occlusion_mask]
-                            print(f"Occlusion Cull {temp - len(coarse_cut)} out of {temp} upper tree gaussians")
+                        camera_position = viewpoint_cam.camera_center.cuda()
 
-                        # leaf nodes have 0 children
-                        cut_leaf_nodes = coarse_cut[gaussians.upper_tree_nodes[coarse_cut, 2] == 0]
-                        # separate the cut into leafs that contain an SPT and those that don't
-                        # The SPT indices are the child indices of those nodes that have a 0 child count
-                        SPT_indices = gaussians.upper_tree_nodes[cut_leaf_nodes][gaussians.upper_tree_nodes[cut_leaf_nodes, 3] >= 0, 3]
+                        bg_color = [0, 0, 0]
+                        background = torch.tensor(bg_color, dtype=torch.float32, device="cuda")
+                        
+                        
+                        occlusion_mask, occlusion_image = occlusion_cull_cached(gaussians, viewpoint_cam, pipe, background)
+                        occlusion_mask = occlusion_mask.cuda()
+                        
+                        SPT_indices, indices = torch.sort(all_SPT_indices[occlusion_mask])
+                        print(f"Render {100 * (len(SPT_indices)) / len(all_SPT_indices)} % of SPTs")
 
-                        upper_tree_nodes_to_render = gaussians.upper_tree_nodes[coarse_cut][gaussians.upper_tree_nodes[coarse_cut, 3] <= 0, 5]
 
-                        SPT_upper_tree_indices = cut_leaf_nodes[gaussians.upper_tree_nodes[cut_leaf_nodes, 3] >= 0]
+                        upper_tree_nodes_to_render = torch.empty(0, dtype=torch.int32, device='cuda')
+
+                        SPT_upper_tree_indices = upper_SPT_indices[occlusion_mask]
 
                         SPT_distances = (gaussians.upper_tree_xyz[SPT_upper_tree_indices] - camera_position).pow(2).sum(1).sqrt() * viewer_options["distance_multiplier"]
-
                         
+                        print(f"Occlusion Changed? {(prev_occlusion_mask == occlusion_mask).all()}")
+                        
+                        #keep_mask = torch.logical_and(prev_occlusion_mask, occlusion_mask)
+                        #mask_prefix_sum = torch.cumsum(occlusion_mask, 0, dtype=torch.int32)
+                        #prev_mask_prefix_sum = torch.cumsum(prev_occlusion_mask, 0, dtype=torch.int32)
+#
+                        #prev_equal_SPT_cache_indices = prev_mask_prefix_sum[keep_mask]-1
+                        #equal_SPT_cache_indices = mask_prefix_sum[keep_mask]-1
 
                         prev_to_new_SPT_order = torch.searchsorted(SPT_indices, prev_SPT_indices)
 
                         equal_SPT_cache_mask = (prev_to_new_SPT_order < len(SPT_indices)) & (SPT_indices[prev_to_new_SPT_order.clamp_max(len(SPT_indices)-1)] == prev_SPT_indices)
                         prev_equal_SPT_cache_indices = torch.nonzero(equal_SPT_cache_mask, as_tuple=True)[0]
                         equal_SPT_cache_indices = prev_to_new_SPT_order[equal_SPT_cache_mask]
-
+                        
                         prev_distances_compare = prev_SPT_distances[prev_equal_SPT_cache_indices]
                         distances_compare = SPT_distances[equal_SPT_cache_indices]
                         #close_enough = torch.isclose(distances_compare, prev_distances_compare, rtol=Reuse_SPT_Tolerarance, atol=0.05)
@@ -297,9 +331,10 @@ def render(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoint_
                         close_enough &= (prev_distances_compare/distances_compare) < 1.5
                         #close_enough &= (prev_distances_compare/distances_compare) < -1.5
                         reuse_SPT_indices = SPT_indices[equal_SPT_cache_indices[close_enough]]
-
-
+                        print(f"reuse {len(reuse_SPT_indices)} out of {len(SPT_indices)} SPTs")
+    
                         prev_keep_SPT_cache_indices = prev_equal_SPT_cache_indices[close_enough]
+                        
 
                         # Keep all the gaussians that are contained in an STP that is reused and close enough
                         # Cumulative Sum Trick
@@ -364,7 +399,7 @@ def render(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoint_
 
                         load_from_disk_indices = torch.cat((upper_tree_nodes_to_render, load_SPT_gaussian_indices))
 
-
+ 
 
                         gaussian_indices = torch.cat((gaussian_indices[:gaussians.skybox_points], load_from_disk_indices, gaussian_indices[reuse_gaussians_mask]))
                         print(f"Load Percent: {len(load_from_disk_indices) * 100/ number_of_gaussians_to_render}")
@@ -387,6 +422,7 @@ def render(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoint_
 
 
                         prev_SPT_indices = SPT_indices
+                        prev_occlusion_mask = occlusion_mask
                         prev_SPT_distances = SPT_distances
                         prev_SPT_starts = SPT_starts_new
                         torch.cuda.empty_cache()
