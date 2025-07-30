@@ -128,7 +128,7 @@ class ModelParams(ParamGroup):
         self.skip_scale_big_gauss = False
         self.hierarchy = ""
         self.pretrained = ""
-        self.skybox_num = 0
+        self.skybox_num = 100_000
         self.scaffold_file = ""
         self.bounds_file = ""
         self.skybox_locked = False

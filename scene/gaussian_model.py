@@ -521,6 +521,7 @@ class GaussianModel:
         if densification:
             self._densification_criterium = torch.zeros(max_number_of_gaussians, device=device, dtype=torch.float)
         self.size = len(self._xyz)
+        self._features_rest = self._features_rest[:, :spherical_harmonics_properties//3, :]
         tensors = [self._xyz,  self._scaling, self._rotation, self._features_dc.squeeze(), self._opacity, self._features_rest.reshape(self.size, spherical_harmonics_properties)]
         current_index = 0
         for index, tensor in enumerate(tensors):
@@ -1064,7 +1065,8 @@ class GaussianModel:
         xyz, shs_all, alpha, scales, rots, nodes = load_dynamic_hierarchy(path)
         # set first child to 0 for all nodes that do not have children (because this is fucked up in some hierarchy files)
         SH_mapping = {4: 1, 9: 2, 16: 3}
-        self.max_sh_degree = SH_mapping[shs_all.shape[1]]
+        if self.max_sh_degree is None:
+            self.max_sh_degree = SH_mapping[shs_all.shape[1]]
         self.active_sh_degree = self.max_sh_degree
         Max_SH_Degree = self.max_sh_degree
         SH_properties = number_SH_properties[Max_SH_Degree] * 3
@@ -1131,6 +1133,7 @@ class GaussianModel:
             nodes[:, hierarchy_node_first_child] += self.skybox_points
             nodes[:, hierarchy_node_parent] += self.skybox_points
             
+
             nodes[nodes[:,hierarchy_node_next_sibling]>0, hierarchy_node_next_sibling] += self.skybox_points
             nodes[0, hierarchy_node_parent] = -1
             nodes = torch.cat((torch.full((self.skybox_points, 6), -99, dtype=torch.int32), nodes)) 
