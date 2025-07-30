@@ -119,7 +119,7 @@ def render(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoint_
     
     first_iter = 0
     prepare_output_and_logger(dataset)
-    gaussians = GaussianModel(dataset.sh_degree)
+    gaussians = GaussianModel(None)
     gaussians.scaffold_points = None
     with torch.no_grad():
         gaussians._features_dc = gaussians._features_dc.abs() 

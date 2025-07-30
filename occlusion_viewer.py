@@ -43,6 +43,8 @@ import pickle
 import colorsys
 import argparse
 from globals import *
+import torch.profiler
+
 def generate_colors(n, saturation=0.6, lightness=0.5):
     colors = torch.zeros((n, 3), dtype=torch.float32, device='cuda')
     for i in range(n):
@@ -112,7 +114,7 @@ range2 = [xyz2, scales2, rotation2, features2, opacity2, features_rest2]
 non_blocking=False
 def render(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoint_iterations, checkpoint, debug_from,  hierarchy_path, replay=False, cam_path_id=0):
     global SH_properties, features_rest2, SH_properties, SH_properties_single
-
+    random.seed(time.time())
     camera_path_id = random.randint(0, 100000) if not replay else cam_path_id
     global Reuse_SPT_Tolerarance
     #torch.cuda.memory._record_memory_history()
@@ -120,7 +122,7 @@ def render(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoint_
     
     first_iter = 0
     prepare_output_and_logger(dataset)
-    gaussians = GaussianModel(dataset.sh_degree)
+    gaussians = GaussianModel(None)
     gaussians.scaffold_points = None
     with torch.no_grad():
         gaussians._features_dc = gaussians._features_dc.abs() 
@@ -250,288 +252,300 @@ def render(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoint_
         }
     
     # Render Loop
-    while True:
-        if network_gui.conn == None and not replay:
-            print("Try Connect")
-            network_gui.try_connect()
-        while network_gui.conn != None or replay:
-            try:
-                net_image_bytes = None
-                if not replay:
-                    custom_cam, do_training, keep_alive_, scaling_modifer, slider = network_gui.receive()
-                    for key, value in slider.items():
-                        if key in viewer_options:
-                            if type(viewer_options[key]) is bool:
-                                viewer_options[key] = value > 0
-                            if type(viewer_options[key]) is float:
-                                viewer_options[key] = value
-                else:
-                    custom_cam =  pickle.load(cam_path_file)
-                if custom_cam != None:
-                    ####### RENDER
-                    viewpoint_cam = custom_cam
-                    
-                    if viewer_options["record_traj"]:
-                        with open(f"CameraPaths/camera_path_{camera_path_id}.txt", "ab") as f:
-                            pickle.dump(custom_cam, f)
-                    clock()
-                    viewpoint_cam.world_view_transform = viewpoint_cam.world_view_transform.cuda()
-                    viewpoint_cam.full_proj_transform = viewpoint_cam.full_proj_transform.cuda()
-                    viewpoint_cam.camera_center = viewpoint_cam.camera_center.cuda()
-                    
-                    if replay:
-                        viewpoint_cam.image_width = 1100
-                        viewpoint_cam.image_height = 900
-                        viewpoint_cam.FoVx =viewpoint_cam.FoVx * 1.1
-                        viewpoint_cam.FoVy =viewpoint_cam.FoVy * 0.9
-                    if not viewer_options["freeze_view"]:
+    with torch.profiler.profile(
+    activities=[
+        torch.profiler.ProfilerActivity.CPU,
+        torch.profiler.ProfilerActivity.CUDA
+    ],
+    record_shapes=True,
+    with_stack=True
+) as prof:
+        while True:
+            if network_gui.conn == None and not replay:
+                print("Try Connect")
+                network_gui.try_connect()
+            while network_gui.conn != None or replay:
+                try:
+                    net_image_bytes = None
+                    if not replay:
+                        custom_cam, do_training, keep_alive_, scaling_modifer, slider = network_gui.receive()
+                        for key, value in slider.items():
+                            if key in viewer_options:
+                                if type(viewer_options[key]) is bool:
+                                    viewer_options[key] = value > 0
+                                if type(viewer_options[key]) is float:
+                                    viewer_options[key] = value
+                    else:
+                        custom_cam =  pickle.load(cam_path_file)
+                    if custom_cam != None:
+                        ####### RENDER
+                        viewpoint_cam = custom_cam
 
-                        ############# SPT Cache
-                        
-                        # The coarse cut contains intermediate nodes from the upper tree and leaf nodes, with some leaf nodes containing SPTs
+                        if viewer_options["record_traj"]:
+                            with open(f"CameraPaths/camera_path_{camera_path_id}.txt", "ab") as f:
+                                pickle.dump(custom_cam, f)
+                        clock()
+                        viewpoint_cam.world_view_transform = viewpoint_cam.world_view_transform.cuda()
+                        viewpoint_cam.full_proj_transform = viewpoint_cam.full_proj_transform.cuda()
+                        viewpoint_cam.camera_center = viewpoint_cam.camera_center.cuda()
 
-                        camera_position = viewpoint_cam.camera_center.cuda()
+                        if replay:
+                            viewpoint_cam.image_width = 1100
+                            viewpoint_cam.image_height = 900
+                            viewpoint_cam.FoVx =viewpoint_cam.FoVx * 1.1
+                            viewpoint_cam.FoVy =viewpoint_cam.FoVy * 0.9
+                        if not viewer_options["freeze_view"]:
 
-                        bg_color = [0, 0, 0]
-                        background = torch.tensor(bg_color, dtype=torch.float32, device="cuda")
-                        
-                        
-                        occlusion_mask, occlusion_image = occlusion_cull_cached(gaussians, viewpoint_cam, pipe, background)
-                        occlusion_mask = occlusion_mask.cuda()
-                        
-                        SPT_indices, indices = torch.sort(all_SPT_indices[occlusion_mask])
-                        print(f"Render {100 * (len(SPT_indices)) / len(all_SPT_indices)} % of SPTs")
+                            ############# SPT Cache
+
+                            # The coarse cut contains intermediate nodes from the upper tree and leaf nodes, with some leaf nodes containing SPTs
+
+                            camera_position = viewpoint_cam.camera_center.cuda()
+
+                            bg_color = [0, 0, 0]
+                            background = torch.tensor(bg_color, dtype=torch.float32, device="cuda")
 
 
-                        upper_tree_nodes_to_render = torch.empty(0, dtype=torch.int32, device='cuda')
+                            occlusion_mask, occlusion_image = occlusion_cull_cached(gaussians, viewpoint_cam, pipe, background)
+                            occlusion_mask = occlusion_mask.cuda()
 
-                        SPT_upper_tree_indices = upper_SPT_indices[occlusion_mask]
+                            SPT_indices, indices = torch.sort(all_SPT_indices[occlusion_mask])
+                            print(f"Render {100 * (len(SPT_indices)) / len(all_SPT_indices)} % of SPTs")
 
-                        SPT_distances = (gaussians.upper_tree_xyz[SPT_upper_tree_indices] - camera_position).pow(2).sum(1).sqrt() * viewer_options["distance_multiplier"]
-                        
-                        print(f"Occlusion Changed? {(prev_occlusion_mask == occlusion_mask).all()}")
-                        
-                        #keep_mask = torch.logical_and(prev_occlusion_mask, occlusion_mask)
-                        #mask_prefix_sum = torch.cumsum(occlusion_mask, 0, dtype=torch.int32)
-                        #prev_mask_prefix_sum = torch.cumsum(prev_occlusion_mask, 0, dtype=torch.int32)
-#
-                        #prev_equal_SPT_cache_indices = prev_mask_prefix_sum[keep_mask]-1
-                        #equal_SPT_cache_indices = mask_prefix_sum[keep_mask]-1
 
-                        prev_to_new_SPT_order = torch.searchsorted(SPT_indices, prev_SPT_indices)
+                            upper_tree_nodes_to_render = torch.empty(0, dtype=torch.int32, device='cuda')
 
-                        equal_SPT_cache_mask = (prev_to_new_SPT_order < len(SPT_indices)) & (SPT_indices[prev_to_new_SPT_order.clamp_max(len(SPT_indices)-1)] == prev_SPT_indices)
-                        prev_equal_SPT_cache_indices = torch.nonzero(equal_SPT_cache_mask, as_tuple=True)[0]
-                        equal_SPT_cache_indices = prev_to_new_SPT_order[equal_SPT_cache_mask]
-                        
-                        prev_distances_compare = prev_SPT_distances[prev_equal_SPT_cache_indices]
-                        distances_compare = SPT_distances[equal_SPT_cache_indices]
-                        #close_enough = torch.isclose(distances_compare, prev_distances_compare, rtol=Reuse_SPT_Tolerarance, atol=0.05)
-                        close_enough = (prev_distances_compare/distances_compare) > 0.3
-                        close_enough &= (prev_distances_compare/distances_compare) < 1.5
-                        #close_enough &= (prev_distances_compare/distances_compare) < -1.5
-                        reuse_SPT_indices = SPT_indices[equal_SPT_cache_indices[close_enough]]
-                        print(f"reuse {len(reuse_SPT_indices)} out of {len(SPT_indices)} SPTs")
+                            SPT_upper_tree_indices = upper_SPT_indices[occlusion_mask]
+
+                            SPT_distances = (gaussians.upper_tree_xyz[SPT_upper_tree_indices] - camera_position).pow(2).sum(1).sqrt() * viewer_options["distance_multiplier"]
+
+                            print(f"Occlusion Changed? {(prev_occlusion_mask == occlusion_mask).all()}")
+
+                            #keep_mask = torch.logical_and(prev_occlusion_mask, occlusion_mask)
+                            #mask_prefix_sum = torch.cumsum(occlusion_mask, 0, dtype=torch.int32)
+                            #prev_mask_prefix_sum = torch.cumsum(prev_occlusion_mask, 0, dtype=torch.int32)
+#   
+                            #prev_equal_SPT_cache_indices = prev_mask_prefix_sum[keep_mask]-1
+                            #equal_SPT_cache_indices = mask_prefix_sum[keep_mask]-1
+
+                            prev_to_new_SPT_order = torch.searchsorted(SPT_indices, prev_SPT_indices)
+
+                            equal_SPT_cache_mask = (prev_to_new_SPT_order < len(SPT_indices)) & (SPT_indices[prev_to_new_SPT_order.clamp_max(len(SPT_indices)-1)] == prev_SPT_indices)
+                            prev_equal_SPT_cache_indices = torch.nonzero(equal_SPT_cache_mask, as_tuple=True)[0]
+                            equal_SPT_cache_indices = prev_to_new_SPT_order[equal_SPT_cache_mask]
+
+                            prev_distances_compare = prev_SPT_distances[prev_equal_SPT_cache_indices]
+                            distances_compare = SPT_distances[equal_SPT_cache_indices]
+                            #close_enough = torch.isclose(distances_compare, prev_distances_compare, rtol=Reuse_SPT_Tolerarance, atol=0.05)
+                            close_enough = (prev_distances_compare/distances_compare) > 0.3
+                            close_enough &= (prev_distances_compare/distances_compare) < 1.5
+                            #close_enough &= (prev_distances_compare/distances_compare) < -1.5
+                            reuse_SPT_indices = SPT_indices[equal_SPT_cache_indices[close_enough]]
+                            print(f"reuse {len(reuse_SPT_indices)} out of {len(SPT_indices)} SPTs")
+
+                            prev_keep_SPT_cache_indices = prev_equal_SPT_cache_indices[close_enough]
+
+
+                            # Keep all the gaussians that are contained in an STP that is reused and close enough
+                            # Cumulative Sum Trick
+                            reuse_gaussians_mask = torch.zeros(len(gaussian_indices)+1, dtype=torch.int32, device='cuda')
+                            debug_x = prev_SPT_starts[prev_keep_SPT_cache_indices]
+                            if len(debug_x) > 0:
+                                if torch.max(debug_x, 0)[0].item() > len(reuse_gaussians_mask):
+                                    print("Debug X is bigger than reuse_gaussians_mask")
+                                if torch.min(debug_x, 0)[0].item() < 0:
+                                    print("Debug X is less than 0")
+                            reuse_gaussians_mask[debug_x] += 1
+                            debug_y = prev_SPT_starts[prev_keep_SPT_cache_indices+1]
+                            reuse_gaussians_mask[debug_y] -= 1
+                            reuse_gaussians_mask = reuse_gaussians_mask.cumsum(0)[:-1].bool()
+
+                            load_SPT_mask = torch.zeros(len(SPT_indices), device='cuda', dtype=torch.bool)
+                            load_SPT_mask.scatter_(0, equal_SPT_cache_indices[close_enough].to(torch.int64), True)      
+                            load_SPT_mask = ~load_SPT_mask                  
+                            load_SPT_indices = SPT_indices[load_SPT_mask]
+                            load_SPT_distances = SPT_distances[load_SPT_mask]
+
+                            if len(load_SPT_indices) > 0:
+                                #LOAD SPT CUT
+                                load_SPT_gaussian_indices, load_SPT_starts = get_spt_cut_cuda(len(load_SPT_indices), gaussians.SPT_gaussian_indices, gaussians.SPT_starts, gaussians.SPT_max, gaussians.SPT_min, load_SPT_indices, load_SPT_distances)
+                            else:
+                                print("No SPTs loaded")
+                                load_SPT_gaussian_indices, load_SPT_starts = torch.empty(0, dtype=torch.int32, device='cuda'), torch.empty(0, dtype=torch.int32, device='cuda')
+                            #SPT_counts += gaussians.skybox_points
+                            cut_time = sub_clock()
+
+                            if len(load_SPT_starts) > 0:    
+                                if len(load_SPT_gaussian_indices) == load_SPT_starts[-1]:
+                                    print("Last SPT empty")
+                                    load_SPT_starts = load_SPT_starts[:-1]
+                                    load_SPT_distances = load_SPT_distances[:-1]
+                                    load_SPT_indices = load_SPT_indices[:-1]
+                            #    
+                            ### BAND AID FIX
+
+                            #cache_SPT_cache_indices = torch.where(~equal_SPT_cache_mask)[0]    
+                            #cache_SPT_indices = prev_SPT_indices[cache_SPT_cache_indices]
+                            SPT_indices = torch.cat((load_SPT_indices, reuse_SPT_indices))
+
+
+                            SPT_starts_new = torch.zeros(len(load_SPT_indices) + len(reuse_SPT_indices) + 1,dtype=torch.int32, device='cuda')
+                            # compact the prefix sum of SPT_counts
+
+                            SPT_starts_new[:len(load_SPT_starts)] = load_SPT_starts + gaussians.skybox_points
+                            SPT_starts_new[len(load_SPT_starts)] = len(load_SPT_gaussian_indices) + gaussians.skybox_points
+                            #prefix = len(cut_SPTs) + gaussians.skybox_points
+                            #for index, i in enumerate(SPT_keep_counts_indices):
+                            #    SPT_starts_new[index + len(SPT_counts)] = prefix
+                            #    prefix += (prev_SPT_counts[i+1] - prev_SPT_counts[i]).item()
+
+                            sizes = prev_SPT_starts[prev_keep_SPT_cache_indices + 1] - prev_SPT_starts[prev_keep_SPT_cache_indices]
+                            SPT_starts_new[len(load_SPT_starts) + 1:len(load_SPT_starts) + 1 + len(sizes)] = torch.cumsum(sizes, dim=0) +  len(load_SPT_gaussian_indices) + gaussians.skybox_points
+
+                            number_of_gaussians_to_render = SPT_starts_new[len(load_SPT_starts) + len(sizes)]
+
+
+                            SPT_distances = torch.cat((load_SPT_distances, prev_SPT_distances[prev_keep_SPT_cache_indices]))
+
+                            load_from_disk_indices = torch.cat((upper_tree_nodes_to_render, load_SPT_gaussian_indices))
+
     
-                        prev_keep_SPT_cache_indices = prev_equal_SPT_cache_indices[close_enough]
-                        
 
-                        # Keep all the gaussians that are contained in an STP that is reused and close enough
-                        # Cumulative Sum Trick
-                        reuse_gaussians_mask = torch.zeros(len(gaussian_indices)+1, dtype=torch.int32, device='cuda')
-                        debug_x = prev_SPT_starts[prev_keep_SPT_cache_indices]
-                        if len(debug_x) > 0:
-                            if torch.max(debug_x, 0)[0].item() > len(reuse_gaussians_mask):
-                                print("Debug X is bigger than reuse_gaussians_mask")
-                            if torch.min(debug_x, 0)[0].item() < 0:
-                                print("Debug X is less than 0")
-                        reuse_gaussians_mask[debug_x] += 1
-                        debug_y = prev_SPT_starts[prev_keep_SPT_cache_indices+1]
-                        reuse_gaussians_mask[debug_y] -= 1
-                        reuse_gaussians_mask = reuse_gaussians_mask.cumsum(0)[:-1].bool()
+                            gaussian_indices = torch.cat((gaussian_indices[:gaussians.skybox_points], load_from_disk_indices, gaussian_indices[reuse_gaussians_mask]))
+                            print(f"Load Percent: {len(load_from_disk_indices) * 100/ number_of_gaussians_to_render}")
+                            load_from_disk_indices = load_from_disk_indices.to(opt.storage_device)
+                            SPT_starts_new += len(upper_tree_nodes_to_render)
 
-                        load_SPT_mask = torch.zeros(len(SPT_indices), device='cuda', dtype=torch.bool)
-                        load_SPT_mask.scatter_(0, equal_SPT_cache_indices[close_enough].to(torch.int64), True)      
-                        load_SPT_mask = ~load_SPT_mask                  
-                        load_SPT_indices = SPT_indices[load_SPT_mask]
-                        load_SPT_distances = SPT_distances[load_SPT_mask]
+                            assert(SPT_starts_new[-1] == len(gaussian_indices))
+                            number_to_render = len(gaussian_indices)
+                            distance_multiplier = viewer_options["distance_multiplier"]
 
-                        if len(load_SPT_indices) > 0:
-                            #LOAD SPT CUT
-                            load_SPT_gaussian_indices, load_SPT_starts = get_spt_cut_cuda(len(load_SPT_indices), gaussians.SPT_gaussian_indices, gaussians.SPT_starts, gaussians.SPT_max, gaussians.SPT_min, load_SPT_indices, load_SPT_distances)
+                            load_tensor = gaussians.properties[load_from_disk_indices, :].cuda(non_blocking=non_blocking)
+
+                            means3D = nn.Parameter(torch.cat((means3D[:gaussians.skybox_points], load_tensor[:, xyz1:xyz2].cuda(non_blocking=non_blocking), means3D[reuse_gaussians_mask])).contiguous())
+                            opacity = nn.Parameter(torch.cat((opacity[:gaussians.skybox_points], load_tensor[:, opacity1:opacity2].cuda(non_blocking=non_blocking), opacity[reuse_gaussians_mask])).contiguous())
+                            scales = nn.Parameter(torch.cat((scales[:gaussians.skybox_points], load_tensor[:, scales1:scales2].cuda(non_blocking=non_blocking), scales[reuse_gaussians_mask])).contiguous())
+                            rotations = nn.Parameter(torch.cat((rotations[:gaussians.skybox_points], load_tensor[:, rotation1:rotation2].cuda(non_blocking=non_blocking), rotations[reuse_gaussians_mask])).contiguous())
+                            # TODO: ABS?
+                            features_dc = nn.Parameter(torch.cat((features_dc[:gaussians.skybox_points], load_tensor[:, features1:features2].cuda(non_blocking=non_blocking).unsqueeze(1), features_dc[reuse_gaussians_mask])).contiguous())
+                            features_rest = nn.Parameter(torch.cat((features_rest[:gaussians.skybox_points], load_tensor[:, features_rest1:features_rest2].cuda(non_blocking=non_blocking).reshape(len(load_tensor), SH_properties_single, 3), features_rest[reuse_gaussians_mask])).contiguous())
+
+
+                            prev_SPT_indices = SPT_indices
+                            prev_occlusion_mask = occlusion_mask
+                            prev_SPT_distances = SPT_distances
+                            prev_SPT_starts = SPT_starts_new
+                            #torch.cuda.empty_cache()
+
+
+
+                        if viewer_options["color_distance"]:
+                            colors_precomp = torch.zeros_like(scales, device='cuda')
+                            SPT_distances_remapped = (SPT_distances - SPT_distances.min()) / (SPT_distances.max() - SPT_distances.min())
+                            #SPT_distances_remapped = (SPT_distances) / 500.0
+
+                            # Skybox is blue
+                            colors_precomp[:gaussians.skybox_points, 0] = 0
+                            colors_precomp[:gaussians.skybox_points, 1] = 0
+                            colors_precomp[:gaussians.skybox_points, 2] = 1
+                            for i in range(len(SPT_indices)):
+                                min_range =  SPT_starts_new[i]
+                                max_range = len(gaussian_indices) if i+1 == len(SPT_indices) else  SPT_starts_new[i+1]
+                                colors_precomp[min_range:max_range, 0] = SPT_distances_remapped[i]
+                                colors_precomp[min_range:max_range, 1] = SPT_distances_remapped[i]
+                                colors_precomp[min_range:max_range, 2] = SPT_distances_remapped[i]
+                        elif viewer_options["color_size"]:
+                            colors_precomp = torch.zeros_like(scales, device='cuda')
+                            SPT_sizes = torch.abs(SPT_starts_new[1:] - SPT_starts_new[:-1]) / (gaussians.SPT_starts[SPT_indices+1] - gaussians.SPT_starts[SPT_indices])
+                            SPT_sizes_remapped = (SPT_sizes - SPT_sizes.min()) / (SPT_sizes.max() - SPT_sizes.min())
+                            # Skybox is blue
+                            colors_precomp[:gaussians.skybox_points, 0] = 0
+                            colors_precomp[:gaussians.skybox_points, 1] = 0
+                            colors_precomp[:gaussians.skybox_points, 2] = 1
+                            for i in range(len(SPT_indices)):
+                                min_range = SPT_starts_new[i]
+                                max_range = len(gaussian_indices) if i+1 == len(SPT_indices) else SPT_starts_new[i+1]
+                                colors_precomp[min_range:max_range, 0] = SPT_sizes_remapped[i]
+                                colors_precomp[min_range:max_range, 1] = SPT_sizes_remapped[i]
+                                colors_precomp[min_range:max_range, 2] = SPT_sizes_remapped[i]
+                        elif viewer_options["separate_SPTs"]:
+                            colors_precomp = torch.zeros_like(scales, device='cuda')
+                            # Skybox is blue
+                            colors_precomp[:gaussians.skybox_points, 0] = 0
+                            colors_precomp[:gaussians.skybox_points, 1] = 0
+                            colors_precomp[:gaussians.skybox_points, 2] = 1
+                            random_colors = generate_colors(len(SPT_indices))
+                            for i in range(len(SPT_indices)):
+                                min_range =  SPT_starts_new[i]
+                                max_range = len(gaussian_indices) if i+1 == len(SPT_indices) else  SPT_starts_new[i+1]
+                                colors_precomp[min_range:max_range, :] = random_colors[i]
+                            colors_precomp[-len(upper_tree_nodes_to_render):, :] = 1
+                        elif viewer_options["highlight_leaves"]:
+                            colors_precomp = torch.zeros_like(scales, device='cuda')
+                            # Skybox is blue
+                            colors_precomp[:, 0] = 1
+                            leaf_mask = gaussians.nodes[gaussian_indices.cpu(), 2] == 0
+                            colors_precomp[leaf_mask.cuda(), :] = 1
                         else:
-                            print("No SPTs loaded")
-                            load_SPT_gaussian_indices, load_SPT_starts = torch.empty(0, dtype=torch.int32, device='cuda'), torch.empty(0, dtype=torch.int32, device='cuda')
-                        #SPT_counts += gaussians.skybox_points
-                        cut_time = sub_clock()
+                            colors_precomp = None
+                        render_pkg = render_vanilla(
+                            viewpoint_cam, 
+                            means3D,
+                            gaussians.opacity_activation(opacity),
+                            gaussians.scaling_activation(scales), 
+                            gaussians.rotation_activation(rotations),
+                            features_dc,
+                            features_rest,
+                            pipe, 
+                            background,
+                            #splat_args=splat_settings,
+                            override_color = colors_precomp, 
+                            sh_degree = gaussians.active_sh_degree,
+                            )
 
-                        if len(load_SPT_starts) > 0:    
-                            if len(load_SPT_gaussian_indices) == load_SPT_starts[-1]:
-                                print("Last SPT empty")
-                                load_SPT_starts = load_SPT_starts[:-1]
-                                load_SPT_distances = load_SPT_distances[:-1]
-                                load_SPT_indices = load_SPT_indices[:-1]
-                        #    
-                        ### BAND AID FIX
+                        image = render_pkg["render"]
+                        frame_time = clock()
+                        if replay:
+                            replay_stats["VRAM"].append(torch.cuda.max_memory_allocated())
+                            replay_stats["frame_time"].append(frame_time)
+                            replay_stats["cut_time"].append(cut_time)
+                            replay_stats["number_rendered"].append(len(gaussian_indices))
+                        if replay:
+                            print("STATS")
+                            #print(replay_stats["VRAM"][-1])
+                            #print(torch.tensor(replay_stats["frame_time"][5:]).mean())
+                            #print(torch.tensor(replay_stats["frame_time"]).max())
+                            #print(torch.tensor(replay_stats["cut_time"]).mean())
+                            #print(torch.tensor(replay_stats["cut_time"]).max())
+                        ####### RENDER
+                        if viewer_options["show_occlusion"]:
+                            image=occlusion_image
 
-                        #cache_SPT_cache_indices = torch.where(~equal_SPT_cache_mask)[0]    
-                        #cache_SPT_indices = prev_SPT_indices[cache_SPT_cache_indices]
-                        SPT_indices = torch.cat((load_SPT_indices, reuse_SPT_indices))
+                        if replay:
+                            torchvision.utils.save_image(image, f"CameraPaths/{camera_path_id}/frame_{iteration}.png")
+                            iteration += 1
+                            if iteration > 100: 
+                                raise EOFError("Replay finished")
 
-
-                        SPT_starts_new = torch.zeros(len(load_SPT_indices) + len(reuse_SPT_indices) + 1,dtype=torch.int32, device='cuda')
-                        # compact the prefix sum of SPT_counts
-
-                        SPT_starts_new[:len(load_SPT_starts)] = load_SPT_starts + gaussians.skybox_points
-                        SPT_starts_new[len(load_SPT_starts)] = len(load_SPT_gaussian_indices) + gaussians.skybox_points
-                        #prefix = len(cut_SPTs) + gaussians.skybox_points
-                        #for index, i in enumerate(SPT_keep_counts_indices):
-                        #    SPT_starts_new[index + len(SPT_counts)] = prefix
-                        #    prefix += (prev_SPT_counts[i+1] - prev_SPT_counts[i]).item()
-
-                        sizes = prev_SPT_starts[prev_keep_SPT_cache_indices + 1] - prev_SPT_starts[prev_keep_SPT_cache_indices]
-                        SPT_starts_new[len(load_SPT_starts) + 1:len(load_SPT_starts) + 1 + len(sizes)] = torch.cumsum(sizes, dim=0) +  len(load_SPT_gaussian_indices) + gaussians.skybox_points
-
-                        number_of_gaussians_to_render = SPT_starts_new[len(load_SPT_starts) + len(sizes)]
-
-
-                        SPT_distances = torch.cat((load_SPT_distances, prev_SPT_distances[prev_keep_SPT_cache_indices]))
-
-                        load_from_disk_indices = torch.cat((upper_tree_nodes_to_render, load_SPT_gaussian_indices))
-
- 
-
-                        gaussian_indices = torch.cat((gaussian_indices[:gaussians.skybox_points], load_from_disk_indices, gaussian_indices[reuse_gaussians_mask]))
-                        print(f"Load Percent: {len(load_from_disk_indices) * 100/ number_of_gaussians_to_render}")
-                        load_from_disk_indices = load_from_disk_indices.to(opt.storage_device)
-                        SPT_starts_new += len(upper_tree_nodes_to_render)
-
-                        assert(SPT_starts_new[-1] == len(gaussian_indices))
-                        number_to_render = len(gaussian_indices)
-                        distance_multiplier = viewer_options["distance_multiplier"]
-                        
-                        load_tensor = gaussians.properties[load_from_disk_indices, :].cuda(non_blocking=non_blocking)
-
-                        means3D = nn.Parameter(torch.cat((means3D[:gaussians.skybox_points], load_tensor[:, xyz1:xyz2].cuda(non_blocking=non_blocking), means3D[reuse_gaussians_mask])).contiguous())
-                        opacity = nn.Parameter(torch.cat((opacity[:gaussians.skybox_points], load_tensor[:, opacity1:opacity2].cuda(non_blocking=non_blocking), opacity[reuse_gaussians_mask])).contiguous())
-                        scales = nn.Parameter(torch.cat((scales[:gaussians.skybox_points], load_tensor[:, scales1:scales2].cuda(non_blocking=non_blocking), scales[reuse_gaussians_mask])).contiguous())
-                        rotations = nn.Parameter(torch.cat((rotations[:gaussians.skybox_points], load_tensor[:, rotation1:rotation2].cuda(non_blocking=non_blocking), rotations[reuse_gaussians_mask])).contiguous())
-                        # TODO: ABS?
-                        features_dc = nn.Parameter(torch.cat((features_dc[:gaussians.skybox_points], load_tensor[:, features1:features2].cuda(non_blocking=non_blocking).unsqueeze(1), features_dc[reuse_gaussians_mask])).contiguous())
-                        features_rest = nn.Parameter(torch.cat((features_rest[:gaussians.skybox_points], load_tensor[:, features_rest1:features_rest2].cuda(non_blocking=non_blocking).reshape(len(load_tensor), SH_properties_single, 3), features_rest[reuse_gaussians_mask])).contiguous())
-
-
-                        prev_SPT_indices = SPT_indices
-                        prev_occlusion_mask = occlusion_mask
-                        prev_SPT_distances = SPT_distances
-                        prev_SPT_starts = SPT_starts_new
-                        torch.cuda.empty_cache()
-                        
-                        
-                    
-                    if viewer_options["color_distance"]:
-                        colors_precomp = torch.zeros_like(scales, device='cuda')
-                        SPT_distances_remapped = (SPT_distances - SPT_distances.min()) / (SPT_distances.max() - SPT_distances.min())
-                        #SPT_distances_remapped = (SPT_distances) / 500.0
-
-                        # Skybox is blue
-                        colors_precomp[:gaussians.skybox_points, 0] = 0
-                        colors_precomp[:gaussians.skybox_points, 1] = 0
-                        colors_precomp[:gaussians.skybox_points, 2] = 1
-                        for i in range(len(SPT_indices)):
-                            min_range =  SPT_starts_new[i]
-                            max_range = len(gaussian_indices) if i+1 == len(SPT_indices) else  SPT_starts_new[i+1]
-                            colors_precomp[min_range:max_range, 0] = SPT_distances_remapped[i]
-                            colors_precomp[min_range:max_range, 1] = SPT_distances_remapped[i]
-                            colors_precomp[min_range:max_range, 2] = SPT_distances_remapped[i]
-                    elif viewer_options["color_size"]:
-                        colors_precomp = torch.zeros_like(scales, device='cuda')
-                        SPT_sizes = torch.abs(SPT_starts_new[1:] - SPT_starts_new[:-1]) / (gaussians.SPT_starts[SPT_indices+1] - gaussians.SPT_starts[SPT_indices])
-                        SPT_sizes_remapped = (SPT_sizes - SPT_sizes.min()) / (SPT_sizes.max() - SPT_sizes.min())
-                        # Skybox is blue
-                        colors_precomp[:gaussians.skybox_points, 0] = 0
-                        colors_precomp[:gaussians.skybox_points, 1] = 0
-                        colors_precomp[:gaussians.skybox_points, 2] = 1
-                        for i in range(len(SPT_indices)):
-                            min_range = SPT_starts_new[i]
-                            max_range = len(gaussian_indices) if i+1 == len(SPT_indices) else SPT_starts_new[i+1]
-                            colors_precomp[min_range:max_range, 0] = SPT_sizes_remapped[i]
-                            colors_precomp[min_range:max_range, 1] = SPT_sizes_remapped[i]
-                            colors_precomp[min_range:max_range, 2] = SPT_sizes_remapped[i]
-                    elif viewer_options["separate_SPTs"]:
-                        colors_precomp = torch.zeros_like(scales, device='cuda')
-                        # Skybox is blue
-                        colors_precomp[:gaussians.skybox_points, 0] = 0
-                        colors_precomp[:gaussians.skybox_points, 1] = 0
-                        colors_precomp[:gaussians.skybox_points, 2] = 1
-                        random_colors = generate_colors(len(SPT_indices))
-                        for i in range(len(SPT_indices)):
-                            min_range =  SPT_starts_new[i]
-                            max_range = len(gaussian_indices) if i+1 == len(SPT_indices) else  SPT_starts_new[i+1]
-                            colors_precomp[min_range:max_range, :] = random_colors[i]
-                        colors_precomp[-len(upper_tree_nodes_to_render):, :] = 1
-                    elif viewer_options["highlight_leaves"]:
-                        colors_precomp = torch.zeros_like(scales, device='cuda')
-                        # Skybox is blue
-                        colors_precomp[:, 0] = 1
-                        leaf_mask = gaussians.nodes[gaussian_indices.cpu(), 2] == 0
-                        colors_precomp[leaf_mask.cuda(), :] = 1
-                    else:
-                        colors_precomp = None
-                    render_pkg = render_vanilla(
-                        viewpoint_cam, 
-                        means3D,
-                        gaussians.opacity_activation(opacity),
-                        gaussians.scaling_activation(scales), 
-                        gaussians.rotation_activation(rotations),
-                        features_dc,
-                        features_rest,
-                        pipe, 
-                        background,
-                        #splat_args=splat_settings,
-                        override_color = colors_precomp, 
-                        sh_degree = gaussians.active_sh_degree,
-                        )
-                    
-                    image = render_pkg["render"]
-                    frame_time = clock()
+                        else:
+                            net_image = image.cpu()
+                            net_image_bytes = memoryview((torch.clamp(net_image, min=0, max=1.0) * 255).byte().permute(1, 2, 0).contiguous().to('cpu').numpy())
+                    if not replay:
+                        train_params = {"Num_Rendered" : len(gaussian_indices), "Number_of_SPTs" : len(SPT_indices), "Percentage_Rendered" : len(gaussian_indices)/gaussians.size, "Percentage_SPTs" : len(SPT_indices)/len(gaussians.SPT_starts)}
+                        network_gui.send(net_image_bytes, json.dumps({"iteration" : 99, "num_gaussians" : gaussians.size, "loss" : 0, "sh_degree":1, "error" : 0, "paused" : False, "train_params" : train_params})) #dataset.source_path)
+                        if do_training and ((iteration < int(opt.iterations)) or not keep_alive_):
+                            break
+                except EOFError as e:
                     if replay:
-                        replay_stats["VRAM"].append(torch.cuda.max_memory_allocated())
-                        replay_stats["frame_time"].append(frame_time)
-                        replay_stats["cut_time"].append(cut_time)
-                        replay_stats["number_rendered"].append(len(gaussian_indices))
-                    if replay:
-                        print("STATS")
-                        #print(replay_stats["VRAM"][-1])
-                        #print(torch.tensor(replay_stats["frame_time"][5:]).mean())
-                        #print(torch.tensor(replay_stats["frame_time"]).max())
-                        #print(torch.tensor(replay_stats["cut_time"]).mean())
-                        #print(torch.tensor(replay_stats["cut_time"]).max())
-                    ####### RENDER
-                    if viewer_options["show_occlusion"]:
-                        image=occlusion_image
-                    
-                    if replay:
-                        torchvision.utils.save_image(image, f"CameraPaths/{camera_path_id}/frame_{iteration}.png")
-                        iteration += 1
-                    else:
-                        net_image = image.cpu()
-                        net_image_bytes = memoryview((torch.clamp(net_image, min=0, max=1.0) * 255).byte().permute(1, 2, 0).contiguous().to('cpu').numpy())
-                if not replay:
-                    train_params = {"Num_Rendered" : len(gaussian_indices), "Number_of_SPTs" : len(SPT_indices), "Percentage_Rendered" : len(gaussian_indices)/gaussians.size, "Percentage_SPTs" : len(SPT_indices)/len(gaussians.SPT_starts)}
-                    network_gui.send(net_image_bytes, json.dumps({"iteration" : 99, "num_gaussians" : gaussians.size, "loss" : 0, "sh_degree":1, "error" : 0, "paused" : False, "train_params" : train_params})) #dataset.source_path)
-                    if do_training and ((iteration < int(opt.iterations)) or not keep_alive_):
-                        break
-            except EOFError as e:
-                if replay:
-                        print(replay_stats["VRAM"][-1])
-                        print(torch.tensor(replay_stats["frame_time"]).mean())
-                        print(torch.tensor(replay_stats["cut_time"]).mean())
-                        with open("render_timings.pkl", "wb") as file:
-                            pickle.dump(replay_stats["frame_time"], file)
-                print(e)
-                raise e
-                network_gui.conn = None
+                            print(replay_stats["VRAM"][-1])
+                            print(torch.tensor(replay_stats["frame_time"]).mean())
+                            #print(torch.tensor(replay_stats["cut_time"]).mean())
+                            with open("render_timings.pkl", "wb") as file:
+                                pickle.dump(replay_stats["frame_time"], file)
+                    print(e)
+                    network_gui.conn = None
+    print(prof.key_averages().table(sort_by="cuda_time_total", row_limit=200))
+    
 ######## VIEWER
 
 def prepare_output_and_logger(args):    

@@ -123,7 +123,7 @@ def training(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoin
     
     if Write_Tensor_Board:
         writer = SummaryWriter()
-    gaussians = GaussianModel(1)
+    gaussians = GaussianModel(opt.SH_degree)
     
     scene = Scene(dataset, gaussians, resolution_scales=[1], create_from_hier=True)
     gaussians.max_sh_degree = opt.SH_degree

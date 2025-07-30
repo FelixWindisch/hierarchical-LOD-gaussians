@@ -90,7 +90,7 @@ def render(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoint_
 
     first_iter = 0
     prepare_output_and_logger(dataset)
-    gaussians = GaussianModel(dataset.sh_degree)
+    gaussians = GaussianModel(None) # SH degree is determined by hierarchy file
     gaussians.scaffold_points = None
     with torch.no_grad():
         gaussians._features_dc = gaussians._features_dc.abs() 
@@ -283,7 +283,7 @@ def render(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoint_
                 psnr_current = psnr(image.detach(), gt_image).mean().double()
                 ssim_current = ssim(image.detach(), gt_image).mean().double()
                 lpips_current = 0 #lpips(image, gt_image, net_type='vgg').mean().double()
-                torchvision.utils.save_image(image,  "output/" + viewpoint_cam.image_name + f"_{psnr_current}.png")
+                torchvision.utils.save_image(image,  "output/" + os.path.basename(viewpoint_cam.image_name) + f"_{psnr_current}.png")
                 #torchvision.utils.save_image(gt_image,  "output/" + viewpoint_cam.image_name + "_gt.png")
                 psnrs += psnr_current
                 print(psnr(image, gt_image).mean().double())

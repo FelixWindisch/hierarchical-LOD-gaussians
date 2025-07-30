@@ -95,9 +95,9 @@ class _RasterizeGaussians(torch.autograd.Function):
                 print("\nAn error occured in forward. Please forward snapshot_fw.dump for debugging.")
                 raise ex
         else:
-            num_rendered, num_buckets, color, invdepths, radii, geomBuffer, binningBuffer, imgBuffer, sampleBuffer = _C.rasterize_gaussians(*args)
-        s = lambda a: a.element_size() * a.nelement()/10e9
-        render_buffer_overhead = s(radii) + s(geomBuffer) + s(binningBuffer) + s(sampleBuffer) + s(color)
+            num_rendered, num_buckets, color, invdepths, radii, geomBuffer, binningBuffer, imgBuffer, sampleBuffer, contribution = _C.rasterize_gaussians(*args)
+        #s = lambda a: a.element_size() * a.nelement()/10e9
+        #render_buffer_overhead = s(radii) + s(geomBuffer) + s(binningBuffer) + s(sampleBuffer) + s(color)
         #print(f"Render Buffer Overhead (GB): {render_buffer_overhead}")
         
         # Keep relevant tensors for backward
@@ -105,10 +105,10 @@ class _RasterizeGaussians(torch.autograd.Function):
         ctx.num_rendered = num_rendered
         ctx.num_buckets = num_buckets
         ctx.save_for_backward(colors_precomp, means3D, scales, rotations, cov3Ds_precomp, radii, dc, sh, opacities, geomBuffer, binningBuffer, imgBuffer, sampleBuffer)
-        return color, radii, invdepths
+        return color, radii, invdepths, contribution
 
     @staticmethod
-    def backward(ctx, grad_out_color, _, grad_out_depth):
+    def backward(ctx, grad_out_color, _, grad_out_depth, contrib):
 
         # Restore necessary values from context
         num_rendered = ctx.num_rendered
