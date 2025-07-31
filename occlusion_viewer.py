@@ -260,7 +260,7 @@ def render(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoint_
     record_shapes=True,
     with_stack=True
 ) as prof:
-        while True:
+        while iteration < 200:
             if network_gui.conn == None and not replay:
                 print("Try Connect")
                 network_gui.try_connect()
@@ -309,37 +309,39 @@ def render(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoint_
                             occlusion_mask, occlusion_image = occlusion_cull_cached(gaussians, viewpoint_cam, pipe, background)
                             occlusion_mask = occlusion_mask.cuda()
 
+                            # SPT indices for the current frame
                             SPT_indices, indices = torch.sort(all_SPT_indices[occlusion_mask])
                             print(f"Render {100 * (len(SPT_indices)) / len(all_SPT_indices)} % of SPTs")
 
+                            #gaussians.SPT_gaussian_indices[gaussians.SPT_starts[8] : gaussians.SPT_starts[9]]
 
                             upper_tree_nodes_to_render = torch.empty(0, dtype=torch.int32, device='cuda')
 
                             SPT_upper_tree_indices = upper_SPT_indices[occlusion_mask]
 
+                            # TODO: Remove sqrt
                             SPT_distances = (gaussians.upper_tree_xyz[SPT_upper_tree_indices] - camera_position).pow(2).sum(1).sqrt() * viewer_options["distance_multiplier"]
 
-                            print(f"Occlusion Changed? {(prev_occlusion_mask == occlusion_mask).all()}")
-
-                            #keep_mask = torch.logical_and(prev_occlusion_mask, occlusion_mask)
-                            #mask_prefix_sum = torch.cumsum(occlusion_mask, 0, dtype=torch.int32)
-                            #prev_mask_prefix_sum = torch.cumsum(prev_occlusion_mask, 0, dtype=torch.int32)
-#   
-                            #prev_equal_SPT_cache_indices = prev_mask_prefix_sum[keep_mask]-1
-                            #equal_SPT_cache_indices = mask_prefix_sum[keep_mask]-1
-
+                            # TODO: Insert SPTs into priority queue, recompute distances for PQ events
+                            
                             prev_to_new_SPT_order = torch.searchsorted(SPT_indices, prev_SPT_indices)
 
                             equal_SPT_cache_mask = (prev_to_new_SPT_order < len(SPT_indices)) & (SPT_indices[prev_to_new_SPT_order.clamp_max(len(SPT_indices)-1)] == prev_SPT_indices)
                             prev_equal_SPT_cache_indices = torch.nonzero(equal_SPT_cache_mask, as_tuple=True)[0]
                             equal_SPT_cache_indices = prev_to_new_SPT_order[equal_SPT_cache_mask]
-
+                            
+                            # equal_SPT_cache_indices is the intersection of prev_SPT_indices and SPT_indices
+                            
+                            # for each SPT in intersection, check if the distance is close enough to the previous distance
                             prev_distances_compare = prev_SPT_distances[prev_equal_SPT_cache_indices]
                             distances_compare = SPT_distances[equal_SPT_cache_indices]
-                            #close_enough = torch.isclose(distances_compare, prev_distances_compare, rtol=Reuse_SPT_Tolerarance, atol=0.05)
+
+
                             close_enough = (prev_distances_compare/distances_compare) > 0.3
                             close_enough &= (prev_distances_compare/distances_compare) < 1.5
-                            #close_enough &= (prev_distances_compare/distances_compare) < -1.5
+                            
+                            
+                            #  reuse_SPT_indices are in the intersection and close enough to the previous distance
                             reuse_SPT_indices = SPT_indices[equal_SPT_cache_indices[close_enough]]
                             print(f"reuse {len(reuse_SPT_indices)} out of {len(SPT_indices)} SPTs")
 
@@ -420,6 +422,18 @@ def render(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoint_
                             number_to_render = len(gaussian_indices)
                             distance_multiplier = viewer_options["distance_multiplier"]
 
+                            
+                            # LOADING GAUSSIANS FROM RAM
+                            # Gaussians.properties are ALL Gaussian properties in RAM
+                            
+
+                            #TODO: Do in another thread: Load Gaussians according to Priority Queue into a VRAM tensor
+                            # length of all Gaussian properties tensors on GPU is always fixed size, store a variable for how many are currently used
+                            # 1. enqueue SPT from PQ with distance 
+                            # 2. Cut SPT with distance on GPU to get global gaussian indices [load_SPT_gaussian_indices, load_SPT_starts = get_spt_cut_cuda(len(load_SPT_indices), gaussians.SPT_gaussian_indices, gaussians.SPT_starts, gaussians.SPT_max, gaussians.SPT_min, load_SPT_indices, load_SPT_distances)]
+                            # 3. Use the global gaussian indices to load the properties from gaussians.properties into a VRAM tensor
+                            # 4. In render thread, append the loaded Gaussian properties to the current means3D, opacity, scales, rotations, features_dc, features_rest tensors
+                            # N. In Render thread, when SPTs are replaced by a different LOD level, set their opacity to -999, when a threshold of invisible Gaussians is reached, compact all tensors
                             load_tensor = gaussians.properties[load_from_disk_indices, :].cuda(non_blocking=non_blocking)
 
                             means3D = nn.Parameter(torch.cat((means3D[:gaussians.skybox_points], load_tensor[:, xyz1:xyz2].cuda(non_blocking=non_blocking), means3D[reuse_gaussians_mask])).contiguous())
@@ -524,9 +538,9 @@ def render(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoint_
                         if replay:
                             torchvision.utils.save_image(image, f"CameraPaths/{camera_path_id}/frame_{iteration}.png")
                             iteration += 1
-                            if iteration > 100: 
-                                raise EOFError("Replay finished")
-
+                            print(iteration)
+                            if iteration > 200:
+                                break
                         else:
                             net_image = image.cpu()
                             net_image_bytes = memoryview((torch.clamp(net_image, min=0, max=1.0) * 255).byte().permute(1, 2, 0).contiguous().to('cpu').numpy())
@@ -544,7 +558,8 @@ def render(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoint_
                                 pickle.dump(replay_stats["frame_time"], file)
                     print(e)
                     network_gui.conn = None
-    print(prof.key_averages().table(sort_by="cuda_time_total", row_limit=200))
+    print(prof.key_averages().table(sort_by="cuda_time_total", row_limit=100))
+    print(prof.key_averages().table(sort_by="cpu_time_total", row_limit=100))
     
 ######## VIEWER
 
