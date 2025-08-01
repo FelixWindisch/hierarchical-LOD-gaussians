@@ -539,8 +539,8 @@ def render(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoint_
                             torchvision.utils.save_image(image, f"CameraPaths/{camera_path_id}/frame_{iteration}.png")
                             iteration += 1
                             print(iteration)
-                            if iteration > 200:
-                                break
+                            #if iteration > 200:
+                            #    break
                         else:
                             net_image = image.cpu()
                             net_image_bytes = memoryview((torch.clamp(net_image, min=0, max=1.0) * 255).byte().permute(1, 2, 0).contiguous().to('cpu').numpy())
