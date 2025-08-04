@@ -47,7 +47,7 @@ def training(dataset, opt, pipe, saving_iterations, checkpoint_iterations, check
 
     #viewpoint_stack = None
     ema_loss_for_log = 0.0
-    progress_bar = tqdm(range(first_iter, opt.iterations), desc="Training progress")
+    progress_bar = tqdm(range(first_iter, opt.coarse_iterations), desc="Training progress")
     first_iter += 1
 
     target = 0
@@ -61,7 +61,7 @@ def training(dataset, opt, pipe, saving_iterations, checkpoint_iterations, check
         if param_group["name"] == "xyz":
             param_group['lr'] = 0.0
             
-    while iteration < opt.iterations + 1:
+    while iteration < opt.coarse_iterations + 1:
         for viewpoint_batch in training_generator:
             for viewpoint_cam in viewpoint_batch:
                 #viewpoint_cam = scene.getTrainCameras()[first_images[iteration-1]]
@@ -82,7 +82,7 @@ def training(dataset, opt, pipe, saving_iterations, checkpoint_iterations, check
                             net_image = render_coarse(custom_cam, gaussians, pipe, background, scaling_modifer, indices = indices)["render"]
                             net_image_bytes = memoryview((torch.clamp(net_image, min=0, max=1.0) * 255).byte().permute(1, 2, 0).contiguous().cpu().numpy())
                         network_gui.send(net_image_bytes, dataset.source_path)
-                        if do_training and ((iteration < int(opt.iterations)) or not keep_alive):
+                        if do_training and ((iteration < int(opt.coarse_iterations)) or not keep_alive):
                             break
                     except Exception as e:
                         network_gui.conn = None
@@ -144,13 +144,13 @@ def training(dataset, opt, pipe, saving_iterations, checkpoint_iterations, check
                         print("\n[ITER {}] Saving Gaussians".format(iteration))
                         scene.save(iteration)
 
-                    if iteration == opt.iterations:
+                    if iteration == opt.coarse_iterations:
                         progress_bar.close()
                         training_generator._get_iterator()._shutdown_workers()
                         return
 
                     # Optimizer step
-                    if iteration < opt.iterations:
+                    if iteration < opt.coarse_iterations:
                         gaussians.exposure_optimizer.step()
                         gaussians.exposure_optimizer.zero_grad(set_to_none = True)
                         gaussians._scaling.grad[:gaussians.skybox_points,:] = 0

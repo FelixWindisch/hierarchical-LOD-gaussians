@@ -83,8 +83,8 @@ if __name__ == '__main__':
     optimization_params = OptimizationParams(parser)
     config = argparse.Namespace(**data)
     optimization_params = optimization_params.extract(config)
-    
-    if args.skip_if_exists and os.path.exists(os.path.join(output_dir, f"scaffold/point_cloud/")):
+    model_params.llff_hold = optimization_params.llff_hold
+    if args.skip_if_exists and os.path.exists(os.path.join(output_dir, f"scaffold/point_cloud/")) and len(os.listdir(os.path.join(output_dir, "scaffold/point_cloud/"))) > 0:
         possible_scaffolds = os.listdir(os.path.join(output_dir, "scaffold/point_cloud/"))
         iterations = [int(s.split("_")[1]) for s in possible_scaffolds if "iteration_" in s]
         chosen_iteration = max(iterations)
@@ -114,7 +114,7 @@ if __name__ == '__main__':
             view_graph_utils = nx.read_edgelist(graph_path)
             print("Read Camera Graph")
         else: 
-            view_graph_utils = view_graph_utils.construct_distance_graph(colmap_dir + "/sparse/0/images.txt", optimization_params.view_graph_k, model_params.llff_hold)
+            view_graph_utils = view_graph_utils.construct_distance_graph(colmap_dir + "/sparse/0/images.txt", optimization_params.view_graph_k, optimization_params.llff_hold)
             nx.write_edgelist(view_graph_utils, graph_path)
             
     else:
