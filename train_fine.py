@@ -238,8 +238,8 @@ def training(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoin
 
                 
                 distance_multiplier = base_focal_length / viewpoint_cam.focal_length
-                #if iteration % 10 != 0:
-                #    distance_multiplier = distance_multiplier * (1 + torch.pow(torch.rand(1),4) * 5).cuda()
+                if iteration % 10 != 0 and opt.vary_distance_multiplier:
+                    distance_multiplier = distance_multiplier * (1 + torch.pow(torch.rand(1),4) * 5).cuda()
                     
                 ############# SPT Cache
                 if opt.use_bounding_spheres:
