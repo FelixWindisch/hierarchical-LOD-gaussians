@@ -685,7 +685,7 @@ def training(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoin
                         print("peak memory: ", torch.cuda.max_memory_allocated(device='cuda'))
 
                     if iteration == opt.iterations:
-                        gaussians.save_hier()
+                        gaussians.save_hier(file_name=opt.output_file_name)
                         progress_bar.close()
                         return
 

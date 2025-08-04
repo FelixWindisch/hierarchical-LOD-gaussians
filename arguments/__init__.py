@@ -184,7 +184,7 @@ class OptimizationParams(ParamGroup):
         self.depth_l1_weight_final = 0.01
         self.llff_hold = 50
         self.vary_distance_multiplier = False
-
+        self.output_file_name = "hierarchy.dhier_opt"
         #MCMC
         if self.densification == "MCMC":
             self.noise_lr = 0 
