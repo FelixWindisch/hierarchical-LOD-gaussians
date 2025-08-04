@@ -185,19 +185,19 @@ def render(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoint_
     SPT_root_indices = gaussians.upper_tree_nodes[torch.logical_and(gaussians.upper_tree_nodes[:, hierarchy_node_child_count] == 0, gaussians.upper_tree_nodes[:, hierarchy_node_first_child] >= 0), 5].cpu()
     all_SPT_indices = gaussians.upper_tree_nodes[torch.logical_and(gaussians.upper_tree_nodes[:, hierarchy_node_child_count] == 0, gaussians.upper_tree_nodes[:, hierarchy_node_first_child] >= 0), hierarchy_node_first_child]
     upper_SPT_indices = torch.where(torch.logical_and(gaussians.upper_tree_nodes[:, hierarchy_node_child_count] == 0, gaussians.upper_tree_nodes[:, hierarchy_node_first_child] >= 0))[0]
+    sorted, sort_indices = gaussians.upper_tree_nodes[upper_SPT_indices, hierarchy_node_first_child].sort()
+    
     gaussians.SPT_means3D = gaussians.properties[SPT_root_indices, xyz1:xyz2].cuda().contiguous()
     gaussians.SPT_scales = gaussians.scaling_activation(gaussians.properties[SPT_root_indices, scales1:scales2].cuda().contiguous())
     gaussians.SPT_rotations = gaussians.rotation_activation(gaussians.properties[SPT_root_indices, rotation1:rotation2].cuda().contiguous())
     gaussians.SPT_features_dc = gaussians.properties[SPT_root_indices, features1:features2].cuda().unsqueeze(1).contiguous()
     gaussians.SPT_opacity = gaussians.opacity_activation(gaussians.properties[SPT_root_indices, opacity1].cuda().unsqueeze(1).contiguous())
     gaussians.SPT_features_rest = gaussians.properties[SPT_root_indices, features_rest1: features_rest2].cuda().reshape(len(SPT_root_indices), SH_properties_single, 3).contiguous()
-    
+    upper_SPT_indices = upper_SPT_indices[sort_indices]
     print("Built SPTs")
     bg_color = [1, 1, 1] if dataset.white_background else [0, 0, 0]
     background = torch.tensor(bg_color, dtype=torch.float32, device="cuda")
 
-    iter_start = torch.cuda.Event(enable_timing = True)
-    iter_end = torch.cuda.Event(enable_timing = True)
 
     ema_loss_for_log = 0.0
     #progress_bar = tqdm(range(first_iter, opt.iterations), desc="Training progress")
@@ -317,7 +317,7 @@ def render(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoint_
 
                             upper_tree_nodes_to_render = torch.empty(0, dtype=torch.int32, device='cuda')
 
-                            SPT_upper_tree_indices = upper_SPT_indices[occlusion_mask]
+                            SPT_upper_tree_indices = upper_SPT_indices[SPT_indices]
 
                             # TODO: Remove sqrt
                             SPT_distances = (gaussians.upper_tree_xyz[SPT_upper_tree_indices] - camera_position).pow(2).sum(1).sqrt() * viewer_options["distance_multiplier"]
