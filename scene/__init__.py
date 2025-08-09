@@ -23,7 +23,7 @@ class Scene:
 
     gaussians : GaussianModel
 
-    def __init__(self, args : ModelParams, gaussians : GaussianModel, load_iteration=None, shuffle=True, resolution_scales=[1.0], create_from_hier=False):
+    def __init__(self, args : ModelParams, gaussians : GaussianModel, load_iteration=None, shuffle=True, resolution_scales=[1.0], create_from_hier=False, llff_hold = 1000000):
         """b
         :param path: Path to colmap scene main folder.
         """
@@ -43,7 +43,7 @@ class Scene:
         print(args.source_path)
         if os.path.exists(os.path.join(args.source_path, "sparse")):
             
-            scene_info = sceneLoadTypeCallbacks["Colmap"](args.source_path, args.images, args.alpha_masks, args.depths, args.eval, args.train_test_exp, args.llff_hold)
+            scene_info = sceneLoadTypeCallbacks["Colmap"](args.source_path, args.images, args.alpha_masks, args.depths, args.eval, args.train_test_exp, llff_hold)
         else:
             assert False, f"Could not recognize scene type!, No such directory {os.path.join(args.source_path, 'sparse')}"
 

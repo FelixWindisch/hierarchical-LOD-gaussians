@@ -125,7 +125,7 @@ def training(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoin
         writer = SummaryWriter()
     gaussians = GaussianModel(opt.SH_degree)
     
-    scene = Scene(dataset, gaussians, resolution_scales=[1], create_from_hier=True)
+    scene = Scene(dataset, gaussians, resolution_scales=[1], create_from_hier=True, llff_hold=opt.llff_hold)
     gaussians.max_sh_degree = opt.SH_degree
     gaussians.active_sh_degree = opt.SH_degree
     features_rest2 = 14 + number_SH_properties[gaussians.max_sh_degree] * 3

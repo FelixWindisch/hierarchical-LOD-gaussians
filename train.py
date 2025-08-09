@@ -83,7 +83,6 @@ if __name__ == '__main__':
     optimization_params = OptimizationParams(parser)
     config = argparse.Namespace(**data)
     optimization_params = optimization_params.extract(config)
-    model_params.llff_hold = optimization_params.llff_hold
     if args.skip_if_exists and os.path.exists(os.path.join(output_dir, f"scaffold/point_cloud/")) and len(os.listdir(os.path.join(output_dir, "scaffold/point_cloud/"))) > 0:
         possible_scaffolds = os.listdir(os.path.join(output_dir, "scaffold/point_cloud/"))
         iterations = [int(s.split("_")[1]) for s in possible_scaffolds if "iteration_" in s]
@@ -153,7 +152,7 @@ if __name__ == '__main__':
         model_params, 
         optimization_params, 
         pipeline_params, 
-        saving_iterations=[50000, 750000], 
+        saving_iterations=[200000, 250000, 300000], 
         checkpoint_iterations=[], 
         checkpoint=[], 
         debug_from=[], 

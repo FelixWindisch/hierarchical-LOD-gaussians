@@ -50,7 +50,7 @@ def construct_distance_graph(images_file, k=100, llff_hold = 10000000000000):
         for line in lines[4:]:
             
             if len(line.split(" ")) == 10:
-                if i % llff_hold == 0:
+                if i % llff_hold == 0 and llff_hold > 0 and llff_hold < 1_000_000:
                     i += 1
                     continue
                 split = line.split(" ")

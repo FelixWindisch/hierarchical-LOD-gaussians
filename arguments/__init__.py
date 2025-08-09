@@ -182,7 +182,7 @@ class OptimizationParams(ParamGroup):
         self.densify_grad_threshold = 0.0015
         self.depth_l1_weight_init = 1.0
         self.depth_l1_weight_final = 0.01
-        self.llff_hold = 50
+        self.llff_hold = 50000000000
         self.vary_distance_multiplier = False
         self.output_file_name = "hierarchy.dhier_opt"
         #MCMC
@@ -208,7 +208,6 @@ class OptimizationParams(ParamGroup):
         self.SPT_root_volume = 10
         self.target_granularity_pixels = 2
         self.min_SPT_size = 256
-        
         self.use_GPU_caching = True
         self.cache_size = 15_000_000
         self.cache_size_after_reduction = 12_000_000

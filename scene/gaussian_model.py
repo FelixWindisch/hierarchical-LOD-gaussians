@@ -1813,12 +1813,7 @@ class GaussianModel:
         # Only Leaf nodes can be used for respawning 
         alive_indices=torch.where(self.nodes[:size, hierarchy_node_child_count] == 0)[0]
         
-        
-        
-        
         #probs = (self.opacity_activation(self._opacity[alive_indices, 0])) 
-        
-        
         
         if densification == "classic":
             #probs *= (self._densification_criterium[alive_indices] + 1)
@@ -1836,6 +1831,9 @@ class GaussianModel:
             add_idx, ratio = self._sample_alives(probs=probs, num=num_gs, alive_indices=alive_indices)
             # make sure respawn gaussians are unique
             add_idx = torch.where(ratio == 1)[0]
+            if (len(add_idx) * 2) + self.size > cap_max:
+                to_add = max(cap_max - self.size, 0) // 2
+                add_idx = add_idx[: to_add]
         ratio = torch.zeros((self.size, 1), device=device, dtype=torch.int32)
         ratio[add_idx] = 1
         (   new_xyz, 

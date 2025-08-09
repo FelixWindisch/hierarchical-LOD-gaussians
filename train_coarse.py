@@ -31,7 +31,7 @@ def training(dataset, opt, pipe, saving_iterations, checkpoint_iterations, check
     prepare_output_and_logger(dataset)
     print("coarse source path: " + dataset.source_path)
     gaussians = GaussianModel(1)
-    scene = Scene(dataset, gaussians)
+    scene = Scene(dataset, gaussians, opt.llff_hold)
     with torch.no_grad():
         gaussians._opacity[:] = -3
     gaussians.training_setup(opt)

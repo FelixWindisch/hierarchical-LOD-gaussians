@@ -96,7 +96,7 @@ def render(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoint_
         gaussians._features_dc = gaussians._features_dc.abs() 
     dataset.eval = False
     dataset.hierarchy = hierarchy_path
-    scene = Scene(dataset, gaussians, resolution_scales = [1], create_from_hier=True)
+    scene = Scene(dataset, gaussians, resolution_scales = [1], create_from_hier=True, llff_hold = opt.llff_hold)
     features_rest2 = 14 + number_SH_properties[gaussians.max_sh_degree] * 3 
     range2[-1] = 14 + number_SH_properties[gaussians.max_sh_degree] * 3
     SH_properties_single = number_SH_properties[gaussians.max_sh_degree] 
