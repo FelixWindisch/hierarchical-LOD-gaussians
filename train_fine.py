@@ -120,7 +120,7 @@ def direct_collate(x):
     return x
 
 
-Write_Tensor_Board = True
+Write_Tensor_Board = False
 #Standard
 #Culling
 

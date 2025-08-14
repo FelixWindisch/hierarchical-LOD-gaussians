@@ -76,6 +76,9 @@ def construct_distance_graph(images_file, k=100, llff_hold = 10000000000000):
             names = []
             i = 0
             for _ in range(num_reg_images):
+                if i % llff_hold == 0 and llff_hold > 0 and llff_hold < 1_000_000:
+                        i += 1
+                        continue
                 binary_image_properties = read_next_bytes(
                     file, num_bytes=64, format_char_sequence="idddddddi"
                 )
