@@ -48,6 +48,39 @@ pid = os.getpid()
 
 
 
+def quat_conj(q):                      # q: [N,4] (w,x,y,z)
+    return torch.stack([ q[:,0], -q[:,1], -q[:,2], -q[:,3] ], dim=-1)
+
+def rotate_vec_by_quat(v, q):         # v: [N,3], q: [N,4] unit
+    # Shoemake fast quat-vector rotation: v' = v + 2*w*(qv x v) + 2*(qv x (qv x v))
+    w, qx, qy, qz = q[:,0], q[:,1], q[:,2], q[:,3]
+    qv = torch.stack([qx, qy, qz], dim=-1)               # [N,3]
+    t  = 2.0 * torch.cross(qv, v, dim=-1)                # [N,3]
+    return v + (w[:,None] * t) + torch.cross(qv, t, dim=-1)
+
+def dampen_scale_grad_quat(g_local, quat, view_dir, lambda_):
+    """
+    g_local : [N,3] gradient dL/d[sx,sy,sz] in local frame
+    quat    : [N,4] world->local rotation as a quaternion **or** local->world; see below
+    view_dir: [N,3] normalized world-space view directions
+    lambda_ : float in [0,1] or tensor broadcastable to [N,1]
+    """
+    # Normalize quaternion to be safe
+    quat = quat / quat.norm(dim=-1, keepdim=True).clamp_min(1e-12)
+
+    # If your stored quaternion is local->world, use its conjugate to bring v into local space:
+    q_inv = quat_conj(quat)            # world -> local
+
+    # Rotate view into local frame
+    v_local = rotate_vec_by_quat(view_dir, q_inv)
+    v_local = v_local / v_local.norm(dim=-1, keepdim=True).clamp_min(1e-12)
+
+    # Axis-wise damping factors
+    lam = lambda_ if torch.is_tensor(lambda_) else torch.tensor(lambda_, dtype=g_local.dtype, device=g_local.device)
+    lam = lam.view(-1,1)
+    lambda_eff = 1.0 - (1.0 - lam) * (v_local ** 2)      # [N,3]
+
+    return g_local * lambda_eff
 
 
 
@@ -148,9 +181,11 @@ def training(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoin
     #gaussians._opacity.clamp_(0, 0.99999)
     #gaussians._opacity = gaussians.inverse_opacity_activation(gaussians._opacity)
         
-    gaussians.compact_gaussians(opt.storage_device, opt.cap_max, densification=opt.densification)
+    gaussians.compact_gaussians(opt.storage_device, opt.cap_max, densification=opt.densification, prune_unused_gaussians=opt.prune_unused)
     print(f"Gaussians Moved to {opt.storage_device}")
     
+    if opt.optimize_exposure:
+        gaussians.init_exposure_optimization(opt, scene.cam_infos)
     #gaussians.sort_morton()
     
     gaussians.build_hierarchical_SPT(opt.SPT_root_volume, SPT_Target_Granularity, opt.min_SPT_size, use_bounding_spheres=opt.use_bounding_spheres, revive_gaussians=Revive_Gaussians)
@@ -185,7 +220,9 @@ def training(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoin
     if opt.densification == "classic":
         densification_criterium = torch.zeros(gaussians.skybox_points, device='cuda', dtype=torch.float32)
         densification_criterium_cache = torch.empty((0), device='cuda', dtype=torch.float32)
-
+    if opt.prune_unused:
+        contributed = torch.zeros(gaussians.skybox_points, device='cuda', dtype=torch.bool)
+        contributed_cache = torch.empty((0), device='cuda', dtype=torch.bool)
     means3D_cache = torch.empty((0, 3), device='cuda', dtype=torch.float32)
     opacity_cache = torch.empty((0, 1), device='cuda', dtype=torch.float32)
     scales_cache = torch.empty((0, 3), device='cuda', dtype=torch.float32)
@@ -207,6 +244,7 @@ def training(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoin
                                                     lr_final=opt.position_lr_final*gaussians.spatial_lr_scale,
                                                     lr_delay_mult=opt.position_lr_delay_mult,
                                                     max_steps=opt.position_lr_max_steps)
+    
     
     
     depth_l1_weight = get_expon_lr_func(1.0, 0.01, max_steps=opt.position_lr_max_steps)
@@ -231,7 +269,9 @@ def training(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoin
                 
                 
                 xyz_lr = gaussians.xyz_scheduler_args(iteration)
-
+                if opt.optimize_exposure:
+                    for param_group in gaussians.exposure_optimizer.param_groups:
+                        param_group['lr'] = gaussians.exposure_scheduler_args(iteration)
 
                 clock()
                 
@@ -484,7 +524,11 @@ def training(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoin
                     gaussians._densification_criterium[write_back_indices] = densification_criterium_full[write_back_mask].to(opt.storage_device, non_blocking=non_blocking)
                     densification_criterium = torch.cat((densification_criterium[:gaussians.skybox_points], gaussians._densification_criterium[load_from_disk_indices].cuda(non_blocking=non_blocking), densification_criterium_full[reuse_gaussians_mask])).detach()
                     densification_criterium_cache = densification_criterium_full[cache_gaussians_mask]
-
+                if opt.prune_unused:
+                    contributed_full = torch.cat((contributed, contributed_cache)).detach()
+                    gaussians._contributed[write_back_indices] = contributed_full[write_back_mask].to(opt.storage_device, non_blocking=non_blocking)
+                    contributed = torch.cat((contributed[:gaussians.skybox_points], gaussians._contributed[load_from_disk_indices].cuda(non_blocking=non_blocking), contributed_full[reuse_gaussians_mask])).detach()
+                    contributed_cache = contributed_full[cache_gaussians_mask]
                 torch.cuda.empty_cache()
 
                 load_tensor = gaussians.properties[load_from_disk_indices, :].cuda(non_blocking=non_blocking)
@@ -552,7 +596,9 @@ def training(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoin
                         pipe, 
                         background,
                         sh_degree = gaussians.active_sh_degree,
-                        anti_aliasing=dataset.anti_aliasing
+                        anti_aliasing=dataset.anti_aliasing,
+                        use_trained_exp = opt.optimize_exposure,
+                        gaussians=gaussians
                         )
                
 
@@ -560,6 +606,7 @@ def training(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoin
                 torch.cuda.reset_peak_memory_stats()
                 
                 contribution = render_pkg["contribution"]
+                
                 image = render_pkg["render"]#, render_pkg["viewspace_points"], render_pkg["visibility_filter"], render_pkg["radii"]
                 
                 # Loss
@@ -598,8 +645,9 @@ def training(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoin
                     number_of_contributing_gaussians = contributing_gaussians.sum().item()
                     opacity_loss = torch.sum((gaussians.opacity_activation(opacity[contributing_gaussians]))) / number_of_contributing_gaussians
                     scaling_loss = torch.sum((gaussians.scaling_activation(scales[contributing_gaussians])))  / number_of_contributing_gaussians
-                
-                
+                    
+                if opt.prune_unused:
+                    contributed = torch.logical_or(contributed, contribution > 0.0001)
                     
                 if opt.lambda_opacity > 0:
                     loss = loss + opt.lambda_opacity * opacity_loss
@@ -618,23 +666,21 @@ def training(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoin
                         continue
                 __post_backward_peak = torch.cuda.max_memory_allocated(device='cuda')
                 
-                
+                #This needs to happen after backward
                 if opt.densification == "classic":
-                    #densification_criterium = render_pkg["radii"]
                     densification_criterium = torch.max(torch.norm(render_pkg["viewspace_points"].grad, dim=-1), densification_criterium)
-
                 
-                if torch.isnan(means3D.grad).any() or (torch.isnan(opacity.grad)).any() or torch.isnan(scales.grad).any():
-                    torchvision.utils.save_image(image, os.path.join(scene.model_path, "Error" + ".png"))
-                    print("gradients collapsed :(")
-                    indices = torch.where(torch.isnan(means3D.grad) | torch.isnan(opacity.grad) | torch.isnan(scales.grad))[0].unique()
-                    means3D.grad[indices] = 0
-                    opacity.grad[indices] = 0
-                    scales.grad[indices] = 0
-                    rotations.grad[indices] = 0
-                    with torch.no_grad():
-                        scales[indices, torch.argmin(scales[indices], dim=1)] *= 0.1
-                        opacity[indices] = 0.1
+                #if torch.isnan(means3D.grad).any() or (torch.isnan(opacity.grad)).any() or torch.isnan(scales.grad).any():
+                #    torchvision.utils.save_image(image, os.path.join(scene.model_path, "Error" + ".png"))
+                #    print("gradients collapsed :(")
+                #    indices = torch.where(torch.isnan(means3D.grad) | torch.isnan(opacity.grad) | torch.isnan(scales.grad))[0].unique()
+                #    means3D.grad[indices] = 0
+                #    opacity.grad[indices] = 0
+                #    scales.grad[indices] = 0
+                #    rotations.grad[indices] = 0
+                #    with torch.no_grad():
+                #        scales[indices, torch.argmin(scales[indices], dim=1)] *= 0.1
+                #        opacity[indices] = 0.1
                 
                 # Write values for every iteration
                 #region Tensorboard
@@ -691,6 +737,7 @@ def training(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoin
 
 
                     
+                        
                     if opt.densify_from_iter < iteration < opt.densify_until_iter and iteration % opt.densification_interval == 0:
                         print("-----------------DENSIFY!--------------------")
                         indices = torch.where(torch.isnan(opacity))
@@ -727,7 +774,10 @@ def training(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoin
                                 #gaussians._densification_criterium[gaussian_indices] = torch.cat((densification_criterium, densification_criterium_cache)).to(opt.storage_device)  
                                 densification_criterium_cache = torch.empty((0), device='cuda', dtype=torch.float32)
                                 densification_criterium = torch.zeros(gaussians.skybox_points, device='cuda', dtype=torch.float32)
-
+                        if opt.prune_unused:
+                            # Don't write back the contributed, it is reset anyway
+                            contributed_cache = torch.empty((0), device='cuda', dtype=torch.bool)
+                            contributed = torch.zeros(gaussians.skybox_points, device='cuda', dtype=torch.bool)
                         prev_SPT_indices, prev_SPT_distances, prev_SPT_starts = torch.empty(0, device='cuda', dtype=torch.int32), torch.empty(0, device='cuda', dtype=torch.float32), torch.empty(0, device='cuda', dtype=torch.int32)
                         if opt.use_GPU_caching:
                             temp = gaussians.properties[:gaussians.skybox_points, :number_properties].cuda()
@@ -756,7 +806,14 @@ def training(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoin
                              "exp_avgs" : torch.zeros_like(values), "exp_avgs_sqs" : torch.zeros_like(values)})
                         
                         
-                        #dead_mask = gaussians.nodes[:size, 2] == 0
+                        #On the first densification iteration after 2* #images iterations, prune all leaf gaussians that were never seen
+                        if iteration % (2*len(training_generator)) < opt.densification_interval:
+                            
+                            prune_mask = torch.logical_and(~gaussians._contributed[:gaussians.size], gaussians.nodes[:gaussians.size, hierarchy_node_child_count] == 0)
+                            print(f"Pruning {prune_mask.sum()} unused Gaussians")
+                            gaussians.properties[torch.where(prune_mask)[0], opacity1] = -99
+                            gaussians._contributed[:] = False
+                        
                         
                         dead_indices = torch.where((gaussians.properties[:gaussians.size, opacity1] <= gaussians.inverse_opacity_activation(torch.tensor(0.005)).item()).squeeze(-1))[0]
 
@@ -802,7 +859,11 @@ def training(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoin
                         #endregion
                     
                     elif iteration < opt.iterations:
-                        #reset gradients
+                        if opt.optimize_exposure:
+                            gaussians.exposure_optimizer.step()
+                            gaussians.exposure_optimizer.zero_grad(set_to_none = True)
+                        
+                        #zero gradients of Skybox
                         means3D.grad[0:gaussians.skybox_points, :] = 0
                         rotations.grad[0:gaussians.skybox_points, :] = 0
                         features_dc.grad[0:gaussians.skybox_points, :, :] = 0
@@ -810,17 +871,23 @@ def training(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoin
                         opacity.grad[0:gaussians.skybox_points, :] = 0
                         scales.grad[0:gaussians.skybox_points, :] = 0
                         
-                        if torch.isnan(means3D.grad).any() or (torch.isnan(opacity.grad)).any() or torch.isnan(scales.grad).any():
-                            print("Gradients Collapsed :(")
-                            indices = torch.where(torch.isnan(means3D.grad) | torch.isnan(opacity.grad) | torch.isnan(scales.grad))[0].unique()
-                            means3D.grad[indices] = 0
-                            opacity.grad[indices] = 0
-                            scales.grad[indices] = 0
-                            rotations.grad[indices] = 0
-                            pass
+                        if opt.dampen_scale_grad:
+                            lambda_damp = 0.2  # strong damping
+                            scales.grad = dampen_scale_grad_quat(scales.grad, rotations, view_dir, lambda_damp)
+    
+                        
+                        #if torch.isnan(means3D.grad).any() or (torch.isnan(opacity.grad)).any() or torch.isnan(scales.grad).any():
+                        #    print("Gradients Collapsed :(")
+                        #    indices = torch.where(torch.isnan(means3D.grad) | torch.isnan(opacity.grad) | torch.isnan(scales.grad))[0].unique()
+                        #    means3D.grad[indices] = 0
+                        #    opacity.grad[indices] = 0
+                        #    scales.grad[indices] = 0
+                        #    rotations.grad[indices] = 0
+                        #    pass
                         #relevant = (opacity.grad.flatten() != 0).nonzero()
                         for param in parameters:
                             optimizer_function = OurAdam._global_single_tensor_adam2 if Global_ADAM else OurAdam._single_tensor_adam2
+                            
                             optimizer_function([param["params"][0]], 
                                                         [param["params"][0].grad], 
                                                         [param["exp_avgs"][:len(param["params"][0])]], 

@@ -633,7 +633,7 @@ def render_vanilla(viewpoint_camera,
         opacity,
         scales, 
         rotations,
-        dc, shs,   pipe, bg_color : torch.Tensor, sh_degree=3, scaling_modifier = 1.0, override_color = None, use_trained_exp=False, anti_aliasing=True):
+        dc, shs,   pipe, bg_color : torch.Tensor, sh_degree=3, scaling_modifier = 1.0, override_color = None, use_trained_exp=False, anti_aliasing=True,gaussians=None):
     """
     Render the scene. 
     
@@ -670,7 +670,7 @@ def render_vanilla(viewpoint_camera,
         screenspace_points.retain_grad()
     except:
         pass
-    means2D = (screenspace_points)
+    means2D = screenspace_points
     # If precomputed 3d covariance is provided, use it. If not, then it will be computed from
     # scaling / rotation by the rasterizer.
     cov3D_precomp = None
@@ -698,11 +698,14 @@ def render_vanilla(viewpoint_camera,
         scales = scales,
         rotations = rotations,
         cov3D_precomp = None)
+
+ 
+    
     #print("DONE RENDERING!")
     # Apply exposure to rendered image (training only)
-    #if use_trained_exp:
-    #    exposure = pc.get_exposure_from_name(viewpoint_camera.image_name)
-    #    rendered_image = torch.matmul(rendered_image.permute(1, 2, 0), exposure[:3, :3]).permute(2, 0, 1) + exposure[:3, 3,   None, None]
+    if use_trained_exp:
+        exposure = gaussians.get_exposure_from_name(viewpoint_camera.image_name)
+        rendered_image = torch.matmul(rendered_image.permute(1, 2, 0), exposure[:3, :3]).permute(2, 0, 1) + exposure[:3, 3,   None, None]
 
     # Those Gaussians that were frustum culled or had a radius of 0 were not visible.
     # They will be excluded from value updates used in the splitting criteria.

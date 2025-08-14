@@ -507,7 +507,7 @@ class GaussianModel:
     
     
     
-    def compact_gaussians(self, device, max_number_of_gaussians, densification = False, training=True):
+    def compact_gaussians(self, device, max_number_of_gaussians, densification, training=True, prune_unused_gaussians=True):
         if max_number_of_gaussians is None:
             max_number_of_gaussians = len(self._xyz)
         number_gaussian_properties = [14, 23, 38, 59]
@@ -518,9 +518,14 @@ class GaussianModel:
         else:
             number_gaussian_properties = number_gaussian_properties[self.max_sh_degree]
         self.properties = torch.zeros((max_number_of_gaussians, number_gaussian_properties) , device=device)
-        if densification:
+        if densification == "classic":
             self._densification_criterium = torch.zeros(max_number_of_gaussians, device=device, dtype=torch.float)
+        if prune_unused_gaussians:
+            self._contributed = torch.zeros(max_number_of_gaussians, device=device, dtype=torch.bool)
+        
+        
         self.size = len(self._xyz)
+        
         self._features_rest = self._features_rest[:, :spherical_harmonics_properties//3, :]
         tensors = [self._xyz,  self._scaling, self._rotation, self._features_dc.squeeze(), self._opacity, self._features_rest.reshape(self.size, spherical_harmonics_properties)]
         current_index = 0
@@ -987,34 +992,15 @@ class GaussianModel:
         self._exposure = nn.Parameter(exposure.requires_grad_(True))
         print("Number of points at initialisation : ", self._xyz.shape[0])
 
-    def training_setup(self, training_args, our_adam=True):
-        self.percent_dense = training_args.percent_dense
-        # TODO: Remove?
-        self.xyz_gradient_accum = torch.zeros((self.get_xyz.shape[0], 1), device="cuda")
-        self.denom = torch.zeros((self.get_xyz.shape[0], 1), device="cuda")
-
-        l = [
-            {'params': [self._xyz], 'lr': training_args.position_lr_init * self.spatial_lr_scale, "name": "xyz"},
-            {'params': [self._features_dc], 'lr': training_args.feature_lr, "name": "f_dc"},
-            {'params': [self._features_rest], 'lr': training_args.feature_lr / 20.0, "name": "f_rest"},
-            {'params': [self._opacity], 'lr': training_args.opacity_lr, "name": "opacity"},
-            {'params': [self._scaling], 'lr': training_args.scaling_lr, "name": "scaling"},
-            {'params': [self._rotation], 'lr': training_args.rotation_lr, "name": "rotation"},
-        ]
-
-        if our_adam:
-            self.optimizer = Adam(l, lr=0.0, eps=1e-15)
-        else:
-            self.optimizer = torch.optim.Adam(l, lr=0.0, eps=1e-15)
-            
-        if self.pretrained_exposures is None:
-            self.exposure_optimizer = torch.optim.Adam([self._exposure])
-        self.xyz_scheduler_args = get_expon_lr_func(lr_init=training_args.position_lr_init*self.spatial_lr_scale,
-                                                    lr_final=training_args.position_lr_final*self.spatial_lr_scale,
-                                                    lr_delay_mult=training_args.position_lr_delay_mult,
-                                                    max_steps=training_args.position_lr_max_steps)
+    def init_exposure_optimization(self, training_args, cam_infos):
+        self.pretrained_exposures = None
+        self.exposure_mapping = {cam_info.image_name: idx for idx, cam_info in enumerate(cam_infos)}
+        
+        exposure = torch.eye(3, 4, device="cuda")[None].repeat(len(cam_infos), 1, 1)
+        self._exposure = nn.Parameter(exposure.requires_grad_(True))
+        self.exposure_optimizer = torch.optim.Adam([self._exposure])
         self.exposure_scheduler_args = get_expon_lr_func(training_args.exposure_lr_init, training_args.exposure_lr_final, lr_delay_steps=training_args.exposure_lr_delay_steps, lr_delay_mult=training_args.exposure_lr_delay_mult, max_steps=training_args.iterations)
-
+        
        
     def load_ply_file(self, path, degree):
         plydata = PlyData.read(path)
@@ -1087,19 +1073,10 @@ class GaussianModel:
             self.anchors = torch.Tensor([]).long()
 
         #retrieve exposure
-        exposure_file = os.path.join(base, "../../exposure.json")
-        if os.path.exists(exposure_file):
-            with open(exposure_file, "r") as f:
-                exposures = json.load(f)
-
-            self.pretrained_exposures = {image_name: torch.FloatTensor(exposures[image_name]).requires_grad_(False).cuda() for image_name in exposures}
-        else:
-            print(f"No exposure to be loaded at {exposure_file}")
-            self.pretrained_exposures = None
-
+        
         
         if scaffold_file:
-            #retrieve skybox
+            #retrieve skyboxp
             skybox_points = 100_000
             self.skybox_points = 100_000
             if scaffold_file != "":

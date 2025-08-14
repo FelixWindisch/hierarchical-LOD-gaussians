@@ -115,7 +115,6 @@ if __name__ == '__main__':
         else: 
             view_graph_utils = view_graph_utils.construct_distance_graph(colmap_dir + "/sparse/0/images.txt", optimization_params.view_graph_k, optimization_params.llff_hold)
             nx.write_edgelist(view_graph_utils, graph_path)
-            
     else:
         view_graph_utils = None
         

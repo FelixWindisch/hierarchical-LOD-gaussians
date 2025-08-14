@@ -11,6 +11,8 @@ from sklearn.neighbors import NearestNeighbors
 import view_graph_utils
 import torch
 import sys
+from preprocess.read_write_model import read_next_bytes
+
 
 def getWorld2View2(R, t, translate=np.array([.0, .0, .0]), scale=1.0):
     Rt = np.zeros((4, 4))
@@ -38,24 +40,45 @@ def qvec2rotmat(qvec):
          1 - 2 * qvec[1]**2 - 2 * qvec[2]**2]])
 
 def construct_distance_graph(images_file):
-    with open(images_file) as file:
-        
-        lines = [line.rstrip() for line in file]
-        number_of_images = len(lines) //2 - 2
-        positions = np.zeros((number_of_images, 3))
-        quats = np.zeros((number_of_images, 4))
-        names = []
-        for i, line in enumerate(lines[4::2]):
-            print(line)
-            split = line.split(" ")
-            positions[i, 0] = split[5]
-            positions[i, 1] = split[6]
-            positions[i, 2] = split[7]
-            quats[i, 0] = split[1]
-            quats[i, 1] = split[2]
-            quats[i, 2] = split[3]
-            quats[i, 3] = split[4]
-            names.append(split[-1])
+    text = images_file.ends_with(".txt") 
+    with open(images_file, "r" if text else "rb") as file:
+        if text:
+            lines = [line.rstrip() for line in file]
+            number_of_images = len(lines) //2 - 2
+            positions = np.zeros((number_of_images, 3))
+            quats = np.zeros((number_of_images, 4))
+            names = []
+            for i, line in enumerate(lines[4::2]):
+                print(line)
+                split = line.split(" ")
+                positions[i, 0] = split[5]
+                positions[i, 1] = split[6]
+                positions[i, 2] = split[7]
+                quats[i, 0] = split[1]
+                quats[i, 1] = split[2]
+                quats[i, 2] = split[3]
+                quats[i, 3] = split[4]
+                names.append(split[-1])
+        else:
+            num_reg_images = read_next_bytes(file, 8, "Q")[0]
+            positions = np.zeros((num_reg_images, 3))
+            quats = np.zeros((num_reg_images, 4))
+            names = []
+            for _ in range(num_reg_images):
+                binary_image_properties = read_next_bytes(
+                    file, num_bytes=64, format_char_sequence="idddddddi"
+                )
+                image_id = binary_image_properties[0]
+                quats[i] = np.array(binary_image_properties[1:5])
+                positions[i] = np.array(binary_image_properties[5:8])
+                camera_id = binary_image_properties[8]
+                image_name = ""
+                current_char = read_next_bytes(file, 1, "c")[0]
+                while current_char != b"\x00":  # look for the ASCII 0 entry
+                    image_name += current_char.decode("utf-8")
+                    current_char = read_next_bytes(file, 1, "c")[0]
+                names.append(image_name)
+                
         print(positions.shape)
         
         # For some bullshit reason, camera objects are sorted in alphabetical order

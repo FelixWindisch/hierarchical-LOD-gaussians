@@ -106,6 +106,9 @@ class ParamGroup:
 
     def extract(self, args):
         group = GroupParams()
+        for arg in vars(self).items():
+            if arg[0] in vars(self) or ("_" + arg[0]) in vars(self):
+                setattr(group, arg[0], arg[1])
         for arg in vars(args).items():
             if arg[0] in vars(self) or ("_" + arg[0]) in vars(self):
                 setattr(group, arg[0], arg[1])
@@ -203,7 +206,8 @@ class OptimizationParams(ParamGroup):
         self.use_bounding_spheres = False
         self.use_frustum_culling = True
         self.use_occlusion_culling = False
-
+        self.prune_unused = True
+        self.dampen_scale_grad = False
         self.storage_device = 'cpu'
         self.SPT_root_volume = 10
         self.target_granularity_pixels = 2
@@ -212,6 +216,7 @@ class OptimizationParams(ParamGroup):
         self.cache_size = 15_000_000
         self.cache_size_after_reduction = 12_000_000
         self.clear_cache_interval = 1000
+        self.optimize_exposure = False
         #A LoD of Gaussians
         super().__init__(parser, "Optimization Parameters")
     

@@ -128,7 +128,7 @@ def render(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoint_
         gaussians._features_dc = gaussians._features_dc.abs() 
     dataset.eval = True
     dataset.hierarchy = hierarchy_path
-    scene = Scene(dataset, gaussians, resolution_scales = [1], create_from_hier=True)
+    scene = Scene(dataset, gaussians, resolution_scales = [1], create_from_hier=True, llff_hold=opt.llff_hold)
     features_rest2 = 14 + number_SH_properties[gaussians.max_sh_degree] * 3
     range2[-1] = 14 + number_SH_properties[gaussians.max_sh_degree] * 3 
     SH_properties_single = number_SH_properties[gaussians.max_sh_degree] 
@@ -436,7 +436,10 @@ def render(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoint_
                             # N. In Render thread, when SPTs are replaced by a different LOD level, set their opacity to -999, when a threshold of invisible Gaussians is reached, compact all tensors
                             load_tensor = gaussians.properties[load_from_disk_indices, :].cuda(non_blocking=non_blocking)
 
-                            means3D = nn.Parameter(torch.cat((means3D[:gaussians.skybox_points], load_tensor[:, xyz1:xyz2].cuda(non_blocking=non_blocking), means3D[reuse_gaussians_mask])).contiguous())
+                            # means3D[end: end + len(load_tensor)]._copy(load_tensor[:, xyz1:xyz2], non_blocking=True)
+                            # Send reause_gaussian_mask and new size to render thread
+                            # Write -1 to SPT_indices and ignore them
+                            means3D = nn.Parameter(torch.cat((means3D[:gaussians.skybox_points], load_tensor[:, xyz1:xyz2].cuda(non_blocking=non_blocking), means3D[reuse_gaussians_mask])).contiguous())                            
                             opacity = nn.Parameter(torch.cat((opacity[:gaussians.skybox_points], load_tensor[:, opacity1:opacity2].cuda(non_blocking=non_blocking), opacity[reuse_gaussians_mask])).contiguous())
                             scales = nn.Parameter(torch.cat((scales[:gaussians.skybox_points], load_tensor[:, scales1:scales2].cuda(non_blocking=non_blocking), scales[reuse_gaussians_mask])).contiguous())
                             rotations = nn.Parameter(torch.cat((rotations[:gaussians.skybox_points], load_tensor[:, rotation1:rotation2].cuda(non_blocking=non_blocking), rotations[reuse_gaussians_mask])).contiguous())
