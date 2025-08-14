@@ -684,8 +684,9 @@ def training(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoin
                 
                 # Write values for every iteration
                 #region Tensorboard
-                writer.add_scalar('Total Loss', image_loss, iteration)
-                writer.add_scalar('Distance_To_Last_view', torch.linalg.norm(viewpoint_cam.camera_center - prev_cam_center), iteration)
+                if Write_Tensor_Board:
+                    writer.add_scalar('Total Loss', image_loss, iteration)
+                    writer.add_scalar('Distance_To_Last_view', torch.linalg.norm(viewpoint_cam.camera_center - prev_cam_center), iteration)
                 prev_cam_center = viewpoint_cam.camera_center
                 if Write_Tensor_Board and iteration % 10 == 0:
                     writer.add_scalar('VRAM usage', torch.cuda.memory_allocated(0), iteration)
