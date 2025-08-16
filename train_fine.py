@@ -649,9 +649,9 @@ def training(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoin
                 if opt.prune_unused:
                     contributed = torch.logical_or(contributed, contribution > 0.0001)
                     
-                if opt.lambda_opacity > 0:
+                if opt.lambda_opacity > 0 and opt.densification == "MCMC":
                     loss = loss + opt.lambda_opacity * opacity_loss
-                if opt.lambda_scaling > 0:
+                if opt.lambda_scaling > 0 and opt.densification == "MCMC":
                     loss = loss + opt.lambda_scaling * scaling_loss
                     
                 if math.isnan(loss):
