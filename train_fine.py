@@ -908,7 +908,7 @@ def training(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoin
                         if torch.sum(torch.isnan(opacity)) > 0 or torch.sum(torch.isnan(means3D)) > 0 or torch.sum(torch.isnan(scales)) > 0:
                             pass
                         
-                        if opt.noise_lr > 0:
+                        if opt.noise_lr > 0 and opt.densification == "MCMC":
                             def op_sigmoid(x, k=100, x0=0.995):
                                 return 1 / (1 + torch.exp(-k * (x - x0)))
                             # 5e5 = opt.noise_lr
