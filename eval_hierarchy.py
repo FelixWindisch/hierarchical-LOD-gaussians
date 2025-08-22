@@ -85,7 +85,7 @@ range1 = [xyz1, scales1, rotation1, features1, opacity1, features_rest1]
 range2 = [xyz2, scales2, rotation2, features2, opacity2, features_rest2]
 
 non_blocking=False
-def render(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoint_iterations, checkpoint, debug_from,  hierarchy_path, replay=False, cam_path_id=0):
+def render(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoint_iterations, checkpoint, debug_from,  hierarchy_path, replay=False, cam_path_id=0, test_set=False):
     global SH_properties, Max_SH_Degree, features_rest2, SH_properties, SH_properties_single
 
     first_iter = 0
@@ -132,7 +132,7 @@ def render(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoint_
                                                     lr_delay_mult=opt.position_lr_delay_mult,
                                                     max_steps=opt.position_lr_max_steps)
     
-    training_generator = DataLoader(scene.getTestCameras(), num_workers = 8, prefetch_factor = 1, persistent_workers = True, collate_fn=direct_collate, shuffle=False)
+    training_generator = DataLoader(scene.getTrainCameras() if test_set else scene.getTestCameras(), num_workers = 8, prefetch_factor = 1, persistent_workers = True, collate_fn=direct_collate, shuffle=False)
     psnrs = 0.0
     ssims = 0.0
     lpipss = 0.0
@@ -359,6 +359,8 @@ if __name__ == "__main__":
     parser.add_argument('--replay', type=bool, default=False)
     parser.add_argument('--ID', type=int, default=0)
     
+    parser.add_argument('--test_set', type=bool, default=False)
+    
     parser.add_argument('--config', default="")
     
     args = parser.parse_args(sys.argv[1:])
@@ -379,6 +381,6 @@ if __name__ == "__main__":
     config = argparse.Namespace(**data)
     optimization_params = op.extract(config)
     
-    render(lp.extract(args), optimization_params, pp.extract(args), args.save_iterations, args.checkpoint_iterations, args.start_checkpoint, args.debug_from, args.hierarchy_path, args.replay, args.ID)
+    render(lp.extract(args), optimization_params, pp.extract(args), args.save_iterations, args.checkpoint_iterations, args.start_checkpoint, args.debug_from, args.hierarchy_path, args.replay, args.ID, args.test_set)
         
     print("\nEval complete.")
