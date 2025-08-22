@@ -37,7 +37,6 @@ import view_graph_utils
 from scipy.spatial import KDTree
 import numpy as np
 from gaussian_hierarchy._C import  get_spt_cut_cuda
-from stp_gaussian_rasterization import ExtendedSettings
 from gaussian_renderer import occlusion_cull
 import json
 import pickle
