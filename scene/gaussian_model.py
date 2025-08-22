@@ -748,6 +748,37 @@ class GaussianModel:
         print(f"Finished Sanity Check of Hierarchy ( {self.sanity_counter} / {len(self._xyz)} nodes)")
         return visited
 
+    def training_setup(self, training_args, our_adam=True):
+       self.percent_dense = training_args.percent_dense
+       # TODO: Remove?
+       self.xyz_gradient_accum = torch.zeros((self.get_xyz.shape[0], 1), device="cuda")
+       self.denom = torch.zeros((self.get_xyz.shape[0], 1), device="cuda")
+
+       l = [
+           {'params': [self._xyz], 'lr': training_args.position_lr_init * self.spatial_lr_scale, "name": "xyz"},
+           {'params': [self._features_dc], 'lr': training_args.feature_lr, "name": "f_dc"},
+           {'params': [self._features_rest], 'lr': training_args.feature_lr / 20.0, "name": "f_rest"},
+           {'params': [self._opacity], 'lr': training_args.opacity_lr, "name": "opacity"},
+           {'params': [self._scaling], 'lr': training_args.scaling_lr, "name": "scaling"},
+           {'params': [self._rotation], 'lr': training_args.rotation_lr, "name": "rotation"},
+       ]
+
+       if our_adam:
+           self.optimizer = Adam(l, lr=0.0, eps=1e-15)
+       else:
+           self.optimizer = torch.optim.Adam(l, lr=0.0, eps=1e-15)
+           
+       if self.pretrained_exposures is None:
+           self.exposure_optimizer = torch.optim.Adam([self._exposure])
+       self.xyz_scheduler_args = get_expon_lr_func(lr_init=training_args.position_lr_init*self.spatial_lr_scale,
+                                                   lr_final=training_args.position_lr_final*self.spatial_lr_scale,
+                                                   lr_delay_mult=training_args.position_lr_delay_mult,
+                                                   max_steps=training_args.position_lr_max_steps)
+       self.exposure_scheduler_args = get_expon_lr_func(training_args.exposure_lr_init, training_args.exposure_lr_final, lr_delay_steps=training_args.exposure_lr_delay_steps, lr_delay_mult=training_args.exposure_lr_delay_mult, max_steps=training_args.iterations)
+
+       
+    
+    
     def setup_functions(self):
         def build_covariance_from_scaling_rotation(scaling, scaling_modifier, rotation):
             L = build_scaling_rotation(scaling_modifier * scaling, rotation)
