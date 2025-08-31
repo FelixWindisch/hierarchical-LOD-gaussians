@@ -237,9 +237,9 @@ def readColmapSceneInfo(path, images, masks, depths, eval, train_test_exp, llffh
             storePly(ply_path, xyz, rgb)
         pcd = fetchPly(ply_path)
     eval = True
-    if eval:
+    if eval and llffhold > 0:
         if llffhold:
-            print("------------LLFF HOLD-------------")
+            print(f"------------LLFF HOLD {llffhold}-------------")
             cam_names = [cam_extrinsics[cam_id].name for cam_id in cam_extrinsics]
             cam_names = sorted(cam_names)
             test_cam_names_list = [name for idx, name in enumerate(cam_names) if idx % llffhold == 0]
