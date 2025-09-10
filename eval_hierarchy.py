@@ -130,7 +130,8 @@ def render(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoint_
                                                     lr_final=opt.position_lr_final*gaussians.spatial_lr_scale,
                                                     lr_delay_mult=opt.position_lr_delay_mult,
                                                     max_steps=opt.position_lr_max_steps)
-    
+    if len(scene.getTestCameras()) == 0:
+        test_set = True
     training_generator = DataLoader(scene.getTrainCameras() if test_set else scene.getTestCameras(), num_workers = 8, prefetch_factor = 1, persistent_workers = True, collate_fn=direct_collate, shuffle=False)
     psnrs = 0.0
     ssims = 0.0

@@ -33,7 +33,7 @@ import collections
 import numpy as np
 import struct
 import argparse
-
+import torch
 
 CameraModel = collections.namedtuple(
     "CameraModel", ["model_id", "model_name", "num_params"]
@@ -539,6 +539,29 @@ def qvec2rotmat(qvec):
             ],
         ]
     )
+    
+def qvec2rotmat_torch(qvec):
+    x = [
+            [
+                1 - 2 * qvec[:,2] ** 2 - 2 * qvec[:,3] ** 2,
+                2 * qvec[:,1] * qvec[:,2] - 2 * qvec[:,0] * qvec[:,3],
+                2 * qvec[:,3] * qvec[:,1] + 2 * qvec[:,0] * qvec[:,2],
+            ],
+            [
+                2 * qvec[:,1] * qvec[:,2] + 2 * qvec[:,0] * qvec[:,3],
+                1 - 2 * qvec[:,1] ** 2 - 2 * qvec[:,3] ** 2,
+                2 * qvec[:,2] * qvec[:,3] - 2 * qvec[:,0] * qvec[:,1],
+            ],
+            [
+                2 * qvec[:,3] * qvec[:,1] - 2 * qvec[:,0] * qvec[:,2],
+                2 * qvec[:,2] * qvec[:,3] + 2 * qvec[:,0] * qvec[:,1],
+                1 - 2 * qvec[:,1] ** 2 - 2 * qvec[:,2] ** 2,
+            ],
+        ]
+    inner = [torch.stack(sublist) for sublist in x]
+    result = torch.stack(inner)
+    return result.transpose(0, 2)
+
 
 
 def rotmat2qvec(R):
@@ -560,7 +583,81 @@ def rotmat2qvec(R):
         qvec *= -1
     return qvec
 
+def rotation_matrix_to_quaternion(R):
+    """
+    Convert batch of rotation matrices (N, 3, 3) to quaternions (N, 4).
+    Quaternion format: (w, x, y, z).
+    """
+    N = R.shape[0]
+    q = torch.zeros((N, 4), device=R.device, dtype=R.dtype)
 
+    trace = R[:, 0, 0] + R[:, 1, 1] + R[:, 2, 2]
+
+    # Case 1: trace > 0
+    mask = trace > 0
+    t = torch.sqrt(1.0 + trace[mask])
+    q[mask, 0] = 0.5 * t
+    q[mask, 1] = (R[mask, 2, 1] - R[mask, 1, 2]) / (2.0 * t)
+    q[mask, 2] = (R[mask, 0, 2] - R[mask, 2, 0]) / (2.0 * t)
+    q[mask, 3] = (R[mask, 1, 0] - R[mask, 0, 1]) / (2.0 * t)
+
+    # Case 2: trace <= 0 → pick largest diagonal
+    mask = ~mask
+    if mask.any():
+        Rm = R[mask]
+        qsub = torch.zeros((Rm.shape[0], 4), device=R.device, dtype=R.dtype)
+
+        diag = torch.stack([Rm[:, 0, 0], Rm[:, 1, 1], Rm[:, 2, 2]], dim=1)
+        idx = torch.argmax(diag, dim=1)
+
+        for j in range(3):
+            submask = idx == j
+            if not submask.any():
+                continue
+            m = Rm[submask]
+            if j == 0:
+                t = torch.sqrt(1.0 + m[:, 0, 0] - m[:, 1, 1] - m[:, 2, 2])
+                qsub[submask, 1] = 0.5 * t
+                qsub[submask, 2] = (m[:, 0, 1] + m[:, 1, 0]) / (2.0 * t)
+                qsub[submask, 3] = (m[:, 0, 2] + m[:, 2, 0]) / (2.0 * t)
+                qsub[submask, 0] = (m[:, 2, 1] - m[:, 1, 2]) / (2.0 * t)
+            elif j == 1:
+                t = torch.sqrt(1.0 + m[:, 1, 1] - m[:, 0, 0] - m[:, 2, 2])
+                qsub[submask, 2] = 0.5 * t
+                qsub[submask, 1] = (m[:, 0, 1] + m[:, 1, 0]) / (2.0 * t)
+                qsub[submask, 3] = (m[:, 1, 2] + m[:, 2, 1]) / (2.0 * t)
+                qsub[submask, 0] = (m[:, 0, 2] - m[:, 2, 0]) / (2.0 * t)
+            else:
+                t = torch.sqrt(1.0 + m[:, 2, 2] - m[:, 0, 0] - m[:, 1, 1])
+                qsub[submask, 3] = 0.5 * t
+                qsub[submask, 1] = (m[:, 0, 2] + m[:, 2, 0]) / (2.0 * t)
+                qsub[submask, 2] = (m[:, 1, 2] + m[:, 2, 1]) / (2.0 * t)
+                qsub[submask, 0] = (m[:, 1, 0] - m[:, 0, 1]) / (2.0 * t)
+
+        q[mask] = qsub
+
+    # Normalize
+    q = q / q.norm(dim=1, keepdim=True)
+    return q
+
+def rotmat2qvec_torch(R):
+    Rxx, Ryx, Rzx, Rxy, Ryy, Rzy, Rxz, Ryz, Rzz = R.flat
+    K = (
+        np.array(
+            [
+                [Rxx - Ryy - Rzz, 0, 0, 0],
+                [Ryx + Rxy, Ryy - Rxx - Rzz, 0, 0],
+                [Rzx + Rxz, Rzy + Ryz, Rzz - Rxx - Ryy, 0],
+                [Ryz - Rzy, Rzx - Rxz, Rxy - Ryx, Rxx + Ryy + Rzz],
+            ]
+        )
+        / 3.0
+    )
+    eigvals, eigvecs = np.linalg.eigh(K)
+    qvec = eigvecs[[3, 0, 1, 2], np.argmax(eigvals)]
+    if qvec[0] < 0:
+        qvec *= -1
+    return qvec
 # def main():
 #     parser = argparse.ArgumentParser(
 #         description="Read and write COLMAP binary and text models"

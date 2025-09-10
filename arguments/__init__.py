@@ -162,6 +162,7 @@ class OptimizationParams(ParamGroup):
         self.iterations = 100_000
         self.coarse_iterations = 60_000
         self.SH_degree = 1
+        self.SH_increase_after_train_percent = 0.1
         self.lr_multiplier = 1.0
         self.position_lr_init = 0.00002
         self.position_lr_final = 0.0000002
