@@ -1,95 +1,37 @@
-# A Hierarchical 3D Gaussian Representation for Real-Time Rendering of Very Large Datasets
+# A LoD of Gaussians
 
-[Bernhard Kerbl](https://scholar.google.at/citations?user=jeasMB0AAAAJ&hl=en)\*, [Andreas Meuleman](https://ameuleman.github.io/)\*, [Georgios Kopanas](https://grgkopanas.github.io/), [Michael Wimmer](https://scholar.google.at/citations?user=DIwQC78AAAAJ&hl=en), [Alexandre Lanvin](https://scholar.google.com/citations?hl=fr&user=e1s7mGsAAAAJ), [George Drettakis](http://www-sop.inria.fr/members/George.Drettakis/) (* indicates equal contribution)
-
-### [Project page](https://repo-sam.inria.fr/fungraph/hierarchical-3d-gaussians/) | [Paper](https://repo-sam.inria.fr/fungraph/hierarchical-3d-gaussians/hierarchical-3d-gaussians_low.pdf) 
-
-This repository contains the official authors' implementation associated with the paper "A Hierarchical 3D Gaussian Representation for Real-Time Rendering of Very Large Datasets". We explain the different steps required to run our algorithm. We use a ["toy example"](https://repo-sam.inria.fr/fungraph/hierarchical-3d-gaussians/datasets/example_dataset.zip) of 1500 images organized in 2 chunks to illustrate each step of the method and facilitate reproduction. The full datasets presented in the paper will be released as soon as the data protection process is completed (please stay tuned).
-
-<a href="https://www.inria.fr/"><img height="100" src="assets/logo_inria.png"> </a>
-<a href="https://univ-cotedazur.eu/"><img height="100" src="assets/logo_uca.png"> </a>
-<a href="https://www.cg.tuwien.ac.at/"> <img width="100;" src="assets/logo_tuwien.svg"></a>
-<a href="https://team.inria.fr/graphdeco/"> <img width="700;" src="assets/logo_graphdeco.png"></a>
-
-Bibliography:
-```
-@Article{hierarchicalgaussians24,
-      author       = {Kerbl, Bernhard and Meuleman, Andreas and Kopanas, Georgios and Wimmer, Michael and Lanvin, Alexandre and Drettakis, George},
-      title        = {A Hierarchical 3D Gaussian Representation for Real-Time Rendering of Very Large Datasets},
-      journal      = {ACM Transactions on Graphics},
-      number       = {4},
-      volume       = {43},
-      month        = {July},
-      year         = {2024},
-      url          = {https://repo-sam.inria.fr/fungraph/hierarchical-3d-gaussians/}
-}
-```
-
-## Roadmap
-Please note that the code release is currently in alpha. We intend to provide fixes for issues that are experienced by users, due to difficulties with setups and/or environments that we did not test on. The below steps were successfully tested on Windows and Ubuntu 22. We appreciate the documentation of issues by users and will try to address them. Furthermore, there are several points that we will integrate in the coming weeks:
-- Datasets: We will add links for large-scale datasets that are currently undergoing auditing.
-- Windows binaries: Once we have sufficiently tested them, we will add pre-compiled binaries for the viewers on Windows.
-- Direct conversion of legacy 3DGS models: we are testing the conversion of scenes trained with vanilla 3DGS to hierarchical models. Once the quality is assured and we have concluded testing, we will document the necessary steps to do so.
-- Streaming from disk: currently, data is streamed on-demand to the GPU, however, the viewed dataset must fit into memory. This can become prohibitive in the hierarchy merger and real-time viewer. We will adapt the code to allow dynamic streaming from disk soon.
-- Reduce real-time viewer resource usage: the storage configuration for the real-time viewer is unoptimized, and so is the speed. Users can define a VRAM budget for the scene, but it is not used as efficiently as it could be. We will iterate towards making sure that higher quality settings can be achieved with lower budgets and better framerates. We will try to make the budget so that it effectively limits the **total** application VRAM, including framebuffer structs.
-
+This repository contains the official authors' implementation associated with the paper "A LoD of Gaussians: Unified Training and Rendering for Ultra-Large-Scale Reconstruction with External Memory". 
 ## Setup
 
 Make sure to clone the repo using `--recursive`:
 ```
-git clone https://github.com/graphdeco-inria/hierarchical-3d-gaussians.git --recursive
-cd hierarchical-3d-gaussians
+git clone -b Refactor https://github.com/FelixWindisch/hierarchical-LOD-gaussians.git --recursive
+cd hierarchical-LOD-gaussians
 ```
 ### Prerequisite
 
-We tested on Ubuntu 22.04 and Windows 11 using the following: 
-
-* CMake 3.22.1
-* gcc/g++ 11.4.0 or Visual Studio 2019
-* CUDA (11.8, 12.1 or 12.5)
-* [COLMAP 3.9.1](https://github.com/colmap/colmap/releases/tag/3.9.1) (for preprocessing only). Linux: [build from source](https://colmap.github.io/install.html). Windows: add the path to the COLMAP.bat directory to the PATH environment variable.
-
-### Python environment for optimization
+Setting up the conda environment:
 ```
-conda create -n hierarchical_3d_gaussians python=3.12 -y
-conda activate hierarchical_3d_gaussians
-# Replace cu121 with cu118 if using CUDA 11.x 
-pip install torch==2.3.0 torchvision==0.18.0 torchaudio==2.3.0 --index-url https://download.pytorch.org/whl/cu121 
-pip install -r requirements.txt
+conda create -n LOD
+conda activate LOD
+conda install nvidia/label/cuda-12.6.3::cuda-toolkit
+pip install torch torchvision --index-url https://download.pytorch.org/whl/cu126
+conda install python=3.10
+pip install requirements.txt
 ```
-### Weights for monocular depth estimation 
-To enable depth loss, download the model weights of one of these methods:
-* [Depth Anything V2](https://github.com/DepthAnything/Depth-Anything-V2) (suggested): download from [Depth-Anything-V2-Large](https://huggingface.co/depth-anything/Depth-Anything-V2-Large/resolve/main/depth_anything_v2_vitl.pth?download=true) and place it under `submodules/Depth-Anything-V2/checkpoints/`.
-* [DPT](https://github.com/isl-org/DPT) (used in the paper): download from [dpt_large-midas-2f21e586.pt](https://github.com/intel-isl/DPT/releases/download/1_0/dpt_large-midas-2f21e586.pt) and place it under `submodules/DPT/weights/`.
 
 ### Compiling hierarchy generator and merger
+These files were adapted from Hierarchical 3DGS and can be built as follows:
 ```
 cd submodules/gaussianhierarchy
 cmake . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j --config Release
 cd ../..
 ```
-### Compiling the real-time viewer 
-For Ubuntu 22.04, install dependencies:
-```
-sudo apt install -y cmake libglew-dev libassimp-dev libboost-all-dev libgtk-3-dev libopencv-dev libglfw3-dev libavdevice-dev libavcodec-dev libeigen3-dev libxxf86vm-dev libembree-dev
-```
-Clone the hierarchy viewer and build:
-```
-cd SIBR_viewers
-git clone https://github.com/graphdeco-inria/hierarchy-viewer.git src/projects/hierarchyviewer
-cmake . -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_IBR_HIERARCHYVIEWER=ON -DBUILD_IBR_ULR=OFF -DBUILD_IBR_DATASET_TOOLS=OFF -DBUILD_IBR_GAUSSIANVIEWER=OFF 
-cmake --build build -j --target install --config Release
-```
-
 ## Running the method
 
-Our method has two main stages: Reconstruction, that takes a (usually large) set of images as input and outputs a "merged hierarchy", and [Runtime](#3-real-time-viewer), that displays the full hierarchy in real-time. 
-
-Reconstruction has two main steps: 1) **[Preprocessing](#1-preprocessing)** the input images and 2) **[Optimization](#2-optimization)**. We present these in detail next. For each step we have automatic scripts that perform all the required steps, and we also provide details about the individual components.
-
 #### Dataset 
-To get started, prepare a dataset or download and extract the [toy example](https://repo-sam.inria.fr/fungraph/hierarchical-3d-gaussians/datasets/example_dataset.zip). 
+To get started, prepare a dataset. 
 The dataset should have sorted images in a folder per camera in `${DATASET_DIR}/inputs/images/` and optional masks (with `.png` extension) in `${DATASET_DIR}/inputs/masks/`. Masks will be multiplied to the input images and renderings before computing loss. 
 
 You can also work from our full scenes. As we provide them calibrated and subdivided, you may skip to [Generate monocular depth maps](#13-generate-monocular-depth-maps). The datasets:
