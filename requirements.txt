@@ -17,7 +17,7 @@ scipy
 tensorboard
 torchviz
 psutil
-submodules/hierarchy-rasterizer
+submodules/alt-rasterizer
 submodules/simple-knn
 submodules/gaussianhierarchy
 git+https://github.com/rahul-goel/fused-ssim/
