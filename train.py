@@ -96,7 +96,7 @@ if __name__ == '__main__':
                 model_params, 
                 optimization_params, 
                 pipeline_params, 
-                saving_iterations=[optimization_params.coarse_iterations-1], 
+                saving_iterations=[optimization_params.coarse_iterations], 
                 checkpoint_iterations=[], 
                 checkpoint=False, 
                 debug_from=-1)

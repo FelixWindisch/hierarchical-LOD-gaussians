@@ -8,7 +8,7 @@
 #
 # For inquiries contact  george.drettakis@inria.fr
 #
-
+import math
 import os
 import torch
 from utils.loss_utils import l1_loss, ssim
@@ -90,7 +90,7 @@ def training(dataset, opt, pipe, saving_iterations, checkpoint_iterations, check
                 iter_start.record()
 
                 # Every 1000 its we increase the levels of SH up to a maximum degree
-                if iteration % 1000 == 0:
+                if iteration % int(math.floor(opt.coarse_iterations * opt.SH_increase_after_train_percent)) == 0:
                     gaussians.oneupSHdegree()
 
                 # Render

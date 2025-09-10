@@ -43,44 +43,13 @@ import gc
 from datetime import datetime
 import random
 from globals import *
+from preprocess.read_write_model import qvec2rotmat, rotmat2qvec, qvec2rotmat_torch, rotmat2qvec_torch, rotation_matrix_to_quaternion
 # to check CPU RAM usage
 pid = os.getpid()
 
 
 
-def quat_conj(q):                      # q: [N,4] (w,x,y,z)
-    return torch.stack([ q[:,0], -q[:,1], -q[:,2], -q[:,3] ], dim=-1)
 
-def rotate_vec_by_quat(v, q):         # v: [N,3], q: [N,4] unit
-    # Shoemake fast quat-vector rotation: v' = v + 2*w*(qv x v) + 2*(qv x (qv x v))
-    w, qx, qy, qz = q[:,0], q[:,1], q[:,2], q[:,3]
-    qv = torch.stack([qx, qy, qz], dim=-1)               # [N,3]
-    t  = 2.0 * torch.cross(qv, v, dim=-1)                # [N,3]
-    return v + (w[:,None] * t) + torch.cross(qv, t, dim=-1)
-
-def dampen_scale_grad_quat(g_local, quat, view_dir, lambda_):
-    """
-    g_local : [N,3] gradient dL/d[sx,sy,sz] in local frame
-    quat    : [N,4] world->local rotation as a quaternion **or** local->world; see below
-    view_dir: [N,3] normalized world-space view directions
-    lambda_ : float in [0,1] or tensor broadcastable to [N,1]
-    """
-    # Normalize quaternion to be safe
-    quat = quat / quat.norm(dim=-1, keepdim=True).clamp_min(1e-12)
-
-    # If your stored quaternion is local->world, use its conjugate to bring v into local space:
-    q_inv = quat_conj(quat)            # world -> local
-
-    # Rotate view into local frame
-    v_local = rotate_vec_by_quat(view_dir, q_inv)
-    v_local = v_local / v_local.norm(dim=-1, keepdim=True).clamp_min(1e-12)
-
-    # Axis-wise damping factors
-    lam = lambda_ if torch.is_tensor(lambda_) else torch.tensor(lambda_, dtype=g_local.dtype, device=g_local.device)
-    lam = lam.view(-1,1)
-    lambda_eff = 1.0 - (1.0 - lam) * (v_local ** 2)      # [N,3]
-
-    return g_local * lambda_eff
 
 
 
@@ -160,7 +129,7 @@ def training(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoin
     
     scene = Scene(dataset, gaussians, resolution_scales=[1], create_from_hier=True, llff_hold=opt.llff_hold)
     gaussians.max_sh_degree = opt.SH_degree
-    gaussians.active_sh_degree = opt.SH_degree
+    gaussians.active_sh_degree = 1
     features_rest2 = 14 + number_SH_properties[gaussians.max_sh_degree] * 3
     number_properties = features_rest2
     range2[-1] = features_rest2
@@ -585,6 +554,9 @@ def training(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoin
                 torch.cuda.reset_peak_memory_stats()
                 # Render
                 
+                if iteration % int(math.floor(opt.iterations * opt.SH_increase_after_train_percent)) == 0 and iteration > 0:
+                    gaussians.oneupSHdegree()
+                
                 render_pkg = render_vanilla(
                         viewpoint_cam, 
                         means3D,
@@ -737,7 +709,8 @@ def training(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoin
                         return
 
 
-                    
+                    #region Densification
+
                         
                     if opt.densify_from_iter < iteration < opt.densify_until_iter and iteration % opt.densification_interval == 0:
                         print("-----------------DENSIFY!--------------------")
@@ -858,7 +831,8 @@ def training(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoin
                                 mean_covariance_max_scale = torch.max(gaussians.scaling_activation(gaussians._scaling[gaussians.upper_tree_nodes[:, 5].to(Storage_Device)]), dim=-1)[0].mean()
                                 writer.add_scalar('Mean Difference between Bounding Radius and 3Sigma', mean_bounding_sphere_radius - mean_covariance_max_scale, iteration)
                         #endregion
-                    
+                        
+                    #region Optimization
                     elif iteration < opt.iterations:
                         if opt.optimize_exposure:
                             gaussians.exposure_optimizer.step()
@@ -871,10 +845,7 @@ def training(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoin
                         features_rest.grad[0:gaussians.skybox_points, :, :] = 0
                         opacity.grad[0:gaussians.skybox_points, :] = 0
                         scales.grad[0:gaussians.skybox_points, :] = 0
-                        
-                        if opt.dampen_scale_grad:
-                            lambda_damp = 0.2  # strong damping
-                            scales.grad = dampen_scale_grad_quat(scales.grad, rotations, view_dir, lambda_damp)
+
     
                         
                         #if torch.isnan(means3D.grad).any() or (torch.isnan(opacity.grad)).any() or torch.isnan(scales.grad).any():
@@ -886,6 +857,17 @@ def training(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoin
                         #    rotations.grad[indices] = 0
                         #    pass
                         #relevant = (opacity.grad.flatten() != 0).nonzero()
+                        
+                        if opt.dampen_scale_grad:
+                            
+                            view_dir = torch.tensor(viewpoint_cam.R, device='cuda', dtype=torch.float32) @ torch.tensor([0, 0, 1], device='cuda', dtype=torch.float32)
+                            R = qvec2rotmat_torch(rotations)
+                            S = torch.diag_embed(gaussians.scaling_activation(scales))
+                            covariances = R @ S @ S.transpose(1, 2) @ R.transpose(1, 2)
+                            scale_along_view_dir = torch.sqrt(view_dir.T @ covariances @ view_dir)
+                            
+                            
+                        
                         for param in parameters:
                             optimizer_function = OurAdam._global_single_tensor_adam2 if Global_ADAM else OurAdam._single_tensor_adam2
                             
@@ -904,7 +886,24 @@ def training(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoin
                                                         eps=1e-8, 
                                                         maximize=False, 
                                                         capturable=False)
-
+                        if opt.dampen_scale_grad:
+                            R = qvec2rotmat_torch(rotations)
+                            S = torch.diag_embed(gaussians.scaling_activation(scales))
+                            covariances = R @ S @ S.transpose(1, 2) @ R.transpose(1, 2)
+                            scaling_factors = scale_along_view_dir / torch.sqrt(view_dir.T @ covariances @ view_dir)
+                            
+                            values, vectors = torch.linalg.eigh(covariances)
+                            v_eig = vectors @ view_dir 
+                            Lambda = torch.diag_embed(values)
+                            Lambda_new = Lambda + (scaling_factors ** 2 - 1)[:, None, None] * (Lambda * (v_eig[:, :, None] * v_eig[:, None, :]))
+                            
+                            #dampened_covs = covariances + (scaling_factors ** 2 - 1)[:, None, None] * (torch.outer(view_dir, view_dir) @ covariances @ torch.outer(view_dir, view_dir))
+                            eigenvalues, eigenvectors = torch.diagonal(Lambda_new, dim1 =-2, dim2=-1), vectors
+                            eigenvalues.clamp_min_(0)
+                            with torch.no_grad():
+                                rotations = rotation_matrix_to_quaternion(eigenvectors)
+                                scales = gaussians.scaling_inverse_activation(torch.sqrt(eigenvalues))
+                            
                         if torch.sum(torch.isnan(opacity)) > 0 or torch.sum(torch.isnan(means3D)) > 0 or torch.sum(torch.isnan(scales)) > 0:
                             pass
                         
