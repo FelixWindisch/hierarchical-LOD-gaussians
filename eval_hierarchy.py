@@ -282,7 +282,7 @@ def render(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoint_
                 iteration += 1
                 psnr_current = psnr(image.detach(), gt_image).mean().double()
                 ssim_current = ssim(image.detach(), gt_image).mean().double()
-                lpips_current = 0 #lpips(image, gt_image, net_type='vgg').mean().double()
+                lpips_current = lpips(image, gt_image, net_type='vgg').mean().double()
                 torchvision.utils.save_image(image,  "output/" + os.path.basename(viewpoint_cam.image_name) + f"_{psnr_current}.png")
                 #torchvision.utils.save_image(gt_image,  "output/" + viewpoint_cam.image_name + "_gt.png")
                 psnrs += psnr_current
