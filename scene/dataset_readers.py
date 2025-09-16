@@ -266,7 +266,7 @@ def readColmapSceneInfo(path, images, masks, depths, eval, train_test_exp, llffh
     if len(train_cam_infos) > 0:
         nerf_normalization = getNerfppNorm(train_cam_infos)
     else:
-        nerf_normalization = 1
+        nerf_normalization = getNerfppNorm(test_cam_infos)
 
     scene_info = SceneInfo(point_cloud=pcd,
                            train_cameras=train_cam_infos,
