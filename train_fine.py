@@ -129,7 +129,7 @@ def training(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoin
     
     scene = Scene(dataset, gaussians, resolution_scales=[1], create_from_hier=True, llff_hold=opt.llff_hold)
     gaussians.max_sh_degree = opt.SH_degree
-    gaussians.active_sh_degree = 1
+    gaussians.active_sh_degree = min(1, gaussians.max_sh_degree)
     features_rest2 = 14 + number_SH_properties[gaussians.max_sh_degree] * 3
     number_properties = features_rest2
     range2[-1] = features_rest2
@@ -556,7 +556,6 @@ def training(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoin
                 
                 if iteration % int(math.floor(opt.iterations * opt.SH_increase_after_train_percent)) == 0 and iteration > 0:
                     gaussians.oneupSHdegree()
-                
                 render_pkg = render_vanilla(
                         viewpoint_cam, 
                         means3D,
