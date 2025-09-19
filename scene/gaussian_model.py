@@ -1155,6 +1155,8 @@ class GaussianModel:
             sh_coefficients = 8
         elif self.max_sh_degree == 1:
             sh_coefficients = 3
+        elif self.max_sh_degree == 0:
+            sh_coefficients = 0
         self._features_rest = shs_all.to(device)[:,1:1+sh_coefficients,:].requires_grad_(True)
         self._opacity = alpha.to(device).requires_grad_(True)
         self._scaling = scales.to(device).requires_grad_(True)
