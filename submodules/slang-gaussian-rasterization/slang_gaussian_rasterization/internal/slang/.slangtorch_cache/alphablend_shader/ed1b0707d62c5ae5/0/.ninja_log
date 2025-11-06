@@ -1,0 +1,8 @@
+# ninja log v7
+2	1819	1762350157137445693	alphablend_shader_cuda.cuda.o	b5cf450bab91bb79
+2	14671	1762333605216182427	alphablend_shader.o	110c8c4a690d37e9
+1819	2064	1762350158954450935	_slangtorch_alphablend_shader_ed1b0707d62c5ae5.so	2a1f8f6d17cded85
+1	1823	1762419221224513198	alphablend_shader_cuda.cuda.o	b5cf450bab91bb79
+1823	2090	1762419223046518922	_slangtorch_alphablend_shader_ed1b0707d62c5ae5.so	2a1f8f6d17cded85
+2	1881	1762437624094381795	alphablend_shader_cuda.cuda.o	b5cf450bab91bb79
+1881	2144	1762437625973387885	_slangtorch_alphablend_shader_ed1b0707d62c5ae5.so	2a1f8f6d17cded85

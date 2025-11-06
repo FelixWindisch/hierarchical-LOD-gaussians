@@ -1,0 +1,16 @@
+Metadata-Version: 2.4
+Name: lod_slang_gaussian_rasterization
+Version: 0.1.0
+Summary: A Slang.D implementation of the CUDA acclerated rasterizer that is described in the "3D Gaussian Splatting for Real-Time Rendering of Radiance Fields", Kerbl and Kopanas 2023
+Author: George Kopanas
+Author-email: gkopanas@google.com
+License: Apache 2.0
+License-File: LICENSE
+Requires-Dist: slangtorch
+Requires-Dist: torch
+Dynamic: author
+Dynamic: author-email
+Dynamic: license
+Dynamic: license-file
+Dynamic: requires-dist
+Dynamic: summary

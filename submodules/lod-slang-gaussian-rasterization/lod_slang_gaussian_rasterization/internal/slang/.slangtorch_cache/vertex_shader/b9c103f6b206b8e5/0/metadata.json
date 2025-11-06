@@ -1,0 +1,58 @@
+{
+    "cpp": {
+        "options": [],
+        "deps": [
+            [
+                "/data/fwindisch/hierarchical-LOD-gaussians/submodules/lod-slang-gaussian-rasterization/lod_slang_gaussian_rasterization/internal/slang/vertex_shader.slang",
+                1760954194.0
+            ],
+            [
+                "/data/fwindisch/hierarchical-LOD-gaussians/submodules/lod-slang-gaussian-rasterization/lod_slang_gaussian_rasterization/internal/slang/utils.slang",
+                1762350986.7852588
+            ],
+            [
+                "/data/fwindisch/hierarchical-LOD-gaussians/submodules/lod-slang-gaussian-rasterization/lod_slang_gaussian_rasterization/internal/slang/spherical_harmonics.slang",
+                1760954194.0
+            ],
+            [
+                "/data/conda/envs/LOD/lib/python3.10/site-packages/slangtorch/bin/slangc",
+                1760971006.6338778
+            ],
+            [
+                "/data/conda/envs/LOD/lib/python3.10/site-packages/slangtorch/bin/libslang.so",
+                1760971006.5418775
+            ]
+        ],
+        "version": "1.3.14",
+        "includePaths": []
+    },
+    "cuda": {
+        "options": [],
+        "deps": [
+            [
+                "/data/fwindisch/hierarchical-LOD-gaussians/submodules/lod-slang-gaussian-rasterization/lod_slang_gaussian_rasterization/internal/slang/vertex_shader.slang",
+                1760954194.0
+            ],
+            [
+                "/data/fwindisch/hierarchical-LOD-gaussians/submodules/lod-slang-gaussian-rasterization/lod_slang_gaussian_rasterization/internal/slang/utils.slang",
+                1762350986.7852588
+            ],
+            [
+                "/data/fwindisch/hierarchical-LOD-gaussians/submodules/lod-slang-gaussian-rasterization/lod_slang_gaussian_rasterization/internal/slang/spherical_harmonics.slang",
+                1760954194.0
+            ],
+            [
+                "/data/conda/envs/LOD/lib/python3.10/site-packages/slangtorch/bin/slangc",
+                1760971006.6338778
+            ],
+            [
+                "/data/conda/envs/LOD/lib/python3.10/site-packages/slangtorch/bin/libslang.so",
+                1760971006.5418775
+            ]
+        ],
+        "version": "1.3.14",
+        "includePaths": []
+    },
+    "moduleName": "_slangtorch_vertex_shader_b9c103f6b206b8e5",
+    "moduleBinary": "/data/fwindisch/hierarchical-LOD-gaussians/submodules/lod-slang-gaussian-rasterization/lod_slang_gaussian_rasterization/internal/slang/.slangtorch_cache/vertex_shader/b9c103f6b206b8e5/0/_slangtorch_vertex_shader_b9c103f6b206b8e5.pyd"
+}
