@@ -584,6 +584,7 @@ def training(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoin
                 gt_image = viewpoint_cam.original_image.cuda()
                 invDepth = render_pkg["depth"]
                 if viewpoint_cam.alpha_mask is not None:
+                    #print(f"Alpha mask: {viewpoint_cam.alpha_mask.sum()} / {viewpoint_cam.alpha_mask.nelement()}")
                     Ll1 = l1_loss(image * viewpoint_cam.alpha_mask.cuda(), gt_image)
                     loss = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * (1.0 - fused_ssim((image * viewpoint_cam.alpha_mask.cuda()).unsqueeze(0), gt_image.unsqueeze(0)))
                 else:
@@ -598,6 +599,7 @@ def training(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoin
                     mono_invdepth = viewpoint_cam.invdepthmap.cuda()
                     Ll1depth_pure = torch.abs((invDepth  - mono_invdepth)).mean()
                     Ll1depth = depth_l1_weight(iteration) * Ll1depth_pure 
+                    #print(f"depth loss: {Ll1depth}")
                     loss += Ll1depth
                     Ll1depth = Ll1depth.item()
                 else:
@@ -834,6 +836,7 @@ def training(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoin
                     #region Optimization
                     elif iteration < opt.iterations:
                         if opt.optimize_exposure:
+                            #print("optimize exposure")
                             gaussians.exposure_optimizer.step()
                             gaussians.exposure_optimizer.zero_grad(set_to_none = True)
                         

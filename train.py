@@ -13,7 +13,7 @@ import view_graph_utils
 import networkx as nx
 import train_coarse
 import json 
-
+import train_smooth
 def setup_dirs(images, depths, masks, colmap, output, project):
     images_dir = "../rectified/images" if images == "" else images
     depths_dir = "../rectified/depths" if depths == "" else depths
@@ -147,7 +147,7 @@ if __name__ == '__main__':
     #optimization_params = optimization_params.extract(args)
 
 
-    train_fine.training(
+    train_smooth.training(
         model_params, 
         optimization_params, 
         pipeline_params, 

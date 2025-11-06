@@ -133,8 +133,16 @@ def training(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoin
     gaussians.max_sh_degree = opt.SH_degree
     gaussians.active_sh_degree = min(1, gaussians.max_sh_degree)
     features_rest2 = 14 + number_SH_properties[gaussians.max_sh_degree] * 3
-    number_properties = features_rest2
+    d_mu1 = features_rest2 
+    d_mu2 = features_rest2 +1
+    d_sigma1 = features_rest2 +1
+    d_sigma2 = features_rest2 +2
+    number_properties = d_sigma2
     range2[-1] = features_rest2
+    range1.append(d_mu1)
+    range1.append(d_sigma1)
+    range2.append(d_mu2)
+    range2.append(d_sigma2)
     SH_properties_single = number_SH_properties[gaussians.max_sh_degree] 
     SH_properties = number_SH_properties[gaussians.max_sh_degree] * 3
     # This is the focal length with which the SPT distances are computed
@@ -150,6 +158,10 @@ def training(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoin
 
         
     gaussians.compact_gaussians(opt.storage_device, opt.cap_max, densification=opt.densification, prune_unused_gaussians=opt.prune_unused)
+    temp = torch.zeros((len(gaussians.properties), d_sigma2*3), device=opt.storage_device)  
+    temp[:, :features_rest2] = gaussians.properties[:, :features_rest2]
+    gaussians.properties = temp
+    torch.cuda.empty_cache()
     print(f"Gaussians Moved to {opt.storage_device}")
     
     if opt.optimize_exposure:
@@ -184,7 +196,9 @@ def training(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoin
     features_dc = gaussians.properties[:gaussians.skybox_points, features1:features2].cuda().unsqueeze(1).contiguous()
     opacity = gaussians.properties[:gaussians.skybox_points, opacity1].cuda().unsqueeze(1).contiguous()
     features_rest = gaussians.properties[:gaussians.skybox_points, features_rest1: features_rest2].cuda().reshape(gaussians.skybox_points, SH_properties_single, 3).contiguous()
-    distance_mu = gaussians.properties[:gaussians.skybox_points, features_rest1: features_rest2].cuda().contiguous()
+    distance_mu = gaussians.properties[:gaussians.skybox_points, d_mu1: d_mu2].cuda().contiguous()
+    distance_sigma = gaussians.properties[:gaussians.skybox_points, d_sigma1: d_sigma2].cuda().contiguous()
+
     
     
     if opt.densification == "classic":
@@ -199,11 +213,13 @@ def training(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoin
     rotations_cache = torch.empty((0, 4), device='cuda', dtype=torch.float32)
     features_dc_cache = torch.empty((0, 1, 3), device='cuda', dtype=torch.float32)
     features_rest_cache = torch.empty((0, SH_properties_single, 3), device='cuda', dtype=torch.float32)
+    distance_mu_cache = torch.empty((0, 1), device='cuda', dtype=torch.float32)
+    distance_sigma_cache = torch.empty((0, 1), device='cuda', dtype=torch.float32)
     
     parameters = []
-    for values, name, lr in zip([means3D, scales, rotations, features_dc, opacity, features_rest], 
-                                                ["xyz", "scaling", "rotation", "f_dc", "opacity",  "f_rest"],
-                                                [opt.position_lr_init * gaussians.spatial_lr_scale, opt.scaling_lr, opt.rotation_lr, opt.feature_lr, opt.opacity_lr, opt.feature_lr]):
+    for values, name, lr in zip([means3D, scales, rotations, features_dc, opacity, features_rest, distance_mu, distance_sigma], 
+                                                ["xyz", "scaling", "rotation", "f_dc", "opacity",  "f_rest",  "distance_mu",  "distance_sigma"],
+                                                [opt.position_lr_init * gaussians.spatial_lr_scale, opt.scaling_lr, opt.rotation_lr, opt.feature_lr, opt.opacity_lr, opt.feature_lr, opt.opacity_lr, opt.opacity_lr]):
         parameters.append({'params': [values], 'lr': lr * opt.lr_multiplier, "name": name, 
                              "exp_avgs" : torch.zeros_like(values, device='cuda'), "exp_avgs_sqs" : torch.zeros_like(values, device='cuda')})
     prev_SPT_distances = torch.empty(0, dtype = torch.float32, device='cuda')
@@ -467,16 +483,18 @@ def training(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoin
                 rotations_full = torch.cat((rotations, rotations_cache)).detach()
                 features_dc_full = torch.cat((features_dc, features_dc_cache)).detach()
                 features_rest_full = torch.cat((features_rest, features_rest_cache)).detach()
+                distance_mu_full = torch.cat((distance_mu, distance_mu_cache)).detach()
+                distance_sigma_full = torch.cat((distance_sigma, distance_sigma_cache)).detach()
                 
-                write_back_tensors = [means3D_full[write_back_mask],  scales_full[write_back_mask], rotations_full[write_back_mask], features_dc_full[write_back_mask].squeeze(1), opacity_full[write_back_mask], features_rest_full[write_back_mask].reshape(len(write_back_indices), SH_properties)]
-                for index in range(6):
+                write_back_tensors = [means3D_full[write_back_mask],  scales_full[write_back_mask], rotations_full[write_back_mask], features_dc_full[write_back_mask].squeeze(1), opacity_full[write_back_mask], features_rest_full[write_back_mask].reshape(len(write_back_indices), SH_properties), distance_mu_full[write_back_mask], distance_sigma_full[write_back_mask]]
+                for index in range(8):
                     if index == 5:
                         write_back_tensors.append(parameters[index]["exp_avgs"][write_back_mask].reshape(len(write_back_indices), SH_properties))
                     elif index == 3:
                         write_back_tensors.append(parameters[index]["exp_avgs"][write_back_mask].squeeze(1))
                     else:
                         write_back_tensors.append(parameters[index]["exp_avgs"][write_back_mask])
-                for index in range(6):
+                for index in range(8):
                     if index == 5:
                         write_back_tensors.append(parameters[index]["exp_avgs_sqs"][write_back_mask].reshape(len(write_back_indices), SH_properties))
                     elif index ==3:
@@ -512,6 +530,11 @@ def training(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoin
                 opacity = nn.Parameter(torch.cat((opacity[:gaussians.skybox_points], load_tensor[:, opacity1].cuda(non_blocking=non_blocking).unsqueeze(1), opacity_full[reuse_gaussians_mask])).contiguous())
 
                 features_rest = nn.Parameter(torch.cat((features_rest[:gaussians.skybox_points], load_tensor[:, features_rest1:features_rest2].cuda(non_blocking=non_blocking).reshape(len(load_tensor), SH_properties_single, 3 ), features_rest_full[reuse_gaussians_mask])).contiguous())
+                distance_mu = nn.Parameter(torch.cat((distance_mu[:gaussians.skybox_points], load_tensor[:, d_mu1].cuda(non_blocking=non_blocking).unsqueeze(1), distance_mu_full[reuse_gaussians_mask])).contiguous())
+                distance_sigma = nn.Parameter(torch.cat((distance_sigma[:gaussians.skybox_points], load_tensor[:, d_sigma1].cuda(non_blocking=non_blocking).unsqueeze(1), distance_sigma_full[reuse_gaussians_mask])).contiguous())
+
+
+                
                 
                 means3D_cache = means3D_full[cache_gaussians_mask]
                 scales_cache = scales_full[cache_gaussians_mask]
@@ -519,12 +542,14 @@ def training(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoin
                 features_dc_cache = features_dc_full[cache_gaussians_mask]
                 opacity_cache = opacity_full[cache_gaussians_mask]
                 features_rest_cache = features_rest_full[cache_gaussians_mask]
+                distance_mu_cache = distance_mu_full[cache_gaussians_mask]
+                distance_sigma_cache = distance_sigma_full[cache_gaussians_mask]
                 
 
                 parameters_new = []
-                for index, (values, name, lr) in enumerate(zip([means3D,  scales, rotations, features_dc, opacity, features_rest], 
-                                        ["xyz", "scaling", "rotation", "f_dc", "opacity", "f_rest"],
-                                        [xyz_lr, opt.scaling_lr, opt.rotation_lr, opt.feature_lr, opt.opacity_lr, opt.feature_lr])):
+                for index, (values, name, lr) in enumerate(zip([means3D,  scales, rotations, features_dc, opacity, features_rest, distance_mu, distance_sigma], 
+                                        ["xyz", "scaling", "rotation", "f_dc", "opacity", "f_rest", "distance_mu", "distance_sigma"],
+                                        [xyz_lr, opt.scaling_lr, opt.rotation_lr, opt.feature_lr, opt.opacity_lr, opt.feature_lr, opt.opacity_lr, opt.opacity_lr])):
                     if index == 5:
                         exp_avgs = torch.cat((parameters[index]["exp_avgs"][:gaussians.skybox_points], load_tensor[:, range1[index] + number_properties:range2[index] + number_properties].cuda().reshape(len(load_tensor), SH_properties_single, 3), parameters[index]["exp_avgs"][full_mask])).contiguous()
                         exp_avgs_sqs = torch.cat((parameters[index]["exp_avgs_sqs"][:gaussians.skybox_points], load_tensor[:, range1[index] + 2*number_properties:range2[index] + 2*number_properties].cuda().reshape(len(load_tensor), SH_properties_single, 3), parameters[index]["exp_avgs_sqs"][full_mask])).contiguous()
@@ -558,8 +583,11 @@ def training(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoin
                 if iteration % int(math.floor(opt.iterations * opt.SH_increase_after_train_percent)) == 0 and iteration > 0:
                     gaussians.oneupSHdegree()
                 
-                
-                
+                gaussian_SPT_indices = torch.zeros(len(means3D), dtype=torch.int32, device='cuda')
+                gaussian_SPT_indices[SPT_starts_new[:-len(cache_SPT_indices)-1]] = 1 
+                gaussian_SPT_indices = torch.cumsum(gaussian_SPT_indices, dim=0) - 1
+                distances = SPT_distances[gaussian_SPT_indices]
+                distances[:SPT_starts_new[0]] = 0.0
                 render_pkg = gaussian_renderer.render(
                             viewpoint_cam, 
                             means3D,
@@ -570,6 +598,7 @@ def training(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoin
                             features_rest,
                             distance_mu,
                             distance_sigma,
+                            distances,
                             pipe, 
                             background,
                             sh_degree = gaussians.active_sh_degree,
@@ -582,13 +611,11 @@ def training(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoin
                 __post_render_peak = torch.cuda.max_memory_allocated(device='cuda')
                 torch.cuda.reset_peak_memory_stats()
                 
-                contribution = render_pkg["contribution"]
                 
                 image = render_pkg["render"]#, render_pkg["viewspace_points"], render_pkg["visibility_filter"], render_pkg["radii"]
                 
                 # Loss
                 gt_image = viewpoint_cam.original_image.cuda()
-                invDepth = render_pkg["depth"]
                 if viewpoint_cam.alpha_mask is not None:
                     #print(f"Alpha mask: {viewpoint_cam.alpha_mask.sum()} / {viewpoint_cam.alpha_mask.nelement()}")
                     Ll1 = l1_loss(image * viewpoint_cam.alpha_mask.cuda(), gt_image)
@@ -601,7 +628,8 @@ def training(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoin
                 
                 loss = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * (1.0 - fused_ssim(image.unsqueeze(0), gt_image.unsqueeze(0)))
                 image_loss = loss.clone().detach()
-                if viewpoint_cam.invdepthmap is not None:
+                if viewpoint_cam.invdepthmap is not None and False:
+                    invDepth = render_pkg["depth"]
                     mono_invdepth = viewpoint_cam.invdepthmap.cuda()
                     Ll1depth_pure = torch.abs((invDepth  - mono_invdepth)).mean()
                     Ll1depth = depth_l1_weight(iteration) * Ll1depth_pure 
@@ -610,7 +638,7 @@ def training(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoin
                     Ll1depth = Ll1depth.item()
                 else:
                     Ll1depth = 0
-                if iteration % 50 == 0 or iteration == 1:
+                if True or iteration % 50 == 0 or iteration == 1:
                     torchvision.utils.save_image(image, os.path.join(scene.model_path, str(iteration) + ".png"))
                     
                     
@@ -726,7 +754,7 @@ def training(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoin
                             opacity[indices] = 0.1
                         
                         write_back_tensors = [means3D,  scales, rotations, features_dc.squeeze(1), opacity, features_rest.reshape(len(features_rest), SH_properties)]
-                        caches = [means3D_cache, scales_cache, rotations_cache, features_dc_cache.squeeze(1), opacity_cache, features_rest_cache.reshape(len(features_rest_cache), SH_properties)]
+                        caches = [means3D_cache, scales_cache, rotations_cache, features_dc_cache.squeeze(1), opacity_cache, features_rest_cache.reshape(len(features_rest_cache), SH_properties), distance_mu_cache, distance_sigma_cache]
                         
                         write_back_tensors_densify = [torch.cat((tensor, cache)) for tensor, cache in zip(write_back_tensors, caches)]
                         #TODO: Refactor this
@@ -777,10 +805,12 @@ def training(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoin
                             rotations_cache = torch.empty((0, 4), device='cuda', dtype=torch.float32)
                             features_dc_cache = torch.empty((0, 1, 3), device='cuda', dtype=torch.float32)
                             features_rest_cache = torch.empty((0, SH_properties_single, 3), device='cuda', dtype=torch.float32)
+                            distance_mu_cache = torch.empty((0, 1), device='cuda', dtype=torch.float32)
+                            distance_sigma_cache = torch.empty((0, 1), device='cuda', dtype=torch.float32)
                             del temp
                             
                         parameters = []
-                        for values, name, lr in zip([means3D,  scales, rotations, features_dc, opacity, features_rest], 
+                        for values, name, lr in zip([means3D,  scales, rotations, features_dc, opacity, features_rest, distance_mu, distance_sigma], 
                                                 ["xyz", "scaling", "rotation", "f_dc", "opacity",  "f_rest"],
                                                 [xyz_lr, opt.scaling_lr, opt.rotation_lr, opt.feature_lr, opt.opacity_lr,  opt.feature_lr]):
                             parameters.append({'params': [values], 'lr': lr*opt.lr_multiplier, "name": name, 
@@ -810,6 +840,9 @@ def training(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoin
                         gaussians.relocate_gs(dead_mask, gaussians.size, storage_device=opt.storage_device, densification=opt.densification)
                            
                         gaussians.build_hierarchical_SPT(opt.SPT_root_volume, SPT_Target_Granularity, use_bounding_spheres=opt.use_bounding_spheres, revive_gaussians=Revive_Gaussians)
+                        gaussians.properties[gaussians.SPT_gaussian_indices, d_mu1] = (gaussians.SPT_max + gaussians.SPT_min) / 2.0
+                        gaussians.properties[gaussians.SPT_gaussian_indices, d_sigma1] = ((gaussians.SPT_max - gaussians.SPT_min) / 2.0)
+                        
                         print(f"Built {len(gaussians.SPT_starts)} SPTs, which contain {len(gaussians.SPT_gaussian_indices)*100/(len(gaussians.SPT_gaussian_indices) + len(gaussians.upper_tree_nodes))} % of Gaussians")
 
                         if opt.densification == "classic":
