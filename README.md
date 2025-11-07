@@ -36,10 +36,13 @@ To get started, prepare a dataset. We follow the structure from Hierarchical 3DG
 If depth images or masks are used, place them in root/camera_calibration/rectified/depths and root/camera_calibration/rectified/masks respectively.
 You can then start training by 
 ```
-python train.py --project-dir root --config default.json
+python train.py --project-dir root --config default.json --skip_if_exists
 ```
 The training will output a .dhier file, which can be rendered and evaluated:
 ```
-python eval_hierarchy.py --project-dir root --config default.json
-python render_hierarchy.py --project-dir root --config default.json
+python eval_hierarchy.py --hierarchy_path /path/to/result.dhier -s root/camera_calibration/aligned -i root/camera_calibration/rectified/images --config default.json
+python hierarchy_viewer.py --hierarchy_path /path/to/result.dhier -s root/camera_calibration/aligned  --config default.json
 ```
+```eval_hierarchy``` will render all images in the test set (use the llffhold in your config parameter to designate every nth image for testing) and output quality metrics.
+```hierarchy_viewer``` allows interactive viewing of the results. This can be done using the networked inria viewer, but we recommend installing SplatViz (https://github.com/Florian-Barthel/splatviz) and running it with ```python run_main.py --mode=attach``` while ```hierarchy_viewer``` is running.
+
