@@ -14,10 +14,11 @@ Setting up the conda environment:
 ```
 conda create -n LOD
 conda activate LOD
-conda install nvidia/label/cuda-12.6.3::cuda-toolkit
-pip install torch torchvision --index-url https://download.pytorch.org/whl/cu126
 conda install python=3.10
-pip install requirements.txt
+conda install -c nvidia cuda-toolkit=12.6
+pip install torch torchvision --index-url https://download.pytorch.org/whl/cu126
+
+pip install -r requirements.txt
 ```
 
 ### Compiling hierarchy generator and merger
