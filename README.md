@@ -40,8 +40,8 @@ python train.py --project-dir root --config default.json --skip_if_exists
 ```
 The training will output a .dhier file, which can be rendered and evaluated:
 ```
-python eval_hierarchy.py --hierarchy_path /path/to/result.dhier -s root/camera_calibration/aligned -i root/camera_calibration/rectified/images --config default.json
-python hierarchy_viewer.py --hierarchy_path /path/to/result.dhier -s root/camera_calibration/aligned  --config default.json
+python eval_hierarchy.py --hierarchy_path /path/to/result.dhier_opt -s root/camera_calibration/aligned -i root/camera_calibration/rectified/images --config default.json
+python hierarchy_viewer.py --hierarchy_path /path/to/result.dhier_opt -s root/camera_calibration/aligned  --config default.json
 ```
 ```eval_hierarchy``` will render all images in the test set (use the llffhold in your config parameter to designate every nth image for testing) and output quality metrics.
 ```hierarchy_viewer``` allows interactive viewing of the results. This can be done using the networked inria viewer, but we recommend installing SplatViz (https://github.com/Florian-Barthel/splatviz) and running it with ```python run_main.py --mode=attach``` while ```hierarchy_viewer``` is running.
