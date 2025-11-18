@@ -51,6 +51,7 @@ import argparse
 import matplotlib.pyplot as plt
 import math
 
+
 pid = os.getpid()
 
 def debug_save_tensors_2D(a, b, iteration):
@@ -90,7 +91,6 @@ def debug_save_tensors_2D(a, b, iteration):
 
     plt.tight_layout()
     plt.savefig(f"debug/{iteration}_vis.png")
-    plt.show()
     plt.clf()
 
 def occlusion_cull_slang(gaussians, camera, pipe, background, opacity_multiplier = 1, scale_multiplier = 1):
@@ -189,7 +189,7 @@ def training(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoin
     torch.autograd.set_detect_anomaly(True)
     
     if Write_Tensor_Board:
-        writer = SummaryWriter(log_dir=f"runs/CampusTest1_no_activation")
+        writer = SummaryWriter(log_dir=f"runs/CampusTest1_GES")
     gaussians = GaussianModel(opt.SH_degree)
     scene = Scene(dataset, gaussians, resolution_scales=[1], create_from_hier=True, llff_hold=opt.llff_hold)
     gaussians.max_sh_degree = opt.SH_degree
@@ -269,7 +269,7 @@ def training(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoin
     gaussians.SPT_features_dc = nn.Parameter(gaussians.properties[SPT_root_indices, features1:features2].cuda().unsqueeze(1).contiguous())
     gaussians.SPT_opacity = nn.Parameter((gaussians.properties[SPT_root_indices, opacity1].cuda().unsqueeze(1).contiguous()))
     gaussians.SPT_features_rest = nn.Parameter(gaussians.properties[SPT_root_indices, features_rest1: features_rest2].cuda().reshape(len(SPT_root_indices), SH_properties_single, 3).contiguous())
-    gaussians.SPT_beta = nn.Parameter((torch.ones(len(SPT_root_indices))*2.0).contiguous())
+    gaussians.SPT_beta = nn.Parameter((torch.ones(len(SPT_root_indices))).contiguous() * 2.0)
 
     upper_SPT_indices = upper_SPT_indices[sort_indices]
     
@@ -329,7 +329,9 @@ def training(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoin
                                                  opt.rotation_lr,
                                                  opt.feature_lr,
                                                  opt.opacity_lr,
-                                                 opt.feature_lr]):
+                                                 opt.feature_lr,
+                                                 opt.beta_lr
+                                                 ]):
         parameters.append({'params': [values], 'lr': lr * opt.lr_multiplier, "name": name, 
                              "exp_avgs" : torch.zeros_like(values, device='cuda'), "exp_avgs_sqs" : torch.zeros_like(values, device='cuda')})
     prev_SPT_distances = torch.empty(0, dtype = torch.float32, device='cuda')
@@ -699,15 +701,6 @@ def training(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoin
                 #if iteration % int(math.floor(opt.iterations * opt.SH_increase_after_train_percent)) == 0 and iteration > 0:
                 #   gaussians.oneupSHdegree()
                 with torch.no_grad():
-                    print(torch.max(opacity))
-                    print(torch.min(opacity))
-                    print(torch.min(scales))
-                    print(torch.max(scales))
-                    print(iteration)
-                    assert(len(opacity) == len(means3D))
-                    assert(len(scales) == len(means3D))
-                    assert(len(rotations) == len(means3D))
-                    
                     render_pkg = gaussian_renderer.render(
                             viewpoint_cam, 
                             means3D,
@@ -716,6 +709,8 @@ def training(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoin
                             gaussians.rotation_activation(rotations),
                             features_dc,
                             features_rest,
+                            #beta
+                            #torch.ones(len(means3D), dtype=torch.float32, device='cuda') * 2.0,
                             pipe, 
                             background,
                             sh_degree = gaussians.active_sh_degree,
@@ -757,10 +752,10 @@ def training(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoin
                     Ll1depth = Ll1depth.item()
                 else:
                     Ll1depth = 0
-                if iteration % 50 == 0 or iteration == 1:
-                    torchvision.utils.save_image(image, os.path.join(scene.model_path, str(iteration) + ".png"))
-                    torchvision.utils.save_image(image, os.path.join("debug", str(iteration) + ".png"))
-                    torchvision.utils.save_image(occlusion_image, os.path.join("debug", str(iteration) + "_occlusion.png"))
+                #if iteration % 50 == 0 or iteration == 1:
+                    #torchvision.utils.save_image(image, os.path.join(scene.model_path, str(iteration) + ".png"))
+                    #torchvision.utils.save_image(image, os.path.join("debug", str(iteration) + ".png"))
+                    #torchvision.utils.save_image(occlusion_image, os.path.join("debug", str(iteration) + "_occlusion.png"))
                     
                 
                 iteration_time = sub_clock()

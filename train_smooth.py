@@ -842,7 +842,7 @@ def training(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoin
                         gaussians.build_hierarchical_SPT(opt.SPT_root_volume, SPT_Target_Granularity, use_bounding_spheres=opt.use_bounding_spheres, revive_gaussians=Revive_Gaussians)
                         gaussians.properties[gaussians.SPT_gaussian_indices, d_mu1] = (gaussians.SPT_max + gaussians.SPT_min) / 2.0
                         gaussians.properties[gaussians.SPT_gaussian_indices, d_sigma1] = ((gaussians.SPT_max - gaussians.SPT_min) / 2.0)
-                        
+                        breakpoint()
                         print(f"Built {len(gaussians.SPT_starts)} SPTs, which contain {len(gaussians.SPT_gaussian_indices)*100/(len(gaussians.SPT_gaussian_indices) + len(gaussians.upper_tree_nodes))} % of Gaussians")
 
                         if opt.densification == "classic":
