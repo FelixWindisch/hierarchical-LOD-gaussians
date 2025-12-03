@@ -49,7 +49,7 @@ def render_alpha_blend_tiles_slang_raw(xyz_ws, rotations, scales, opacity,
     except:
         pass
 
-    image_rgb = AlphaBlendTiledRender.apply(
+    image_rgb, contribution = AlphaBlendTiledRender.apply(
         sorted_gauss_idx,
         tile_ranges,
         xyz_vs,
@@ -63,6 +63,8 @@ def render_alpha_blend_tiles_slang_raw(xyz_ws, rotations, scales, opacity,
         'viewspace_points': xyz_vs,
         'visibility_filter': radii > 0,
         'radii': radii,
+        'contribution':contribution
+
     }
 
     return render_pkg
@@ -70,7 +72,7 @@ def render_alpha_blend_tiles_slang_raw(xyz_ws, rotations, scales, opacity,
 
 class AlphaBlendTiledRender(torch.autograd.Function):
     @staticmethod
-    def forward(ctx, 
+    def forward(ctx,
                 sorted_gauss_idx, tile_ranges,
                 xyz_vs, inv_cov_vs, opacity, rgb, distance_mu, distance_sigma, distances, render_grid, device="cuda"):
         output_img = torch.zeros((render_grid.image_height, 
@@ -78,7 +80,6 @@ class AlphaBlendTiledRender(torch.autograd.Function):
                                  device=device)
         
         contribution = torch.zeros((xyz_vs.shape[0]), device=device)
-        d_contribution = torch.zeros((xyz_vs.shape[0]), device=device)
         n_contributors = torch.zeros((render_grid.image_height, 
                                       render_grid.image_width, 1),
                                      dtype=torch.int32, device=device)
@@ -94,8 +95,9 @@ class AlphaBlendTiledRender(torch.autograd.Function):
             sorted_gauss_idx=sorted_gauss_idx,
             tile_ranges=tile_ranges,
             xyz_vs=xyz_vs, inv_cov_vs=inv_cov_vs, 
-            opacity=opacity, rgb=rgb, distance_mu=distance_mu, distance_sigma=distance_sigma, distance=distances,
+            opacity=opacity, rgb=rgb, distance_mu=distance_mu, distance_sigma=distance_sigma,  distance=distances,
             output_img=output_img,
+            contribution=contribution,
             n_contributors=n_contributors,
             grid_height=render_grid.grid_height,
             grid_width=render_grid.grid_width,
@@ -115,10 +117,10 @@ class AlphaBlendTiledRender(torch.autograd.Function):
         ctx.render_grid = render_grid
 
         
-        return output_img
+        return output_img, contribution
 
     @staticmethod
-    def backward(ctx, grad_output_img):
+    def backward(ctx, grad_output_img, grad_contribution):
         (sorted_gauss_idx, tile_ranges, 
          xyz_vs, inv_cov_vs, opacity, rgb, distance_mu, distance_sigma, distances, 
          output_img, n_contributors, contribution) = ctx.saved_tensors
@@ -151,6 +153,7 @@ class AlphaBlendTiledRender(torch.autograd.Function):
             distance_sigma=(distance_sigma, distance_sigma_grad),
             distance=distances,
             output_img=(output_img, grad_output_img),
+            contribution=contribution.contiguous(),
             n_contributors=n_contributors,
             grid_height=render_grid.grid_height,
             grid_width=render_grid.grid_width,

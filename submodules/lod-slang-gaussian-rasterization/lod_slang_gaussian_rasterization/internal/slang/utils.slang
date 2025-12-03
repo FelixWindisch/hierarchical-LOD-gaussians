@@ -263,27 +263,7 @@ Splat_2D_AlphaBlend load_splat_alphablend(int32_t g_idx,
 
 
 
-[Differentiable]
-float4 lod_evaluate_splat(Splat_2D_AlphaBlend g, 
-                      float2 pix_coord,
-                      uint32_t H,
-                      uint32_t W)
-{
 
-    float3 g_xyz = g.xyz_vs;
-    float3 g_rgb = g.rgb;
-    float g_opacity = g.opacity;
-    float2x2 g_inv_cov_vs = g.inv_cov_vs;
-
-    float2 d = { pix_coord.x - ndc2pix(g_xyz.x, W),
-                 pix_coord.y - ndc2pix(g_xyz.y, H) };
-    float power = -0.5f * (g_inv_cov_vs[0][0] * d.x * d.x +
-                           g_inv_cov_vs[1][1] * d.y * d.y + (g_inv_cov_vs[0][1] + g_inv_cov_vs[1][0]) * d.x * d.y);
-    float alpha = min(0.99f, g_opacity * exp(power));
-    float3 premult_rgb = g_rgb * alpha;
-    
-    return float4(premult_rgb, alpha);
-}
 
 [Differentiable]
 float4 evaluate_splat(Splat_2D_AlphaBlend g, 
@@ -302,8 +282,12 @@ float4 evaluate_splat(Splat_2D_AlphaBlend g,
                  pix_coord.y - ndc2pix(g_xyz.y, H) };
     float power = -0.5f * (g_inv_cov_vs[0][0] * d.x * d.x +
                            g_inv_cov_vs[1][1] * d.y * d.y + (g_inv_cov_vs[0][1] + g_inv_cov_vs[1][0]) * d.x * d.y);
+    
+    if (power > 0.f) {
+        return float4(0);
+    }
     float alpha = min(0.99f, g_opacity * exp(power));
-    alpha *= exp(-0.5f * ((distance - g.distance_mu) * (distance - g.distance_mu)) / (g.distance_sigma * g.distance_sigma + 0.0000001f));
+    alpha *= exp(-0.5f * ((distance - g.distance_mu) * (distance - g.distance_mu)) / (2 * g.distance_sigma * g.distance_sigma + 0.0000001f));
     float3 premult_rgb = g_rgb * alpha;
     
     return float4(premult_rgb, alpha);

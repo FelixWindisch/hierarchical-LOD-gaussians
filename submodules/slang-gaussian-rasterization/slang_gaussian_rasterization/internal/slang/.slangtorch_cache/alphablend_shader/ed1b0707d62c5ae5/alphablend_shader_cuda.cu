@@ -4475,7 +4475,7 @@ __device__ float update_contribution_0(float4  pixel_state_t_nm1_1, float4  gaus
 }
 
 
-#line 282
+#line 285
 struct DiffPair_vectorx3Cfloatx2C2x3E_0
 {
     float2  primal_1;
@@ -4483,7 +4483,7 @@ struct DiffPair_vectorx3Cfloatx2C2x3E_0
 };
 
 
-#line 85
+#line 86
 struct DiffPair_Splat_2D_AlphaBlend_0
 {
     Splat_2D_AlphaBlend_0 primal_1;
@@ -4491,7 +4491,7 @@ struct DiffPair_Splat_2D_AlphaBlend_0
 };
 
 
-#line 206
+#line 208
 struct DiffPair_vectorx3Cfloatx2C4x3E_0
 {
     float4  primal_1;
@@ -4590,7 +4590,7 @@ __device__ void s_bwd_update_contribution_0(DiffPair_vectorx3Cfloatx2C4x3E_0 * _
 }
 
 
-#line 226
+#line 228
 __device__ float s_primal_ctx_ndc2pix_0(float dpv_0, int S_1)
 {
 
@@ -4617,26 +4617,26 @@ __device__ float s_primal_ctx_min_0(float _S35, float _S36)
 }
 
 
-#line 307 "/data/fwindisch/hierarchical-LOD-gaussians/submodules/slang-gaussian-rasterization/slang_gaussian_rasterization/internal/slang/alphablend_shader.slang"
+#line 311 "/data/fwindisch/hierarchical-LOD-gaussians/submodules/slang-gaussian-rasterization/slang_gaussian_rasterization/internal/slang/alphablend_shader.slang"
 __device__ void s_bwd_prop_min_0(DiffPair_float_0 * _S37, DiffPair_float_0 * _S38, float _S39)
 {
 
-#line 307
+#line 311
     _d_min_0(_S37, _S38, _S39);
 
-#line 307
+#line 311
     return;
 }
 
 
-#line 307
+#line 311
 __device__ void s_bwd_prop_exp_0(DiffPair_float_0 * _S40, float _S41)
 {
 
-#line 307
+#line 311
     _d_exp_0(_S40, _S41);
 
-#line 307
+#line 311
     return;
 }
 
@@ -5204,115 +5204,115 @@ __device__ void s_bwd_load_splat_alphablend_0(int _S117, DiffTensorView_0 _S118,
 }
 
 
-#line 128 "/data/fwindisch/hierarchical-LOD-gaussians/submodules/slang-gaussian-rasterization/slang_gaussian_rasterization/internal/slang/alphablend_shader.slang"
-__device__ void bwd_alpha_blend_0(TensorView sorted_gauss_idx_0, DiffTensorView_0 xyz_vs_5, DiffTensorView_0 inv_cov_vs_5, DiffTensorView_0 opacity_5, DiffTensorView_0 rgb_5, DiffTensorView_0 final_pixel_state_0, TensorView contribution_0, TensorView d_contribution_0, TensorView n_contributors_0, uint2  pix_coord_1, uint tile_idx_start_0, uint tile_idx_end_0, uint tile_height_0, uint tile_width_0, uint H_2, uint W_2, float4  d_current_pixel_state_0)
+#line 129 "/data/fwindisch/hierarchical-LOD-gaussians/submodules/slang-gaussian-rasterization/slang_gaussian_rasterization/internal/slang/alphablend_shader.slang"
+__device__ void bwd_alpha_blend_0(TensorView sorted_gauss_idx_0, DiffTensorView_0 xyz_vs_5, DiffTensorView_0 inv_cov_vs_5, DiffTensorView_0 opacity_5, DiffTensorView_0 rgb_5, DiffTensorView_0 beta_0, DiffTensorView_0 final_pixel_state_0, TensorView contribution_0, TensorView d_contribution_0, TensorView n_contributors_0, uint2  pix_coord_1, uint tile_idx_start_0, uint tile_idx_end_0, uint tile_height_0, uint tile_width_0, uint H_2, uint W_2, float4  d_current_pixel_state_0)
 {
 
-#line 148
+#line 150
     uint _S125 = pix_coord_1.x;
 
-#line 148
+#line 150
     bool is_inside_0;
 
-#line 148
+#line 150
     if(_S125 < W_2)
     {
 
-#line 148
+#line 150
         is_inside_0 = (pix_coord_1.y) < H_2;
 
-#line 148
+#line 150
     }
     else
     {
 
-#line 148
+#line 150
         is_inside_0 = false;
 
-#line 148
+#line 150
     }
     uint block_size_0 = tile_height_0 * tile_width_0;
     uint _S126 = tile_idx_end_0 - tile_idx_start_0;
 
-#line 150
+#line 152
     uint _S127 = (_S126 + block_size_0 - 1U) / block_size_0;
 
-#line 150
+#line 152
     int _S128 = int(_S127);
 
     int _S129 = int(_S126);
 
-#line 152
+#line 154
     int n_contrib_fwd_0;
 
-#line 152
+#line 154
     float4  current_pixel_state_0;
 
-#line 157
+#line 159
     if(is_inside_0)
     {
 
-#line 158
+#line 160
         uint _S130 = pix_coord_1.y;
 
-#line 158
+#line 160
         float4  _S131 = make_float4 (DiffTensorView_load_0(final_pixel_state_0, make_uint3 (_S130, _S125, 0U)), DiffTensorView_load_0(final_pixel_state_0, make_uint3 (_S130, _S125, 1U)), DiffTensorView_load_0(final_pixel_state_0, make_uint3 (_S130, _S125, 2U)), DiffTensorView_load_0(final_pixel_state_0, make_uint3 (_S130, _S125, 3U)));
 
 
 
         int _S132 = ((n_contributors_0).load<int>((_S130), (_S125), (0U)));
 
-#line 162
+#line 164
         n_contrib_fwd_0 = _S132;
 
-#line 162
+#line 164
         current_pixel_state_0 = _S131;
 
-#line 157
+#line 159
     }
 
-#line 165
+#line 167
     float2  _S133 = make_float2 ((float)pix_coord_1.x, (float)pix_coord_1.y);
 
     float2  _S134 = make_float2 (0.0f);
 
-#line 167
+#line 169
     DiffPair_vectorx3Cfloatx2C2x3E_0 dp_center_pix_coord_0;
 
-#line 167
+#line 169
     (&dp_center_pix_coord_0)->primal_1 = _S133;
 
-#line 167
+#line 169
     (&dp_center_pix_coord_0)->differential_0 = _S134;
 
 
     uint3  _S135 = ((threadIdx));
 
-#line 170
+#line 172
     uint _S136 = _S135.y * ((blockDim)).x + _S135.x;
 
-#line 170
+#line 172
     float4  _S137 = d_current_pixel_state_0;
 
-#line 170
+#line 172
     int i_5 = int(0);
 
-#line 170
+#line 172
     int splats_left_to_process_0 = _S129;
 
-#line 170
+#line 172
     uint current_splat_offset_0 = _S126;
     for(;;)
     {
 
-#line 171
+#line 173
         if(i_5 < _S128)
         {
         }
         else
         {
 
-#line 171
+#line 173
             break;
         }
 
@@ -5320,59 +5320,59 @@ __device__ void bwd_alpha_blend_0(TensorView sorted_gauss_idx_0, DiffTensorView_
 
         uint _S138 = uint(int(uint(i_5) * block_size_0 + _S136));
 
-#line 176
+#line 178
         if((tile_idx_start_0 + _S138) < tile_idx_end_0)
         {
             int _S139 = ((sorted_gauss_idx_0).load<int>((tile_idx_end_0 - _S138 - 1U)));
 
-#line 178
+#line 180
             uint coll_id_0 = uint(_S139);
             (*&collected_idx_0)[_S136] = coll_id_0;
             (*&collected_splats_0)[_S136] = load_splat_alphablend_0(int(coll_id_0), xyz_vs_5, inv_cov_vs_5, opacity_5, rgb_5);
 
-#line 176
+#line 178
         }
 
-#line 182
+#line 184
         __syncthreads();
         if(is_inside_0)
         {
 
-#line 183
+#line 185
             float4  current_pixel_state_1 = current_pixel_state_0;
 
-#line 183
+#line 185
             float4  _S140 = _S137;
 
-#line 183
+#line 185
             int j_0 = int(0);
 
-#line 183
+#line 185
             uint current_splat_offset_1 = current_splat_offset_0;
             for(;;)
             {
 
-#line 184
+#line 186
                 if(uint(j_0) < (U32_min((block_size_0), (uint(splats_left_to_process_0)))))
                 {
                 }
                 else
                 {
 
-#line 184
+#line 186
                     break;
                 }
                 uint current_splat_offset_2 = current_splat_offset_1 - 1U;
                 if(current_splat_offset_2 >= uint(n_contrib_fwd_0))
                 {
 
-#line 188
+#line 190
                     j_0 = j_0 + int(1);
 
-#line 188
+#line 190
                     current_splat_offset_1 = current_splat_offset_2;
 
-#line 184
+#line 186
                     continue;
                 }
 
@@ -5386,177 +5386,177 @@ __device__ void bwd_alpha_blend_0(TensorView sorted_gauss_idx_0, DiffTensorView_
                 if((gauss_rgba_0.w) < 0.00392156885936856f)
                 {
 
-#line 195
+#line 197
                     j_0 = j_0 + int(1);
 
-#line 195
+#line 197
                     current_splat_offset_1 = current_splat_offset_2;
 
-#line 184
+#line 186
                     continue;
                 }
 
-#line 200
+#line 202
                 float4  current_pixel_state_2 = undo_pixel_state_0(current_pixel_state_1, gauss_rgba_0);
 
-#line 206
+#line 208
                 Splat_2D_AlphaBlend_0 _S141 = Splat_2D_AlphaBlend_x24_syn_dzero_0();
 
-#line 206
+#line 208
                 DiffPair_Splat_2D_AlphaBlend_0 dp_g_0;
 
-#line 206
+#line 208
                 (&dp_g_0)->primal_1 = g_1;
 
-#line 206
+#line 208
                 (&dp_g_0)->differential_0 = _S141;
                 float4  _S142 = make_float4 (0.0f);
 
-#line 207
+#line 209
                 DiffPair_vectorx3Cfloatx2C4x3E_0 dp_gauss_rgba_0;
 
-#line 207
+#line 209
                 (&dp_gauss_rgba_0)->primal_1 = gauss_rgba_0;
 
-#line 207
+#line 209
                 (&dp_gauss_rgba_0)->differential_0 = _S142;
                 DiffPair_vectorx3Cfloatx2C4x3E_0 dp_current_pixel_state_0;
 
-#line 208
+#line 210
                 (&dp_current_pixel_state_0)->primal_1 = current_pixel_state_2;
 
-#line 208
+#line 210
                 (&dp_current_pixel_state_0)->differential_0 = _S142;
 
-#line 213
+#line 215
                 s_bwd_update_pixel_state_0(&dp_current_pixel_state_0, &dp_gauss_rgba_0, _S140);
 
 
 
                 float _S143 = ((d_contribution_0).load<float>((g_idx_3)));
 
-#line 217
+#line 219
                 s_bwd_update_contribution_0(&dp_current_pixel_state_0, &dp_gauss_rgba_0, _S143);
 
-#line 226
+#line 228
                 s_bwd_evaluate_splat_0(&dp_g_0, &dp_center_pix_coord_0, H_2, W_2, dp_gauss_rgba_0.differential_0);
 
                 s_bwd_load_splat_alphablend_0(int(g_idx_3), xyz_vs_5, inv_cov_vs_5, opacity_5, rgb_5, dp_g_0.differential_0);
 
-#line 228
+#line 230
                 current_pixel_state_1 = current_pixel_state_2;
 
-#line 228
+#line 230
                 _S140 = dp_current_pixel_state_0.differential_0;
 
-#line 184
+#line 186
                 j_0 = j_0 + int(1);
 
-#line 184
+#line 186
                 current_splat_offset_1 = current_splat_offset_2;
 
-#line 184
+#line 186
             }
 
-#line 184
+#line 186
             current_pixel_state_0 = current_pixel_state_1;
 
-#line 184
+#line 186
             _S137 = _S140;
 
-#line 184
+#line 186
             current_splat_offset_0 = current_splat_offset_1;
 
-#line 183
+#line 185
         }
 
-#line 231
+#line 233
         int splats_left_to_process_1 = splats_left_to_process_0 - int(block_size_0);
 
-#line 171
+#line 173
         i_5 = i_5 + int(1);
 
-#line 171
+#line 173
         splats_left_to_process_0 = splats_left_to_process_1;
 
-#line 171
+#line 173
     }
 
-#line 233
+#line 235
     return;
 }
 
 
 #line 50
-__device__ float4  alpha_blend_0(TensorView sorted_gauss_idx_1, DiffTensorView_0 xyz_vs_6, DiffTensorView_0 inv_cov_vs_6, DiffTensorView_0 opacity_6, DiffTensorView_0 rgb_6, DiffTensorView_0 final_pixel_state_1, TensorView contribution_1, TensorView d_contribution_1, TensorView n_contributors_1, uint2  pix_coord_2, uint tile_idx_start_1, uint tile_idx_end_1, uint tile_height_1, uint tile_width_1, uint H_3, uint W_3)
+__device__ float4  alpha_blend_0(TensorView sorted_gauss_idx_1, DiffTensorView_0 xyz_vs_6, DiffTensorView_0 inv_cov_vs_6, DiffTensorView_0 opacity_6, DiffTensorView_0 rgb_6, DiffTensorView_0 beta_1, DiffTensorView_0 final_pixel_state_1, TensorView contribution_1, TensorView d_contribution_1, TensorView n_contributors_1, uint2  pix_coord_2, uint tile_idx_start_1, uint tile_idx_end_1, uint tile_height_1, uint tile_width_1, uint H_3, uint W_3)
 {
 
-#line 67
+#line 68
     float2  _S144 = make_float2 ((float)pix_coord_2.x, (float)pix_coord_2.y);
     float4  _S145 = make_float4 (0.0f, 0.0f, 0.0f, 1.0f);
     uint block_size_1 = tile_height_1 * tile_width_1;
     uint _S146 = pix_coord_2.x;
 
-#line 70
+#line 71
     bool is_inside_1;
 
-#line 70
+#line 71
     if(_S146 < W_3)
     {
 
-#line 70
+#line 71
         is_inside_1 = (pix_coord_2.y) < H_3;
 
-#line 70
+#line 71
     }
     else
     {
 
-#line 70
+#line 71
         is_inside_1 = false;
 
-#line 70
+#line 71
     }
 
     uint _S147 = tile_idx_end_1 - tile_idx_start_1;
 
-#line 72
+#line 73
     uint _S148 = (_S147 + block_size_1 - 1U) / block_size_1;
 
-#line 72
+#line 73
     int _S149 = int(_S148);
     uint3  _S150 = ((threadIdx));
 
-#line 73
+#line 74
     uint _S151 = _S150.y * ((blockDim)).x + _S150.x;
 
     int _S152 = int(_S147);
 
-#line 75
+#line 76
     bool thread_active_0 = is_inside_1;
 
-#line 75
+#line 76
     float4  curr_pixel_state_0 = _S145;
 
-#line 75
+#line 76
     int i_6 = int(0);
 
-#line 75
+#line 76
     int splats_left_to_process_2 = _S152;
 
-#line 75
+#line 76
     int local_n_contrib_0 = int(0);
     for(;;)
     {
 
-#line 76
+#line 77
         if(i_6 < _S149)
         {
         }
         else
         {
 
-#line 76
+#line 77
             break;
         }
 
@@ -5564,58 +5564,58 @@ __device__ float4  alpha_blend_0(TensorView sorted_gauss_idx_1, DiffTensorView_0
 
         uint _S153 = tile_idx_start_1 + uint(int(uint(i_6) * block_size_1 + _S151));
 
-#line 81
+#line 82
         if(_S153 < tile_idx_end_1)
         {
             int _S154 = ((sorted_gauss_idx_1).load<int>((_S153)));
 
-#line 83
+#line 84
             uint coll_id_1 = uint(_S154);
             (*&collected_idx_0)[_S151] = coll_id_1;
             (*&collected_splats_0)[_S151] = load_splat_alphablend_0(int(coll_id_1), xyz_vs_6, inv_cov_vs_6, opacity_6, rgb_6);
 
-#line 81
+#line 82
         }
 
-#line 87
+#line 88
         __syncthreads();
 
-#line 87
+#line 88
         float4  curr_pixel_state_1;
         if(thread_active_0)
         {
 
-#line 88
+#line 89
             int local_n_contrib_1;
 
-#line 88
+#line 89
             bool thread_active_1;
 
-#line 88
+#line 89
             curr_pixel_state_1 = curr_pixel_state_0;
 
-#line 88
+#line 89
             int j_1 = int(0);
 
-#line 88
+#line 89
             int local_n_contrib_2 = local_n_contrib_0;
             for(;;)
             {
 
-#line 89
+#line 90
                 if(uint(j_1) < (U32_min((block_size_1), (uint(splats_left_to_process_2)))))
                 {
                 }
                 else
                 {
 
-#line 89
+#line 90
                     thread_active_1 = thread_active_0;
 
-#line 89
+#line 90
                     local_n_contrib_1 = local_n_contrib_2;
 
-#line 89
+#line 90
                     break;
                 }
                 int local_n_contrib_3 = local_n_contrib_2 + int(1);
@@ -5626,20 +5626,20 @@ __device__ float4  alpha_blend_0(TensorView sorted_gauss_idx_1, DiffTensorView_0
                 if((gauss_rgba_1.w) < 0.00392156885936856f)
                 {
 
-#line 97
+#line 98
                     j_1 = j_1 + int(1);
 
-#line 97
+#line 98
                     local_n_contrib_2 = local_n_contrib_3;
 
-#line 89
+#line 90
                     continue;
                 }
 
-#line 99
+#line 100
                 int _S155 = ((sorted_gauss_idx_1).load<int>((tile_idx_start_1 + uint(i_6) * block_size_1 + uint(j_1))));
 
-#line 99
+#line 100
                 (*&collected_idx_0)[j_1] = uint(_S155);
 
 
@@ -5652,70 +5652,70 @@ __device__ float4  alpha_blend_0(TensorView sorted_gauss_idx_1, DiffTensorView_0
                 {
                     int _S156 = local_n_contrib_3 - int(1);
 
-#line 109
+#line 110
                     thread_active_1 = false;
 
-#line 109
+#line 110
                     local_n_contrib_1 = _S156;
 
                     break;
                 }
 
-#line 111
+#line 112
                 curr_pixel_state_1 = new_pixel_state_0;
 
-#line 89
+#line 90
                 j_1 = j_1 + int(1);
 
-#line 89
+#line 90
                 local_n_contrib_2 = local_n_contrib_3;
 
-#line 89
+#line 90
             }
 
-#line 89
+#line 90
             thread_active_0 = thread_active_1;
 
-#line 89
+#line 90
             local_n_contrib_0 = local_n_contrib_1;
 
-#line 88
+#line 89
         }
         else
         {
 
-#line 88
+#line 89
             curr_pixel_state_1 = curr_pixel_state_0;
 
-#line 88
+#line 89
         }
 
-#line 116
+#line 117
         int splats_left_to_process_3 = splats_left_to_process_2 - int(block_size_1);
 
-#line 76
+#line 77
         int _S157 = i_6 + int(1);
 
-#line 76
+#line 77
         curr_pixel_state_0 = curr_pixel_state_1;
 
-#line 76
+#line 77
         i_6 = _S157;
 
-#line 76
+#line 77
         splats_left_to_process_2 = splats_left_to_process_3;
 
-#line 76
+#line 77
     }
 
-#line 119
+#line 120
     if(is_inside_1)
     {
 
-#line 120
+#line 121
         (n_contributors_1).store<int>((pix_coord_2.y), (_S146), (0U), (local_n_contrib_0));
 
-#line 119
+#line 120
     }
 
     return curr_pixel_state_0;
@@ -5751,7 +5751,7 @@ __device__ void DiffTensorView_storeOnce_0(DiffTensorView_0 this_7, uint3  x_1, 
 }
 
 
-#line 261 "/data/fwindisch/hierarchical-LOD-gaussians/submodules/slang-gaussian-rasterization/slang_gaussian_rasterization/internal/slang/alphablend_shader.slang"
+#line 263 "/data/fwindisch/hierarchical-LOD-gaussians/submodules/slang-gaussian-rasterization/slang_gaussian_rasterization/internal/slang/alphablend_shader.slang"
 struct s_bwd_prop_splat_tiled_Intermediates_0
 {
     int _S158;
@@ -5759,99 +5759,99 @@ struct s_bwd_prop_splat_tiled_Intermediates_0
 };
 
 
-#line 261
-__device__ float4  s_primal_ctx_alpha_blend_0(TensorView _S160, DiffTensorView_0 _S161, DiffTensorView_0 _S162, DiffTensorView_0 _S163, DiffTensorView_0 _S164, DiffTensorView_0 _S165, TensorView _S166, TensorView _S167, TensorView _S168, uint2  _S169, uint _S170, uint _S171, uint _S172, uint _S173, uint _S174, uint _S175)
+#line 263
+__device__ float4  s_primal_ctx_alpha_blend_0(TensorView _S160, DiffTensorView_0 _S161, DiffTensorView_0 _S162, DiffTensorView_0 _S163, DiffTensorView_0 _S164, DiffTensorView_0 _S165, DiffTensorView_0 _S166, TensorView _S167, TensorView _S168, TensorView _S169, uint2  _S170, uint _S171, uint _S172, uint _S173, uint _S174, uint _S175, uint _S176)
 {
 
-#line 261
-    float4  _S176 = alpha_blend_0(_S160, _S161, _S162, _S163, _S164, _S165, _S166, _S167, _S168, _S169, _S170, _S171, _S172, _S173, _S174, _S175);
+#line 263
+    float4  _S177 = alpha_blend_0(_S160, _S161, _S162, _S163, _S164, _S165, _S166, _S167, _S168, _S169, _S170, _S171, _S172, _S173, _S174, _S175, _S176);
 
-#line 261
-    return _S176;
+#line 263
+    return _S177;
 }
 
 
-#line 261
-__device__ void s_primal_ctx_splat_tiled_0(TensorView sorted_gauss_idx_2, TensorView tile_ranges_0, DiffTensorView_0 xyz_vs_7, DiffTensorView_0 inv_cov_vs_7, DiffTensorView_0 opacity_7, DiffTensorView_0 rgb_7, DiffTensorView_0 output_img_0, TensorView contribution_2, TensorView d_contribution_2, TensorView n_contributors_2, int grid_height_0, int grid_width_0, int tile_height_2, int tile_width_2, s_bwd_prop_splat_tiled_Intermediates_0 * _s_diff_ctx_2)
+#line 263
+__device__ void s_primal_ctx_splat_tiled_0(TensorView sorted_gauss_idx_2, TensorView tile_ranges_0, DiffTensorView_0 xyz_vs_7, DiffTensorView_0 inv_cov_vs_7, DiffTensorView_0 opacity_7, DiffTensorView_0 rgb_7, DiffTensorView_0 beta_2, DiffTensorView_0 output_img_0, TensorView contribution_2, TensorView d_contribution_2, TensorView n_contributors_2, int grid_height_0, int grid_width_0, int tile_height_2, int tile_width_2, s_bwd_prop_splat_tiled_Intermediates_0 * _s_diff_ctx_2)
 {
 
-#line 274
+#line 277
     _s_diff_ctx_2->_S158 = int(0);
 
-#line 274
+#line 277
     _s_diff_ctx_2->_S159 = int(0);
 
-#line 281
+#line 284
     _s_diff_ctx_2->_S158 = int(0);
     _s_diff_ctx_2->_S159 = int(0);
 
-#line 276
-    uint3  _S177 = ((blockIdx));
+#line 279
+    uint3  _S178 = ((blockIdx));
 
-    uint2  pix_coord_3 = uint2 {(_S177 * ((blockDim)) + ((threadIdx))).x, (_S177 * ((blockDim)) + ((threadIdx))).y};
+    uint2  pix_coord_3 = uint2 {(_S178 * ((blockDim)) + ((threadIdx))).x, (_S178 * ((blockDim)) + ((threadIdx))).y};
 
-    uint tile_idx_0 = _S177.y * uint(grid_width_0) + _S177.x;
-    int _S178 = ((tile_ranges_0).load<int>((tile_idx_0), (0U)));
-
-#line 281
-    _s_diff_ctx_2->_S158 = _S178;
-
-#line 281
-    uint tile_idx_start_2 = uint(_S178);
-    int _S179 = ((tile_ranges_0).load<int>((tile_idx_0), (1U)));
-
-#line 282
-    _s_diff_ctx_2->_S159 = _S179;
-
-#line 282
-    uint tile_idx_end_2 = uint(_S179);
-
-    uint _S180 = pix_coord_3.x;
+    uint tile_idx_0 = _S178.y * uint(grid_width_0) + _S178.x;
+    int _S179 = ((tile_ranges_0).load<int>((tile_idx_0), (0U)));
 
 #line 284
-    uint _S181 = DiffTensorView_size_0(output_img_0, 1U);
+    _s_diff_ctx_2->_S158 = _S179;
 
 #line 284
+    uint tile_idx_start_2 = uint(_S179);
+    int _S180 = ((tile_ranges_0).load<int>((tile_idx_0), (1U)));
+
+#line 285
+    _s_diff_ctx_2->_S159 = _S180;
+
+#line 285
+    uint tile_idx_end_2 = uint(_S180);
+
+    uint _S181 = pix_coord_3.x;
+
+#line 287
+    uint _S182 = DiffTensorView_size_0(output_img_0, 1U);
+
+#line 287
     bool is_inside_2;
 
-#line 284
-    if(_S180 < _S181)
+#line 287
+    if(_S181 < _S182)
     {
 
-#line 284
+#line 287
         is_inside_2 = (pix_coord_3.y) < (DiffTensorView_size_0(output_img_0, 0U));
 
-#line 284
+#line 287
     }
     else
     {
 
-#line 284
+#line 287
         is_inside_2 = false;
 
-#line 284
+#line 287
     }
 
-#line 284
-    float4  _S182 = s_primal_ctx_alpha_blend_0(sorted_gauss_idx_2, xyz_vs_7, inv_cov_vs_7, opacity_7, rgb_7, output_img_0, contribution_2, d_contribution_2, n_contributors_2, pix_coord_3, tile_idx_start_2, tile_idx_end_2, uint(tile_height_2), uint(tile_width_2), DiffTensorView_size_0(output_img_0, 0U), _S181);
+#line 287
+    float4  _S183 = s_primal_ctx_alpha_blend_0(sorted_gauss_idx_2, xyz_vs_7, inv_cov_vs_7, opacity_7, rgb_7, beta_2, output_img_0, contribution_2, d_contribution_2, n_contributors_2, pix_coord_3, tile_idx_start_2, tile_idx_end_2, uint(tile_height_2), uint(tile_width_2), DiffTensorView_size_0(output_img_0, 0U), _S182);
 
-#line 303
+#line 307
     if(is_inside_2)
     {
 
-#line 304
-        uint _S183 = pix_coord_3.y;
+#line 308
+        uint _S184 = pix_coord_3.y;
 
-#line 304
-        DiffTensorView_storeOnce_0(output_img_0, make_uint3 (_S183, _S180, 0U), _S182.x);
-        DiffTensorView_storeOnce_0(output_img_0, make_uint3 (_S183, _S180, 1U), _S182.y);
-        DiffTensorView_storeOnce_0(output_img_0, make_uint3 (_S183, _S180, 2U), _S182.z);
-        DiffTensorView_storeOnce_0(output_img_0, make_uint3 (_S183, _S180, 3U), _S182.w);
+#line 308
+        DiffTensorView_storeOnce_0(output_img_0, make_uint3 (_S184, _S181, 0U), _S183.x);
+        DiffTensorView_storeOnce_0(output_img_0, make_uint3 (_S184, _S181, 1U), _S183.y);
+        DiffTensorView_storeOnce_0(output_img_0, make_uint3 (_S184, _S181, 2U), _S183.z);
+        DiffTensorView_storeOnce_0(output_img_0, make_uint3 (_S184, _S181, 3U), _S183.w);
 
-#line 303
+#line 307
     }
 
-#line 303
+#line 307
     return;
 }
 
@@ -5859,186 +5859,186 @@ __device__ void s_primal_ctx_splat_tiled_0(TensorView sorted_gauss_idx_2, Tensor
 #line 951 "diff.meta.slang"
 __device__ float AtomicAdd_storeOnce_backward_0(AtomicAdd_0 this_8, uint3  i_8)
 {
-    float _S184 = ((this_8.diff_0).load<float>((i_8)));
+    float _S185 = ((this_8.diff_0).load<float>((i_8)));
 
 #line 953
-    return _S184;
+    return _S185;
 }
 
 
 #line 953
-__device__ void s_bwd_prop_alpha_blend_0(TensorView _S185, DiffTensorView_0 _S186, DiffTensorView_0 _S187, DiffTensorView_0 _S188, DiffTensorView_0 _S189, DiffTensorView_0 _S190, TensorView _S191, TensorView _S192, TensorView _S193, uint2  _S194, uint _S195, uint _S196, uint _S197, uint _S198, uint _S199, uint _S200, float4  _S201)
+__device__ void s_bwd_prop_alpha_blend_0(TensorView _S186, DiffTensorView_0 _S187, DiffTensorView_0 _S188, DiffTensorView_0 _S189, DiffTensorView_0 _S190, DiffTensorView_0 _S191, DiffTensorView_0 _S192, TensorView _S193, TensorView _S194, TensorView _S195, uint2  _S196, uint _S197, uint _S198, uint _S199, uint _S200, uint _S201, uint _S202, float4  _S203)
 {
 
 #line 953
-    bwd_alpha_blend_0(_S185, _S186, _S187, _S188, _S189, _S190, _S191, _S192, _S193, _S194, _S195, _S196, _S197, _S198, _S199, _S200, _S201);
+    bwd_alpha_blend_0(_S186, _S187, _S188, _S189, _S190, _S191, _S192, _S193, _S194, _S195, _S196, _S197, _S198, _S199, _S200, _S201, _S202, _S203);
 
 #line 953
     return;
 }
 
 
-#line 261 "/data/fwindisch/hierarchical-LOD-gaussians/submodules/slang-gaussian-rasterization/slang_gaussian_rasterization/internal/slang/alphablend_shader.slang"
-__device__ void s_bwd_prop_splat_tiled_0(TensorView sorted_gauss_idx_3, TensorView tile_ranges_1, DiffTensorView_0 xyz_vs_8, DiffTensorView_0 inv_cov_vs_8, DiffTensorView_0 opacity_8, DiffTensorView_0 rgb_8, DiffTensorView_0 output_img_1, TensorView contribution_3, TensorView d_contribution_3, TensorView n_contributors_3, int grid_height_1, int grid_width_1, int tile_height_3, int tile_width_3, s_bwd_prop_splat_tiled_Intermediates_0 _s_diff_ctx_3)
+#line 263 "/data/fwindisch/hierarchical-LOD-gaussians/submodules/slang-gaussian-rasterization/slang_gaussian_rasterization/internal/slang/alphablend_shader.slang"
+__device__ void s_bwd_prop_splat_tiled_0(TensorView sorted_gauss_idx_3, TensorView tile_ranges_1, DiffTensorView_0 xyz_vs_8, DiffTensorView_0 inv_cov_vs_8, DiffTensorView_0 opacity_8, DiffTensorView_0 rgb_8, DiffTensorView_0 beta_3, DiffTensorView_0 output_img_1, TensorView contribution_3, TensorView d_contribution_3, TensorView n_contributors_3, int grid_height_1, int grid_width_1, int tile_height_3, int tile_width_3, s_bwd_prop_splat_tiled_Intermediates_0 _s_diff_ctx_3)
 {
 
-#line 304
-    uint3  _S202 = make_uint3 (0U);
+#line 308
+    uint3  _S204 = make_uint3 (0U);
 
-#line 278
+#line 281
     uint2  pix_coord_4 = uint2 {(((blockIdx)) * ((blockDim)) + ((threadIdx))).x, (((blockIdx)) * ((blockDim)) + ((threadIdx))).y};
 
 
     uint tile_idx_start_3 = uint(_s_diff_ctx_3._S158);
     uint tile_idx_end_3 = uint(_s_diff_ctx_3._S159);
 
-    uint _S203 = pix_coord_4.x;
+    uint _S205 = pix_coord_4.x;
 
-#line 284
-    uint _S204 = DiffTensorView_size_0(output_img_1, 1U);
+#line 287
+    uint _S206 = DiffTensorView_size_0(output_img_1, 1U);
 
-#line 284
+#line 287
     bool is_inside_3;
 
-#line 284
-    if(_S203 < _S204)
+#line 287
+    if(_S205 < _S206)
     {
 
-#line 284
+#line 287
         is_inside_3 = (pix_coord_4.y) < (DiffTensorView_size_0(output_img_1, 0U));
 
-#line 284
+#line 287
     }
     else
     {
 
-#line 284
+#line 287
         is_inside_3 = false;
 
-#line 284
+#line 287
     }
 
-#line 297
-    uint _S205 = uint(tile_height_3);
-    uint _S206 = uint(tile_width_3);
-    uint _S207 = DiffTensorView_size_0(output_img_1, 0U);
+#line 301
+    uint _S207 = uint(tile_height_3);
+    uint _S208 = uint(tile_width_3);
+    uint _S209 = DiffTensorView_size_0(output_img_1, 0U);
 
-#line 299
-    uint3  _S208;
-
-#line 299
-    uint3  _S209;
-
-#line 299
+#line 303
     uint3  _S210;
 
-#line 299
+#line 303
     uint3  _S211;
 
+#line 303
+    uint3  _S212;
+
+#line 303
+    uint3  _S213;
+
 
 
     if(is_inside_3)
     {
 
-#line 304
-        uint _S212 = pix_coord_4.y;
+#line 308
+        uint _S214 = pix_coord_4.y;
 
-#line 304
-        uint3  _S213 = make_uint3 (_S212, _S203, 0U);
-        uint3  _S214 = make_uint3 (_S212, _S203, 1U);
-        uint3  _S215 = make_uint3 (_S212, _S203, 2U);
+#line 308
+        uint3  _S215 = make_uint3 (_S214, _S205, 0U);
+        uint3  _S216 = make_uint3 (_S214, _S205, 1U);
+        uint3  _S217 = make_uint3 (_S214, _S205, 2U);
 
-#line 306
-        _S208 = make_uint3 (_S212, _S203, 3U);
+#line 310
+        _S210 = make_uint3 (_S214, _S205, 3U);
 
-#line 306
-        _S209 = _S215;
+#line 310
+        _S211 = _S217;
 
-#line 306
-        _S210 = _S214;
+#line 310
+        _S212 = _S216;
 
-#line 306
-        _S211 = _S213;
+#line 310
+        _S213 = _S215;
 
-#line 306
+#line 310
     }
     else
     {
 
-#line 306
-        _S208 = _S202;
+#line 310
+        _S210 = _S204;
 
-#line 306
-        _S209 = _S202;
+#line 310
+        _S211 = _S204;
 
-#line 306
-        _S210 = _S202;
+#line 310
+        _S212 = _S204;
 
-#line 306
-        _S211 = _S202;
+#line 310
+        _S213 = _S204;
 
-#line 306
+#line 310
     }
 
-#line 285
-    float4  _S216 = make_float4 (0.0f);
+#line 288
+    float4  _S218 = make_float4 (0.0f);
 
-#line 285
-    float4  _S217;
+#line 288
+    float4  _S219;
 
-#line 285
+#line 288
     if(is_inside_3)
     {
 
-#line 285
-        _S217 = make_float4 (AtomicAdd_storeOnce_backward_0(output_img_1.diff_1, _S211), AtomicAdd_storeOnce_backward_0(output_img_1.diff_1, _S210), AtomicAdd_storeOnce_backward_0(output_img_1.diff_1, _S209), AtomicAdd_storeOnce_backward_0(output_img_1.diff_1, _S208));
+#line 288
+        _S219 = make_float4 (AtomicAdd_storeOnce_backward_0(output_img_1.diff_1, _S213), AtomicAdd_storeOnce_backward_0(output_img_1.diff_1, _S212), AtomicAdd_storeOnce_backward_0(output_img_1.diff_1, _S211), AtomicAdd_storeOnce_backward_0(output_img_1.diff_1, _S210));
 
-#line 285
+#line 288
     }
     else
     {
 
-#line 285
-        _S217 = _S216;
+#line 288
+        _S219 = _S218;
 
-#line 285
+#line 288
     }
 
-#line 285
-    s_bwd_prop_alpha_blend_0(sorted_gauss_idx_3, xyz_vs_8, inv_cov_vs_8, opacity_8, rgb_8, output_img_1, contribution_3, d_contribution_3, n_contributors_3, pix_coord_4, tile_idx_start_3, tile_idx_end_3, _S205, _S206, _S207, _S204, _S217);
+#line 288
+    s_bwd_prop_alpha_blend_0(sorted_gauss_idx_3, xyz_vs_8, inv_cov_vs_8, opacity_8, rgb_8, beta_3, output_img_1, contribution_3, d_contribution_3, n_contributors_3, pix_coord_4, tile_idx_start_3, tile_idx_end_3, _S207, _S208, _S209, _S206, _S219);
 
-#line 261
+#line 263
     return;
 }
 
 
-#line 261
-__device__ void s_bwd_splat_tiled_0(TensorView _S218, TensorView _S219, DiffTensorView_0 _S220, DiffTensorView_0 _S221, DiffTensorView_0 _S222, DiffTensorView_0 _S223, DiffTensorView_0 _S224, TensorView _S225, TensorView _S226, TensorView _S227, int _S228, int _S229, int _S230, int _S231)
+#line 263
+__device__ void s_bwd_splat_tiled_0(TensorView _S220, TensorView _S221, DiffTensorView_0 _S222, DiffTensorView_0 _S223, DiffTensorView_0 _S224, DiffTensorView_0 _S225, DiffTensorView_0 _S226, DiffTensorView_0 _S227, TensorView _S228, TensorView _S229, TensorView _S230, int _S231, int _S232, int _S233, int _S234)
 {
 
-#line 274
-    s_bwd_prop_splat_tiled_Intermediates_0 _S232;
+#line 277
+    s_bwd_prop_splat_tiled_Intermediates_0 _S235;
 
-#line 274
-    s_primal_ctx_splat_tiled_0(_S218, _S219, _S220, _S221, _S222, _S223, _S224, _S225, _S226, _S227, _S228, _S229, _S230, _S231, &_S232);
+#line 277
+    s_primal_ctx_splat_tiled_0(_S220, _S221, _S222, _S223, _S224, _S225, _S226, _S227, _S228, _S229, _S230, _S231, _S232, _S233, _S234, &_S235);
 
-#line 274
-    s_bwd_prop_splat_tiled_0(_S218, _S219, _S220, _S221, _S222, _S223, _S224, _S225, _S226, _S227, _S228, _S229, _S230, _S231, _S232);
+#line 277
+    s_bwd_prop_splat_tiled_0(_S220, _S221, _S222, _S223, _S224, _S225, _S226, _S227, _S228, _S229, _S230, _S231, _S232, _S233, _S234, _S235);
 
-#line 274
+#line 277
     return;
 }
 
 
-#line 274
+#line 277
 extern "C" {
-__global__ void __kernel__splat_tiled_bwd_diff(TensorView sorted_gauss_idx_4, TensorView tile_ranges_2, DiffTensorView_0 xyz_vs_9, DiffTensorView_0 inv_cov_vs_9, DiffTensorView_0 opacity_9, DiffTensorView_0 rgb_9, DiffTensorView_0 output_img_2, TensorView contribution_4, TensorView d_contribution_4, TensorView n_contributors_4, int grid_height_2, int grid_width_2, int tile_height_4, int tile_width_4)
+__global__ void __kernel__splat_tiled_bwd_diff(TensorView sorted_gauss_idx_4, TensorView tile_ranges_2, DiffTensorView_0 xyz_vs_9, DiffTensorView_0 inv_cov_vs_9, DiffTensorView_0 opacity_9, DiffTensorView_0 rgb_9, DiffTensorView_0 beta_4, DiffTensorView_0 output_img_2, TensorView contribution_4, TensorView d_contribution_4, TensorView n_contributors_4, int grid_height_2, int grid_width_2, int tile_height_4, int tile_width_4)
 {
 
-#line 274
-    s_bwd_splat_tiled_0(sorted_gauss_idx_4, tile_ranges_2, xyz_vs_9, inv_cov_vs_9, opacity_9, rgb_9, output_img_2, contribution_4, d_contribution_4, n_contributors_4, grid_height_2, grid_width_2, tile_height_4, tile_width_4);
+#line 277
+    s_bwd_splat_tiled_0(sorted_gauss_idx_4, tile_ranges_2, xyz_vs_9, inv_cov_vs_9, opacity_9, rgb_9, beta_4, output_img_2, contribution_4, d_contribution_4, n_contributors_4, grid_height_2, grid_width_2, tile_height_4, tile_width_4);
 
-#line 274
+#line 277
     return;
 }
 
@@ -6047,10 +6047,10 @@ __global__ void __kernel__splat_tiled_bwd_diff(TensorView sorted_gauss_idx_4, Te
 #line 856 "diff.meta.slang"
 __device__ float AtomicAdd_load_forward_0(AtomicAdd_0 this_9, uint2  i_9)
 {
-    float _S233 = ((this_9.diff_0).load<float>((i_9)));
+    float _S236 = ((this_9.diff_0).load<float>((i_9)));
 
 #line 858
-    return _S233;
+    return _S236;
 }
 
 
@@ -6059,31 +6059,31 @@ __device__ DiffPair_vectorx3Cfloatx2C3x3E_0 s_fwd_read_t3_float3_0(uint idx_9, D
 {
 
 #line 28 "/data/fwindisch/hierarchical-LOD-gaussians/submodules/slang-gaussian-rasterization/slang_gaussian_rasterization/internal/slang/utils.slang"
-    uint2  _S234 = make_uint2 (idx_9, 0U);
-
-#line 28
-    float _S235 = ((t3_3.primal_0).load<float>((_S234)));
-
-#line 28
-    float _S236 = AtomicAdd_load_forward_0(t3_3.diff_1, _S234);
-    uint2  _S237 = make_uint2 (idx_9, 1U);
+    uint2  _S237 = make_uint2 (idx_9, 0U);
 
 #line 28
     float _S238 = ((t3_3.primal_0).load<float>((_S237)));
 
 #line 28
     float _S239 = AtomicAdd_load_forward_0(t3_3.diff_1, _S237);
-
-    uint2  _S240 = make_uint2 (idx_9, 2U);
+    uint2  _S240 = make_uint2 (idx_9, 1U);
 
 #line 28
     float _S241 = ((t3_3.primal_0).load<float>((_S240)));
 
 #line 28
-    DiffPair_vectorx3Cfloatx2C3x3E_0 _S242 = { make_float3 (_S235, _S238, _S241), make_float3 (_S236, _S239, AtomicAdd_load_forward_0(t3_3.diff_1, _S240)) };
+    float _S242 = AtomicAdd_load_forward_0(t3_3.diff_1, _S240);
+
+    uint2  _S243 = make_uint2 (idx_9, 2U);
 
 #line 28
-    return _S242;
+    float _S244 = ((t3_3.primal_0).load<float>((_S243)));
+
+#line 28
+    DiffPair_vectorx3Cfloatx2C3x3E_0 _S245 = { make_float3 (_S238, _S241, _S244), make_float3 (_S239, _S242, AtomicAdd_load_forward_0(t3_3.diff_1, _S243)) };
+
+#line 28
+    return _S245;
 }
 
 
@@ -6092,26 +6092,26 @@ __device__ DiffPair_float_0 s_fwd_read_t1_float_0(uint idx_10, DiffTensorView_0 
 {
 
 #line 22
-    uint2  _S243 = make_uint2 (idx_10, 0U);
+    uint2  _S246 = make_uint2 (idx_10, 0U);
 
 #line 22
-    float _S244 = ((t1_3.primal_0).load<float>((_S243)));
+    float _S247 = ((t1_3.primal_0).load<float>((_S246)));
 
 #line 22
-    DiffPair_float_0 _S245 = { _S244, AtomicAdd_load_forward_0(t1_3.diff_1, _S243) };
+    DiffPair_float_0 _S248 = { _S247, AtomicAdd_load_forward_0(t1_3.diff_1, _S246) };
 
 #line 22
-    return _S245;
+    return _S248;
 }
 
 
 #line 856 "diff.meta.slang"
 __device__ float AtomicAdd_load_forward_1(AtomicAdd_0 this_10, uint3  i_10)
 {
-    float _S246 = ((this_10.diff_0).load<float>((i_10)));
+    float _S249 = ((this_10.diff_0).load<float>((i_10)));
 
 #line 858
-    return _S246;
+    return _S249;
 }
 
 
@@ -6120,22 +6120,14 @@ __device__ DiffPair_matrixx3Cfloatx2C2x2C2x3E_0 s_fwd_read_t2x2_float2x2_0(uint 
 {
 
 #line 54 "/data/fwindisch/hierarchical-LOD-gaussians/submodules/slang-gaussian-rasterization/slang_gaussian_rasterization/internal/slang/utils.slang"
-    uint3  _S247 = make_uint3 (idx_11, 0U, 0U);
-
-#line 54
-    float _S248 = ((t2x2_3.primal_0).load<float>((_S247)));
-
-#line 54
-    float _S249 = AtomicAdd_load_forward_1(t2x2_3.diff_1, _S247);
-    uint3  _S250 = make_uint3 (idx_11, 1U, 0U);
+    uint3  _S250 = make_uint3 (idx_11, 0U, 0U);
 
 #line 54
     float _S251 = ((t2x2_3.primal_0).load<float>((_S250)));
 
 #line 54
     float _S252 = AtomicAdd_load_forward_1(t2x2_3.diff_1, _S250);
-
-    uint3  _S253 = make_uint3 (idx_11, 0U, 1U);
+    uint3  _S253 = make_uint3 (idx_11, 1U, 0U);
 
 #line 54
     float _S254 = ((t2x2_3.primal_0).load<float>((_S253)));
@@ -6143,17 +6135,25 @@ __device__ DiffPair_matrixx3Cfloatx2C2x2C2x3E_0 s_fwd_read_t2x2_float2x2_0(uint 
 #line 54
     float _S255 = AtomicAdd_load_forward_1(t2x2_3.diff_1, _S253);
 
-
-    uint3  _S256 = make_uint3 (idx_11, 1U, 1U);
+    uint3  _S256 = make_uint3 (idx_11, 0U, 1U);
 
 #line 54
     float _S257 = ((t2x2_3.primal_0).load<float>((_S256)));
 
 #line 54
-    DiffPair_matrixx3Cfloatx2C2x2C2x3E_0 _S258 = { makeMatrix<float, 2, 2> (_S248, _S251, _S254, _S257), makeMatrix<float, 2, 2> (_S249, _S252, _S255, AtomicAdd_load_forward_1(t2x2_3.diff_1, _S256)) };
+    float _S258 = AtomicAdd_load_forward_1(t2x2_3.diff_1, _S256);
+
+
+    uint3  _S259 = make_uint3 (idx_11, 1U, 1U);
 
 #line 54
-    return _S258;
+    float _S260 = ((t2x2_3.primal_0).load<float>((_S259)));
+
+#line 54
+    DiffPair_matrixx3Cfloatx2C2x2C2x3E_0 _S261 = { makeMatrix<float, 2, 2> (_S251, _S254, _S257, _S260), makeMatrix<float, 2, 2> (_S252, _S255, _S258, AtomicAdd_load_forward_1(t2x2_3.diff_1, _S259)) };
+
+#line 54
+    return _S261;
 }
 
 
@@ -6162,16 +6162,16 @@ __device__ DiffPair_Splat_2D_AlphaBlend_0 s_fwd_Splat_2D_AlphaBlend_x24init_0(Di
 {
 
 #line 239
-    Splat_2D_AlphaBlend_0 _S259 = { dpxyz_vs_2.primal_1, dprgb_2.primal_1, dpopacity_2.primal_1, dpinv_cov_vs_2.primal_1 };
+    Splat_2D_AlphaBlend_0 _S262 = { dpxyz_vs_2.primal_1, dprgb_2.primal_1, dpopacity_2.primal_1, dpinv_cov_vs_2.primal_1 };
 
 #line 239
-    Splat_2D_AlphaBlend_0 _S260 = { dpxyz_vs_2.differential_0, dprgb_2.differential_0, dpopacity_2.differential_0, dpinv_cov_vs_2.differential_0 };
+    Splat_2D_AlphaBlend_0 _S263 = { dpxyz_vs_2.differential_0, dprgb_2.differential_0, dpopacity_2.differential_0, dpinv_cov_vs_2.differential_0 };
 
 #line 239
-    DiffPair_Splat_2D_AlphaBlend_0 _S261 = { _S259, _S260 };
+    DiffPair_Splat_2D_AlphaBlend_0 _S264 = { _S262, _S263 };
 
 #line 234
-    return _S261;
+    return _S264;
 }
 
 
@@ -6180,33 +6180,33 @@ __device__ DiffPair_Splat_2D_AlphaBlend_0 s_fwd_load_splat_alphablend_0(int g_id
 {
 
 #line 249
-    uint _S262 = uint(g_idx_4);
+    uint _S265 = uint(g_idx_4);
 
 #line 249
-    DiffPair_vectorx3Cfloatx2C3x3E_0 _S263 = s_fwd_read_t3_float3_0(_S262, xyz_vs_10);
-    DiffPair_vectorx3Cfloatx2C3x3E_0 _S264 = s_fwd_read_t3_float3_0(_S262, rgb_10);
-    DiffPair_float_0 _S265 = s_fwd_read_t1_float_0(_S262, opacity_10);
-    DiffPair_matrixx3Cfloatx2C2x2C2x3E_0 _S266 = s_fwd_read_t2x2_float2x2_0(_S262, inv_cov_vs_10);
+    DiffPair_vectorx3Cfloatx2C3x3E_0 _S266 = s_fwd_read_t3_float3_0(_S265, xyz_vs_10);
+    DiffPair_vectorx3Cfloatx2C3x3E_0 _S267 = s_fwd_read_t3_float3_0(_S265, rgb_10);
+    DiffPair_float_0 _S268 = s_fwd_read_t1_float_0(_S265, opacity_10);
+    DiffPair_matrixx3Cfloatx2C2x2C2x3E_0 _S269 = s_fwd_read_t2x2_float2x2_0(_S265, inv_cov_vs_10);
 
 #line 252
-    DiffPair_vectorx3Cfloatx2C3x3E_0 _S267 = { _S263.primal_1, _S263.differential_0 };
+    DiffPair_vectorx3Cfloatx2C3x3E_0 _S270 = { _S266.primal_1, _S266.differential_0 };
 
 #line 252
-    DiffPair_vectorx3Cfloatx2C3x3E_0 _S268 = { _S264.primal_1, _S264.differential_0 };
+    DiffPair_vectorx3Cfloatx2C3x3E_0 _S271 = { _S267.primal_1, _S267.differential_0 };
 
 #line 252
-    DiffPair_float_0 _S269 = { _S265.primal_1, _S265.differential_0 };
+    DiffPair_float_0 _S272 = { _S268.primal_1, _S268.differential_0 };
 
 #line 252
-    DiffPair_matrixx3Cfloatx2C2x2C2x3E_0 _S270 = { _S266.primal_1, _S266.differential_0 };
+    DiffPair_matrixx3Cfloatx2C2x2C2x3E_0 _S273 = { _S269.primal_1, _S269.differential_0 };
 
-    DiffPair_Splat_2D_AlphaBlend_0 _S271 = s_fwd_Splat_2D_AlphaBlend_x24init_0(_S267, _S268, _S269, _S270);
+    DiffPair_Splat_2D_AlphaBlend_0 _S274 = s_fwd_Splat_2D_AlphaBlend_x24init_0(_S270, _S271, _S272, _S273);
 
 #line 254
-    DiffPair_Splat_2D_AlphaBlend_0 _S272 = { _S271.primal_1, _S271.differential_0 };
+    DiffPair_Splat_2D_AlphaBlend_0 _S275 = { _S274.primal_1, _S274.differential_0 };
 
 #line 254
-    return _S272;
+    return _S275;
 }
 
 
@@ -6215,13 +6215,13 @@ __device__ DiffPair_float_0 s_fwd_ndc2pix_0(DiffPair_float_0 dpv_2, int S_3)
 {
 
 #line 63
-    float _S273 = float(S_3);
+    float _S276 = float(S_3);
 
 #line 63
-    DiffPair_float_0 _S274 = { ((dpv_2.primal_1 + 1.0f) * _S273 - 1.0f) * 0.5f, dpv_2.differential_0 * _S273 * 0.5f };
+    DiffPair_float_0 _S277 = { ((dpv_2.primal_1 + 1.0f) * _S276 - 1.0f) * 0.5f, dpv_2.differential_0 * _S276 * 0.5f };
 
 #line 63
-    return _S274;
+    return _S277;
 }
 
 
@@ -6230,568 +6230,568 @@ __device__ DiffPair_vectorx3Cfloatx2C4x3E_0 s_fwd_evaluate_splat_0(DiffPair_Spla
 {
 
 #line 261
-    DiffPair_float_0 _S275 = { dpg_1.primal_1.xyz_vs_0.x, dpg_1.differential_0.xyz_vs_0.x };
+    DiffPair_float_0 _S278 = { dpg_1.primal_1.xyz_vs_0.x, dpg_1.differential_0.xyz_vs_0.x };
 
 #line 269
-    DiffPair_float_0 _S276 = s_fwd_ndc2pix_0(_S275, int(W_4));
+    DiffPair_float_0 _S279 = s_fwd_ndc2pix_0(_S278, int(W_4));
 
 #line 269
-    float _S277 = dppix_coord_1.primal_1.x - _S276.primal_1;
+    float _S280 = dppix_coord_1.primal_1.x - _S279.primal_1;
 
 #line 269
-    float _S278 = dppix_coord_1.differential_0.x - _S276.differential_0;
+    float _S281 = dppix_coord_1.differential_0.x - _S279.differential_0;
 
 #line 269
-    DiffPair_float_0 _S279 = { dpg_1.primal_1.xyz_vs_0.y, dpg_1.differential_0.xyz_vs_0.y };
-    DiffPair_float_0 _S280 = s_fwd_ndc2pix_0(_S279, int(H_4));
+    DiffPair_float_0 _S282 = { dpg_1.primal_1.xyz_vs_0.y, dpg_1.differential_0.xyz_vs_0.y };
+    DiffPair_float_0 _S283 = s_fwd_ndc2pix_0(_S282, int(H_4));
 
 #line 270
-    float _S281 = dppix_coord_1.primal_1.y - _S280.primal_1;
+    float _S284 = dppix_coord_1.primal_1.y - _S283.primal_1;
 
 #line 270
-    float _S282 = dppix_coord_1.differential_0.y - _S280.differential_0;
-    float _S283 = dpg_1.primal_1.inv_cov_vs_0.rows[int(0)].x * _S277;
-    float _S284 = dpg_1.primal_1.inv_cov_vs_0.rows[int(1)].y * _S281;
+    float _S285 = dppix_coord_1.differential_0.y - _S283.differential_0;
+    float _S286 = dpg_1.primal_1.inv_cov_vs_0.rows[int(0)].x * _S280;
+    float _S287 = dpg_1.primal_1.inv_cov_vs_0.rows[int(1)].y * _S284;
 
 #line 272
-    float _S285 = dpg_1.primal_1.inv_cov_vs_0.rows[int(0)].y + dpg_1.primal_1.inv_cov_vs_0.rows[int(1)].x;
+    float _S288 = dpg_1.primal_1.inv_cov_vs_0.rows[int(0)].y + dpg_1.primal_1.inv_cov_vs_0.rows[int(1)].x;
 
 #line 272
-    float _S286 = _S285 * _S277;
+    float _S289 = _S288 * _S280;
 
 #line 272
-    DiffPair_float_0 _S287 = { -0.5f * (_S283 * _S277 + _S284 * _S281 + _S286 * _S281), ((dpg_1.differential_0.inv_cov_vs_0.rows[int(0)].x * _S277 + _S278 * dpg_1.primal_1.inv_cov_vs_0.rows[int(0)].x) * _S277 + _S278 * _S283 + ((dpg_1.differential_0.inv_cov_vs_0.rows[int(1)].y * _S281 + _S282 * dpg_1.primal_1.inv_cov_vs_0.rows[int(1)].y) * _S281 + _S282 * _S284) + (((dpg_1.differential_0.inv_cov_vs_0.rows[int(0)].y + dpg_1.differential_0.inv_cov_vs_0.rows[int(1)].x) * _S277 + _S278 * _S285) * _S281 + _S282 * _S286)) * -0.5f };
-    DiffPair_float_0 _S288 = _d_exp_1(_S287);
+    DiffPair_float_0 _S290 = { -0.5f * (_S286 * _S280 + _S287 * _S284 + _S289 * _S284), ((dpg_1.differential_0.inv_cov_vs_0.rows[int(0)].x * _S280 + _S281 * dpg_1.primal_1.inv_cov_vs_0.rows[int(0)].x) * _S280 + _S281 * _S286 + ((dpg_1.differential_0.inv_cov_vs_0.rows[int(1)].y * _S284 + _S285 * dpg_1.primal_1.inv_cov_vs_0.rows[int(1)].y) * _S284 + _S285 * _S287) + (((dpg_1.differential_0.inv_cov_vs_0.rows[int(0)].y + dpg_1.differential_0.inv_cov_vs_0.rows[int(1)].x) * _S280 + _S281 * _S288) * _S284 + _S285 * _S289)) * -0.5f };
+    DiffPair_float_0 _S291 = _d_exp_1(_S290);
 
 #line 273
-    DiffPair_float_0 _S289 = { 0.99000000953674316f, 0.0f };
+    DiffPair_float_0 _S292 = { 0.99000000953674316f, 0.0f };
 
 #line 273
-    DiffPair_float_0 _S290 = { dpg_1.primal_1.opacity_0 * _S288.primal_1, dpg_1.differential_0.opacity_0 * _S288.primal_1 + _S288.differential_0 * dpg_1.primal_1.opacity_0 };
+    DiffPair_float_0 _S293 = { dpg_1.primal_1.opacity_0 * _S291.primal_1, dpg_1.differential_0.opacity_0 * _S291.primal_1 + _S291.differential_0 * dpg_1.primal_1.opacity_0 };
 
 #line 273
-    DiffPair_float_0 _S291 = _d_min_1(_S289, _S290);
+    DiffPair_float_0 _S294 = _d_min_1(_S292, _S293);
 
 #line 273
-    DiffPair_vectorx3Cfloatx2C4x3E_0 _S292 = { make_float4 ((dpg_1.primal_1.rgb_0 * make_float3 (_S291.primal_1)).x, (dpg_1.primal_1.rgb_0 * make_float3 (_S291.primal_1)).y, (dpg_1.primal_1.rgb_0 * make_float3 (_S291.primal_1)).z, _S291.primal_1), make_float4 ((dpg_1.differential_0.rgb_0 * make_float3 (_S291.primal_1) + make_float3 (_S291.differential_0) * dpg_1.primal_1.rgb_0).x, (dpg_1.differential_0.rgb_0 * make_float3 (_S291.primal_1) + make_float3 (_S291.differential_0) * dpg_1.primal_1.rgb_0).y, (dpg_1.differential_0.rgb_0 * make_float3 (_S291.primal_1) + make_float3 (_S291.differential_0) * dpg_1.primal_1.rgb_0).z, _S291.differential_0) };
+    DiffPair_vectorx3Cfloatx2C4x3E_0 _S295 = { make_float4 ((dpg_1.primal_1.rgb_0 * make_float3 (_S294.primal_1)).x, (dpg_1.primal_1.rgb_0 * make_float3 (_S294.primal_1)).y, (dpg_1.primal_1.rgb_0 * make_float3 (_S294.primal_1)).z, _S294.primal_1), make_float4 ((dpg_1.differential_0.rgb_0 * make_float3 (_S294.primal_1) + make_float3 (_S294.differential_0) * dpg_1.primal_1.rgb_0).x, (dpg_1.differential_0.rgb_0 * make_float3 (_S294.primal_1) + make_float3 (_S294.differential_0) * dpg_1.primal_1.rgb_0).y, (dpg_1.differential_0.rgb_0 * make_float3 (_S294.primal_1) + make_float3 (_S294.differential_0) * dpg_1.primal_1.rgb_0).z, _S294.differential_0) };
 
 
-    return _S292;
-}
-
-
-#line 100 "/data/fwindisch/hierarchical-LOD-gaussians/submodules/slang-gaussian-rasterization/slang_gaussian_rasterization/internal/slang/alphablend_shader.slang"
-__device__ DiffPair_float_0 s_fwd_update_contribution_0(DiffPair_vectorx3Cfloatx2C4x3E_0 dppixel_state_t_nm1_2, DiffPair_vectorx3Cfloatx2C4x3E_0 dpgauss_rgba_t_n_2)
-{
-
-#line 29
-    float _S293 = dpgauss_rgba_t_n_2.primal_1.w;
-
-#line 29
-    float _S294 = dppixel_state_t_nm1_2.primal_1.w;
-
-#line 29
-    DiffPair_float_0 _S295 = { _S293 * _S294, dpgauss_rgba_t_n_2.differential_0.w * _S294 + dppixel_state_t_nm1_2.differential_0.w * _S293 };
-
-#line 29
     return _S295;
 }
 
 
-#line 104
+#line 101 "/data/fwindisch/hierarchical-LOD-gaussians/submodules/slang-gaussian-rasterization/slang_gaussian_rasterization/internal/slang/alphablend_shader.slang"
+__device__ DiffPair_float_0 s_fwd_update_contribution_0(DiffPair_vectorx3Cfloatx2C4x3E_0 dppixel_state_t_nm1_2, DiffPair_vectorx3Cfloatx2C4x3E_0 dpgauss_rgba_t_n_2)
+{
+
+#line 29
+    float _S296 = dpgauss_rgba_t_n_2.primal_1.w;
+
+#line 29
+    float _S297 = dppixel_state_t_nm1_2.primal_1.w;
+
+#line 29
+    DiffPair_float_0 _S298 = { _S296 * _S297, dpgauss_rgba_t_n_2.differential_0.w * _S297 + dppixel_state_t_nm1_2.differential_0.w * _S296 };
+
+#line 29
+    return _S298;
+}
+
+
+#line 105
 __device__ DiffPair_vectorx3Cfloatx2C4x3E_0 s_fwd_update_pixel_state_0(DiffPair_vectorx3Cfloatx2C4x3E_0 dppixel_state_t_nm1_3, DiffPair_vectorx3Cfloatx2C4x3E_0 dpgauss_rgba_t_n_3)
 {
 
 #line 35
-    float3  _S296 = float3 {dpgauss_rgba_t_n_3.primal_1.x, dpgauss_rgba_t_n_3.primal_1.y, dpgauss_rgba_t_n_3.primal_1.z};
+    float3  _S299 = float3 {dpgauss_rgba_t_n_3.primal_1.x, dpgauss_rgba_t_n_3.primal_1.y, dpgauss_rgba_t_n_3.primal_1.z};
 
 #line 35
-    float _S297 = dppixel_state_t_nm1_3.primal_1.w;
+    float _S300 = dppixel_state_t_nm1_3.primal_1.w;
 
 #line 35
-    float _S298 = dppixel_state_t_nm1_3.differential_0.w;
-    float _S299 = 1.0f - dpgauss_rgba_t_n_3.primal_1.w;
+    float _S301 = dppixel_state_t_nm1_3.differential_0.w;
+    float _S302 = 1.0f - dpgauss_rgba_t_n_3.primal_1.w;
 
 #line 36
-    DiffPair_vectorx3Cfloatx2C4x3E_0 _S300 = { make_float4 ((float3 {dppixel_state_t_nm1_3.primal_1.x, dppixel_state_t_nm1_3.primal_1.y, dppixel_state_t_nm1_3.primal_1.z} + _S296 * make_float3 (_S297)).x, (float3 {dppixel_state_t_nm1_3.primal_1.x, dppixel_state_t_nm1_3.primal_1.y, dppixel_state_t_nm1_3.primal_1.z} + _S296 * make_float3 (_S297)).y, (float3 {dppixel_state_t_nm1_3.primal_1.x, dppixel_state_t_nm1_3.primal_1.y, dppixel_state_t_nm1_3.primal_1.z} + _S296 * make_float3 (_S297)).z, _S297 * _S299), make_float4 ((float3 {dppixel_state_t_nm1_3.differential_0.x, dppixel_state_t_nm1_3.differential_0.y, dppixel_state_t_nm1_3.differential_0.z} + (float3 {dpgauss_rgba_t_n_3.differential_0.x, dpgauss_rgba_t_n_3.differential_0.y, dpgauss_rgba_t_n_3.differential_0.z} * make_float3 (_S297) + make_float3 (_S298) * _S296)).x, (float3 {dppixel_state_t_nm1_3.differential_0.x, dppixel_state_t_nm1_3.differential_0.y, dppixel_state_t_nm1_3.differential_0.z} + (float3 {dpgauss_rgba_t_n_3.differential_0.x, dpgauss_rgba_t_n_3.differential_0.y, dpgauss_rgba_t_n_3.differential_0.z} * make_float3 (_S297) + make_float3 (_S298) * _S296)).y, (float3 {dppixel_state_t_nm1_3.differential_0.x, dppixel_state_t_nm1_3.differential_0.y, dppixel_state_t_nm1_3.differential_0.z} + (float3 {dpgauss_rgba_t_n_3.differential_0.x, dpgauss_rgba_t_n_3.differential_0.y, dpgauss_rgba_t_n_3.differential_0.z} * make_float3 (_S297) + make_float3 (_S298) * _S296)).z, _S298 * _S299 + (0.0f - dpgauss_rgba_t_n_3.differential_0.w) * _S297) };
-    return _S300;
+    DiffPair_vectorx3Cfloatx2C4x3E_0 _S303 = { make_float4 ((float3 {dppixel_state_t_nm1_3.primal_1.x, dppixel_state_t_nm1_3.primal_1.y, dppixel_state_t_nm1_3.primal_1.z} + _S299 * make_float3 (_S300)).x, (float3 {dppixel_state_t_nm1_3.primal_1.x, dppixel_state_t_nm1_3.primal_1.y, dppixel_state_t_nm1_3.primal_1.z} + _S299 * make_float3 (_S300)).y, (float3 {dppixel_state_t_nm1_3.primal_1.x, dppixel_state_t_nm1_3.primal_1.y, dppixel_state_t_nm1_3.primal_1.z} + _S299 * make_float3 (_S300)).z, _S300 * _S302), make_float4 ((float3 {dppixel_state_t_nm1_3.differential_0.x, dppixel_state_t_nm1_3.differential_0.y, dppixel_state_t_nm1_3.differential_0.z} + (float3 {dpgauss_rgba_t_n_3.differential_0.x, dpgauss_rgba_t_n_3.differential_0.y, dpgauss_rgba_t_n_3.differential_0.z} * make_float3 (_S300) + make_float3 (_S301) * _S299)).x, (float3 {dppixel_state_t_nm1_3.differential_0.x, dppixel_state_t_nm1_3.differential_0.y, dppixel_state_t_nm1_3.differential_0.z} + (float3 {dpgauss_rgba_t_n_3.differential_0.x, dpgauss_rgba_t_n_3.differential_0.y, dpgauss_rgba_t_n_3.differential_0.z} * make_float3 (_S300) + make_float3 (_S301) * _S299)).y, (float3 {dppixel_state_t_nm1_3.differential_0.x, dppixel_state_t_nm1_3.differential_0.y, dppixel_state_t_nm1_3.differential_0.z} + (float3 {dpgauss_rgba_t_n_3.differential_0.x, dpgauss_rgba_t_n_3.differential_0.y, dpgauss_rgba_t_n_3.differential_0.z} * make_float3 (_S300) + make_float3 (_S301) * _S299)).z, _S301 * _S302 + (0.0f - dpgauss_rgba_t_n_3.differential_0.w) * _S300) };
+    return _S303;
 }
 
 
 #line 37
-__device__ DiffPair_vectorx3Cfloatx2C4x3E_0 s_fwd_alpha_blend_0(TensorView sorted_gauss_idx_5, DiffTensorView_0 xyz_vs_11, DiffTensorView_0 inv_cov_vs_11, DiffTensorView_0 opacity_11, DiffTensorView_0 rgb_11, DiffTensorView_0 final_pixel_state_2, TensorView contribution_5, TensorView d_contribution_5, TensorView n_contributors_5, uint2  pix_coord_5, uint tile_idx_start_4, uint tile_idx_end_4, uint tile_height_5, uint tile_width_5, uint H_5, uint W_5)
+__device__ DiffPair_vectorx3Cfloatx2C4x3E_0 s_fwd_alpha_blend_0(TensorView sorted_gauss_idx_5, DiffTensorView_0 xyz_vs_11, DiffTensorView_0 inv_cov_vs_11, DiffTensorView_0 opacity_11, DiffTensorView_0 rgb_11, DiffTensorView_0 beta_5, DiffTensorView_0 final_pixel_state_2, TensorView contribution_5, TensorView d_contribution_5, TensorView n_contributors_5, uint2  pix_coord_5, uint tile_idx_start_4, uint tile_idx_end_4, uint tile_height_5, uint tile_width_5, uint H_5, uint W_5)
 {
 
-#line 67
-    float2  _S301 = make_float2 ((float)pix_coord_5.x, (float)pix_coord_5.y);
-    float4  _S302 = make_float4 (0.0f, 0.0f, 0.0f, 1.0f);
-
 #line 68
-    float4  _S303 = make_float4 (0.0f, 0.0f, 0.0f, 0.0f);
-    uint block_size_2 = tile_height_5 * tile_width_5;
-    uint _S304 = pix_coord_5.x;
+    float2  _S304 = make_float2 ((float)pix_coord_5.x, (float)pix_coord_5.y);
+    float4  _S305 = make_float4 (0.0f, 0.0f, 0.0f, 1.0f);
 
-#line 70
+#line 69
+    float4  _S306 = make_float4 (0.0f, 0.0f, 0.0f, 0.0f);
+    uint block_size_2 = tile_height_5 * tile_width_5;
+    uint _S307 = pix_coord_5.x;
+
+#line 71
     bool is_inside_4;
 
-#line 70
-    if(_S304 < W_5)
+#line 71
+    if(_S307 < W_5)
     {
 
-#line 70
+#line 71
         is_inside_4 = (pix_coord_5.y) < H_5;
 
-#line 70
+#line 71
     }
     else
     {
 
-#line 70
+#line 71
         is_inside_4 = false;
 
-#line 70
+#line 71
     }
 
-    uint _S305 = tile_idx_end_4 - tile_idx_start_4;
-
-#line 72
-    uint _S306 = (_S305 + block_size_2 - 1U) / block_size_2;
-
-#line 72
-    int _S307 = int(_S306);
-    uint3  _S308 = ((threadIdx));
+    uint _S308 = tile_idx_end_4 - tile_idx_start_4;
 
 #line 73
-    uint _S309 = _S308.y * ((blockDim)).x + _S308.x;
+    uint _S309 = (_S308 + block_size_2 - 1U) / block_size_2;
 
-    int _S310 = int(_S305);
+#line 73
+    int _S310 = int(_S309);
+    uint3  _S311 = ((threadIdx));
 
-#line 116
-    int _S311 = int(block_size_2);
+#line 74
+    uint _S312 = _S311.y * ((blockDim)).x + _S311.x;
 
-#line 116
+    int _S313 = int(_S308);
+
+#line 117
+    int _S314 = int(block_size_2);
+
+#line 117
     bool thread_active_2 = is_inside_4;
 
-#line 116
-    float4  curr_pixel_state_2 = _S302;
+#line 117
+    float4  curr_pixel_state_2 = _S305;
 
-#line 116
-    float4  s_diff_curr_pixel_state_0 = _S303;
+#line 117
+    float4  s_diff_curr_pixel_state_0 = _S306;
 
-#line 116
+#line 117
     int i_11 = int(0);
 
-#line 116
-    int splats_left_to_process_4 = _S310;
+#line 117
+    int splats_left_to_process_4 = _S313;
 
-#line 116
+#line 117
     int local_n_contrib_4 = int(0);
 
-#line 76
+#line 77
     for(;;)
     {
 
-#line 76
-        if(i_11 < _S307)
+#line 77
+        if(i_11 < _S310)
         {
         }
         else
         {
 
-#line 76
+#line 77
             break;
         }
 
         __syncthreads();
-        uint _S312 = uint(i_11) * block_size_2;
-        uint _S313 = tile_idx_start_4 + uint(int(_S312 + _S309));
+        uint _S315 = uint(i_11) * block_size_2;
+        uint _S316 = tile_idx_start_4 + uint(int(_S315 + _S312));
 
-#line 81
-        FixedArray<uint, 256>  _S314;
+#line 82
+        FixedArray<uint, 256>  _S317;
 
-#line 81
-        if(_S313 < tile_idx_end_4)
+#line 82
+        if(_S316 < tile_idx_end_4)
         {
-            int _S315 = ((sorted_gauss_idx_5).load<int>((_S313)));
+            int _S318 = ((sorted_gauss_idx_5).load<int>((_S316)));
 
-#line 83
-            uint coll_id_2 = uint(_S315);
+#line 84
+            uint coll_id_2 = uint(_S318);
 
-#line 83
-            _S314 = *&collected_idx_0;
+#line 84
+            _S317 = *&collected_idx_0;
 
-#line 83
-            _S314[_S309] = coll_id_2;
-            *&collected_idx_0 = _S314;
-            DiffPair_Splat_2D_AlphaBlend_0 _S316 = s_fwd_load_splat_alphablend_0(int(coll_id_2), xyz_vs_11, inv_cov_vs_11, opacity_11, rgb_11);
+#line 84
+            _S317[_S312] = coll_id_2;
+            *&collected_idx_0 = _S317;
+            DiffPair_Splat_2D_AlphaBlend_0 _S319 = s_fwd_load_splat_alphablend_0(int(coll_id_2), xyz_vs_11, inv_cov_vs_11, opacity_11, rgb_11);
 
-#line 85
-            FixedArray<Splat_2D_AlphaBlend_0, 256>  _S317 = *&collected_splats_0;
+#line 86
+            FixedArray<Splat_2D_AlphaBlend_0, 256>  _S320 = *&collected_splats_0;
 
-#line 85
-            _S317[_S309] = _S316.primal_1;
+#line 86
+            _S320[_S312] = _S319.primal_1;
 
-#line 85
-            *&collected_splats_0 = _S317;
+#line 86
+            *&collected_splats_0 = _S320;
 
-#line 81
+#line 82
         }
 
-#line 87
+#line 88
         __syncthreads();
 
-#line 87
+#line 88
         float4  curr_pixel_state_3;
 
-#line 87
+#line 88
         float4  s_diff_curr_pixel_state_1;
         if(thread_active_2)
         {
 
-#line 88
+#line 89
             int local_n_contrib_5;
 
-#line 88
+#line 89
             bool thread_active_3;
-            uint _S318 = (U32_min((block_size_2), (uint(splats_left_to_process_4))));
+            uint _S321 = (U32_min((block_size_2), (uint(splats_left_to_process_4))));
 
-#line 99
-            uint _S319 = tile_idx_start_4 + _S312;
+#line 100
+            uint _S322 = tile_idx_start_4 + _S315;
 
-#line 99
+#line 100
             curr_pixel_state_3 = curr_pixel_state_2;
 
-#line 99
+#line 100
             s_diff_curr_pixel_state_1 = s_diff_curr_pixel_state_0;
 
-#line 99
+#line 100
             int j_2 = int(0);
 
-#line 99
+#line 100
             int local_n_contrib_6 = local_n_contrib_4;
 
-#line 89
+#line 90
             for(;;)
             {
 
-#line 89
-                uint _S320 = uint(j_2);
+#line 90
+                uint _S323 = uint(j_2);
 
-#line 89
-                if(_S320 < _S318)
+#line 90
+                if(_S323 < _S321)
                 {
                 }
                 else
                 {
 
-#line 89
+#line 90
                     thread_active_3 = thread_active_2;
 
-#line 89
+#line 90
                     local_n_contrib_5 = local_n_contrib_6;
 
-#line 89
+#line 90
                     break;
                 }
                 int local_n_contrib_7 = local_n_contrib_6 + int(1);
 
-#line 91
-                DiffPair_Splat_2D_AlphaBlend_0 _S321 = { (*&collected_splats_0)[j_2], Splat_2D_AlphaBlend_x24_syn_dzero_0() };
+#line 92
+                DiffPair_Splat_2D_AlphaBlend_0 _S324 = { (*&collected_splats_0)[j_2], Splat_2D_AlphaBlend_x24_syn_dzero_0() };
 
-#line 91
-                DiffPair_vectorx3Cfloatx2C2x3E_0 _S322 = { _S301, make_float2 (0.0f) };
+#line 92
+                DiffPair_vectorx3Cfloatx2C2x3E_0 _S325 = { _S304, make_float2 (0.0f) };
 
-                DiffPair_vectorx3Cfloatx2C4x3E_0 _S323 = s_fwd_evaluate_splat_0(_S321, _S322, H_5, W_5);
+                DiffPair_vectorx3Cfloatx2C4x3E_0 _S326 = s_fwd_evaluate_splat_0(_S324, _S325, H_5, W_5);
 
 
-                if((_S323.primal_1.w) < 0.00392156885936856f)
+                if((_S326.primal_1.w) < 0.00392156885936856f)
                 {
 
-#line 97
+#line 98
                     j_2 = j_2 + int(1);
 
-#line 97
+#line 98
                     local_n_contrib_6 = local_n_contrib_7;
 
-#line 89
+#line 90
                     continue;
                 }
 
-#line 99
-                int _S324 = ((sorted_gauss_idx_5).load<int>((_S319 + _S320)));
+#line 100
+                int _S327 = ((sorted_gauss_idx_5).load<int>((_S322 + _S323)));
 
-#line 99
-                uint _S325 = uint(_S324);
+#line 100
+                uint _S328 = uint(_S327);
 
-#line 99
-                _S314 = *&collected_idx_0;
+#line 100
+                _S317 = *&collected_idx_0;
 
-#line 99
-                _S314[j_2] = _S325;
+#line 100
+                _S317[j_2] = _S328;
 
-#line 99
-                *&collected_idx_0 = _S314;
+#line 100
+                *&collected_idx_0 = _S317;
 
-#line 99
-                DiffPair_vectorx3Cfloatx2C4x3E_0 _S326 = { curr_pixel_state_3, s_diff_curr_pixel_state_1 };
+#line 100
+                DiffPair_vectorx3Cfloatx2C4x3E_0 _S329 = { curr_pixel_state_3, s_diff_curr_pixel_state_1 };
 
-#line 99
-                DiffPair_vectorx3Cfloatx2C4x3E_0 _S327 = { _S323.primal_1, _S323.differential_0 };
-                DiffPair_float_0 _S328 = s_fwd_update_contribution_0(_S326, _S327);
-
-
-                float _S329 = 0.0f;
-
-#line 103
-                *((&_S329)) = atomicAdd((contribution_5).data_ptr_at<float>((_S325)), (_S328.primal_1));
-
-#line 103
-                DiffPair_vectorx3Cfloatx2C4x3E_0 _S330 = { curr_pixel_state_3, s_diff_curr_pixel_state_1 };
-                DiffPair_vectorx3Cfloatx2C4x3E_0 _S331 = s_fwd_update_pixel_state_0(_S330, _S327);
+#line 100
+                DiffPair_vectorx3Cfloatx2C4x3E_0 _S330 = { _S326.primal_1, _S326.differential_0 };
+                DiffPair_float_0 _S331 = s_fwd_update_contribution_0(_S329, _S330);
 
 
-                if((_S331.primal_1.w) < 0.00009999999747379f)
+                float _S332 = 0.0f;
+
+#line 104
+                *((&_S332)) = atomicAdd((contribution_5).data_ptr_at<float>((_S328)), (_S331.primal_1));
+
+#line 104
+                DiffPair_vectorx3Cfloatx2C4x3E_0 _S333 = { curr_pixel_state_3, s_diff_curr_pixel_state_1 };
+                DiffPair_vectorx3Cfloatx2C4x3E_0 _S334 = s_fwd_update_pixel_state_0(_S333, _S330);
+
+
+                if((_S334.primal_1.w) < 0.00009999999747379f)
                 {
-                    int _S332 = local_n_contrib_7 - int(1);
+                    int _S335 = local_n_contrib_7 - int(1);
 
-#line 109
+#line 110
                     thread_active_3 = false;
 
-#line 109
-                    local_n_contrib_5 = _S332;
+#line 110
+                    local_n_contrib_5 = _S335;
 
                     break;
                 }
 
-#line 111
-                curr_pixel_state_3 = _S331.primal_1;
+#line 112
+                curr_pixel_state_3 = _S334.primal_1;
 
-#line 111
-                s_diff_curr_pixel_state_1 = _S331.differential_0;
+#line 112
+                s_diff_curr_pixel_state_1 = _S334.differential_0;
 
-#line 89
+#line 90
                 j_2 = j_2 + int(1);
 
-#line 89
+#line 90
                 local_n_contrib_6 = local_n_contrib_7;
 
-#line 89
+#line 90
             }
 
-#line 89
+#line 90
             thread_active_2 = thread_active_3;
 
-#line 89
+#line 90
             local_n_contrib_4 = local_n_contrib_5;
 
-#line 88
+#line 89
         }
         else
         {
 
-#line 88
+#line 89
             curr_pixel_state_3 = curr_pixel_state_2;
 
-#line 88
+#line 89
             s_diff_curr_pixel_state_1 = s_diff_curr_pixel_state_0;
 
-#line 88
+#line 89
         }
 
-#line 116
-        int splats_left_to_process_5 = splats_left_to_process_4 - _S311;
+#line 117
+        int splats_left_to_process_5 = splats_left_to_process_4 - _S314;
 
-#line 76
-        int _S333 = i_11 + int(1);
+#line 77
+        int _S336 = i_11 + int(1);
 
-#line 76
+#line 77
         curr_pixel_state_2 = curr_pixel_state_3;
 
-#line 76
+#line 77
         s_diff_curr_pixel_state_0 = s_diff_curr_pixel_state_1;
 
-#line 76
-        i_11 = _S333;
+#line 77
+        i_11 = _S336;
 
-#line 76
+#line 77
         splats_left_to_process_4 = splats_left_to_process_5;
 
-#line 76
+#line 77
     }
 
-#line 119
+#line 120
     if(is_inside_4)
     {
 
-#line 120
-        (n_contributors_5).store<int>((pix_coord_5.y), (_S304), (0U), (local_n_contrib_4));
+#line 121
+        (n_contributors_5).store<int>((pix_coord_5.y), (_S307), (0U), (local_n_contrib_4));
 
-#line 119
+#line 120
     }
 
-#line 119
-    DiffPair_vectorx3Cfloatx2C4x3E_0 _S334 = { curr_pixel_state_2, s_diff_curr_pixel_state_0 };
+#line 120
+    DiffPair_vectorx3Cfloatx2C4x3E_0 _S337 = { curr_pixel_state_2, s_diff_curr_pixel_state_0 };
 
-    return _S334;
+    return _S337;
 }
 
 
-#line 121
-__device__ void s_fwd_splat_tiled_0(TensorView sorted_gauss_idx_6, TensorView tile_ranges_3, DiffTensorView_0 xyz_vs_12, DiffTensorView_0 inv_cov_vs_12, DiffTensorView_0 opacity_12, DiffTensorView_0 rgb_12, DiffTensorView_0 output_img_3, TensorView contribution_6, TensorView d_contribution_6, TensorView n_contributors_6, int grid_height_3, int grid_width_3, int tile_height_6, int tile_width_6)
+#line 122
+__device__ void s_fwd_splat_tiled_0(TensorView sorted_gauss_idx_6, TensorView tile_ranges_3, DiffTensorView_0 xyz_vs_12, DiffTensorView_0 inv_cov_vs_12, DiffTensorView_0 opacity_12, DiffTensorView_0 rgb_12, DiffTensorView_0 beta_6, DiffTensorView_0 output_img_3, TensorView contribution_6, TensorView d_contribution_6, TensorView n_contributors_6, int grid_height_3, int grid_width_3, int tile_height_6, int tile_width_6)
 {
 
-#line 276
-    uint3  _S335 = ((blockIdx));
+#line 279
+    uint3  _S338 = ((blockIdx));
 
-    uint2  pix_coord_6 = uint2 {(_S335 * ((blockDim)) + ((threadIdx))).x, (_S335 * ((blockDim)) + ((threadIdx))).y};
+    uint2  pix_coord_6 = uint2 {(_S338 * ((blockDim)) + ((threadIdx))).x, (_S338 * ((blockDim)) + ((threadIdx))).y};
 
-    uint tile_idx_1 = _S335.y * uint(grid_width_3) + _S335.x;
-    int _S336 = ((tile_ranges_3).load<int>((tile_idx_1), (0U)));
-
-#line 281
-    uint tile_idx_start_5 = uint(_S336);
-    int _S337 = ((tile_ranges_3).load<int>((tile_idx_1), (1U)));
-
-#line 282
-    uint tile_idx_end_5 = uint(_S337);
-
-    uint _S338 = pix_coord_6.x;
+    uint tile_idx_1 = _S338.y * uint(grid_width_3) + _S338.x;
+    int _S339 = ((tile_ranges_3).load<int>((tile_idx_1), (0U)));
 
 #line 284
-    uint _S339 = DiffTensorView_size_0(output_img_3, 1U);
+    uint tile_idx_start_5 = uint(_S339);
+    int _S340 = ((tile_ranges_3).load<int>((tile_idx_1), (1U)));
 
-#line 284
+#line 285
+    uint tile_idx_end_5 = uint(_S340);
+
+    uint _S341 = pix_coord_6.x;
+
+#line 287
+    uint _S342 = DiffTensorView_size_0(output_img_3, 1U);
+
+#line 287
     bool is_inside_5;
 
-#line 284
-    if(_S338 < _S339)
+#line 287
+    if(_S341 < _S342)
     {
 
-#line 284
+#line 287
         is_inside_5 = (pix_coord_6.y) < (DiffTensorView_size_0(output_img_3, 0U));
 
-#line 284
+#line 287
     }
     else
     {
 
-#line 284
+#line 287
         is_inside_5 = false;
 
-#line 284
+#line 287
     }
-    DiffPair_vectorx3Cfloatx2C4x3E_0 _S340 = s_fwd_alpha_blend_0(sorted_gauss_idx_6, xyz_vs_12, inv_cov_vs_12, opacity_12, rgb_12, output_img_3, contribution_6, d_contribution_6, n_contributors_6, pix_coord_6, tile_idx_start_5, tile_idx_end_5, uint(tile_height_6), uint(tile_width_6), DiffTensorView_size_0(output_img_3, 0U), _S339);
+    DiffPair_vectorx3Cfloatx2C4x3E_0 _S343 = s_fwd_alpha_blend_0(sorted_gauss_idx_6, xyz_vs_12, inv_cov_vs_12, opacity_12, rgb_12, beta_6, output_img_3, contribution_6, d_contribution_6, n_contributors_6, pix_coord_6, tile_idx_start_5, tile_idx_end_5, uint(tile_height_6), uint(tile_width_6), DiffTensorView_size_0(output_img_3, 0U), _S342);
 
-#line 303
+#line 307
     if(is_inside_5)
     {
 
-#line 304
-        uint _S341 = pix_coord_6.y;
+#line 308
+        uint _S344 = pix_coord_6.y;
 
-#line 304
-        DiffPair_float_0 _S342 = { _S340.primal_1.x, _S340.differential_0.x };
+#line 308
+        DiffPair_float_0 _S345 = { _S343.primal_1.x, _S343.differential_0.x };
 
-#line 304
-        DiffTensorView_storeOnce_forward_0(output_img_3, make_uint3 (_S341, _S338, 0U), _S342);
+#line 308
+        DiffTensorView_storeOnce_forward_0(output_img_3, make_uint3 (_S344, _S341, 0U), _S345);
 
-#line 304
-        DiffPair_float_0 _S343 = { _S340.primal_1.y, _S340.differential_0.y };
-        DiffTensorView_storeOnce_forward_0(output_img_3, make_uint3 (_S341, _S338, 1U), _S343);
+#line 308
+        DiffPair_float_0 _S346 = { _S343.primal_1.y, _S343.differential_0.y };
+        DiffTensorView_storeOnce_forward_0(output_img_3, make_uint3 (_S344, _S341, 1U), _S346);
 
-#line 305
-        DiffPair_float_0 _S344 = { _S340.primal_1.z, _S340.differential_0.z };
-        DiffTensorView_storeOnce_forward_0(output_img_3, make_uint3 (_S341, _S338, 2U), _S344);
+#line 309
+        DiffPair_float_0 _S347 = { _S343.primal_1.z, _S343.differential_0.z };
+        DiffTensorView_storeOnce_forward_0(output_img_3, make_uint3 (_S344, _S341, 2U), _S347);
 
-#line 306
-        DiffPair_float_0 _S345 = { _S340.primal_1.w, _S340.differential_0.w };
-        DiffTensorView_storeOnce_forward_0(output_img_3, make_uint3 (_S341, _S338, 3U), _S345);
+#line 310
+        DiffPair_float_0 _S348 = { _S343.primal_1.w, _S343.differential_0.w };
+        DiffTensorView_storeOnce_forward_0(output_img_3, make_uint3 (_S344, _S341, 3U), _S348);
 
-#line 303
+#line 307
     }
 
-#line 309
+#line 313
     return;
 }
 
 
-#line 309
+#line 313
 extern "C" {
-__global__ void __kernel__splat_tiled_fwd_diff(TensorView sorted_gauss_idx_7, TensorView tile_ranges_4, DiffTensorView_0 xyz_vs_13, DiffTensorView_0 inv_cov_vs_13, DiffTensorView_0 opacity_13, DiffTensorView_0 rgb_13, DiffTensorView_0 output_img_4, TensorView contribution_7, TensorView d_contribution_7, TensorView n_contributors_7, int grid_height_4, int grid_width_4, int tile_height_7, int tile_width_7)
+__global__ void __kernel__splat_tiled_fwd_diff(TensorView sorted_gauss_idx_7, TensorView tile_ranges_4, DiffTensorView_0 xyz_vs_13, DiffTensorView_0 inv_cov_vs_13, DiffTensorView_0 opacity_13, DiffTensorView_0 rgb_13, DiffTensorView_0 beta_7, DiffTensorView_0 output_img_4, TensorView contribution_7, TensorView d_contribution_7, TensorView n_contributors_7, int grid_height_4, int grid_width_4, int tile_height_7, int tile_width_7)
 {
 
-#line 309
-    s_fwd_splat_tiled_0(sorted_gauss_idx_7, tile_ranges_4, xyz_vs_13, inv_cov_vs_13, opacity_13, rgb_13, output_img_4, contribution_7, d_contribution_7, n_contributors_7, grid_height_4, grid_width_4, tile_height_7, tile_width_7);
+#line 313
+    s_fwd_splat_tiled_0(sorted_gauss_idx_7, tile_ranges_4, xyz_vs_13, inv_cov_vs_13, opacity_13, rgb_13, beta_7, output_img_4, contribution_7, d_contribution_7, n_contributors_7, grid_height_4, grid_width_4, tile_height_7, tile_width_7);
 
-#line 309
+#line 313
     return;
 }
 
 }
 
-#line 261
-__global__ void __kernel__splat_tiled(TensorView sorted_gauss_idx_8, TensorView tile_ranges_5, DiffTensorView_0 xyz_vs_14, DiffTensorView_0 inv_cov_vs_14, DiffTensorView_0 opacity_14, DiffTensorView_0 rgb_14, DiffTensorView_0 output_img_5, TensorView contribution_8, TensorView d_contribution_8, TensorView n_contributors_8, int grid_height_5, int grid_width_5, int tile_height_8, int tile_width_8)
+#line 263
+__global__ void __kernel__splat_tiled(TensorView sorted_gauss_idx_8, TensorView tile_ranges_5, DiffTensorView_0 xyz_vs_14, DiffTensorView_0 inv_cov_vs_14, DiffTensorView_0 opacity_14, DiffTensorView_0 rgb_14, DiffTensorView_0 beta_8, DiffTensorView_0 output_img_5, TensorView contribution_8, TensorView d_contribution_8, TensorView n_contributors_8, int grid_height_5, int grid_width_5, int tile_height_8, int tile_width_8)
 {
 
-#line 276
-    uint3  _S346 = ((blockIdx));
+#line 279
+    uint3  _S349 = ((blockIdx));
 
-    uint2  pix_coord_7 = uint2 {(_S346 * ((blockDim)) + ((threadIdx))).x, (_S346 * ((blockDim)) + ((threadIdx))).y};
+    uint2  pix_coord_7 = uint2 {(_S349 * ((blockDim)) + ((threadIdx))).x, (_S349 * ((blockDim)) + ((threadIdx))).y};
 
-    uint tile_idx_2 = _S346.y * uint(grid_width_5) + _S346.x;
-    int _S347 = ((tile_ranges_5).load<int>((tile_idx_2), (0U)));
-
-#line 281
-    uint tile_idx_start_6 = uint(_S347);
-    int _S348 = ((tile_ranges_5).load<int>((tile_idx_2), (1U)));
-
-#line 282
-    uint tile_idx_end_6 = uint(_S348);
-
-    uint _S349 = pix_coord_7.x;
+    uint tile_idx_2 = _S349.y * uint(grid_width_5) + _S349.x;
+    int _S350 = ((tile_ranges_5).load<int>((tile_idx_2), (0U)));
 
 #line 284
-    uint _S350 = DiffTensorView_size_0(output_img_5, 1U);
+    uint tile_idx_start_6 = uint(_S350);
+    int _S351 = ((tile_ranges_5).load<int>((tile_idx_2), (1U)));
 
-#line 284
+#line 285
+    uint tile_idx_end_6 = uint(_S351);
+
+    uint _S352 = pix_coord_7.x;
+
+#line 287
+    uint _S353 = DiffTensorView_size_0(output_img_5, 1U);
+
+#line 287
     bool is_inside_6;
 
-#line 284
-    if(_S349 < _S350)
+#line 287
+    if(_S352 < _S353)
     {
 
-#line 284
+#line 287
         is_inside_6 = (pix_coord_7.y) < (DiffTensorView_size_0(output_img_5, 0U));
 
-#line 284
+#line 287
     }
     else
     {
 
-#line 284
+#line 287
         is_inside_6 = false;
 
-#line 284
+#line 287
     }
-    float4  pixel_state_0 = alpha_blend_0(sorted_gauss_idx_8, xyz_vs_14, inv_cov_vs_14, opacity_14, rgb_14, output_img_5, contribution_8, d_contribution_8, n_contributors_8, pix_coord_7, tile_idx_start_6, tile_idx_end_6, uint(tile_height_8), uint(tile_width_8), DiffTensorView_size_0(output_img_5, 0U), _S350);
+    float4  pixel_state_0 = alpha_blend_0(sorted_gauss_idx_8, xyz_vs_14, inv_cov_vs_14, opacity_14, rgb_14, beta_8, output_img_5, contribution_8, d_contribution_8, n_contributors_8, pix_coord_7, tile_idx_start_6, tile_idx_end_6, uint(tile_height_8), uint(tile_width_8), DiffTensorView_size_0(output_img_5, 0U), _S353);
 
-#line 303
+#line 307
     if(is_inside_6)
     {
 
-#line 304
-        uint _S351 = pix_coord_7.y;
+#line 308
+        uint _S354 = pix_coord_7.y;
 
-#line 304
-        DiffTensorView_storeOnce_0(output_img_5, make_uint3 (_S351, _S349, 0U), pixel_state_0.x);
-        DiffTensorView_storeOnce_0(output_img_5, make_uint3 (_S351, _S349, 1U), pixel_state_0.y);
-        DiffTensorView_storeOnce_0(output_img_5, make_uint3 (_S351, _S349, 2U), pixel_state_0.z);
-        DiffTensorView_storeOnce_0(output_img_5, make_uint3 (_S351, _S349, 3U), pixel_state_0.w);
+#line 308
+        DiffTensorView_storeOnce_0(output_img_5, make_uint3 (_S354, _S352, 0U), pixel_state_0.x);
+        DiffTensorView_storeOnce_0(output_img_5, make_uint3 (_S354, _S352, 1U), pixel_state_0.y);
+        DiffTensorView_storeOnce_0(output_img_5, make_uint3 (_S354, _S352, 2U), pixel_state_0.z);
+        DiffTensorView_storeOnce_0(output_img_5, make_uint3 (_S354, _S352, 3U), pixel_state_0.w);
 
-#line 303
+#line 307
     }
 
-#line 309
+#line 313
     return;
 }
 

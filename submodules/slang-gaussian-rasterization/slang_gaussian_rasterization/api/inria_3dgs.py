@@ -39,7 +39,7 @@ def common_properties_from_inria_Camera(camera):
 
   return world_view_transform, projection_matrix, cam_pos, fovy, fovx, height, width 
 
-def render(viewpoint_camera, xyz_ws, opacity, scales, rotations, features_dc, features_rest, pipe, bg_color, scaling_modifier = 1.0, override_color = None, sh_degree = 1):
+def render(viewpoint_camera, xyz_ws, opacity, scales, rotations, features_dc, features_rest, beta, pipe, bg_color, scaling_modifier = 1.0, override_color = None, sh_degree = 1):
   """ Implements the Interface defined in the inria code-base."""
   assert scaling_modifier == 1.0, "scaling_modifier is not supported in the slang-gaussian-rasterization."
   assert override_color is None, "override_color is not support in the slang-gaussian-rasterization."
@@ -54,7 +54,7 @@ def render(viewpoint_camera, xyz_ws, opacity, scales, rotations, features_dc, fe
 
 
   render_pkg = render_alpha_blend_tiles_slang_raw(xyz_ws, rotations, scales, opacity, 
-                                                  sh_coeffs, active_sh,
+                                                  sh_coeffs, beta, active_sh,
                                                   world_view_transform, proj_mat, cam_pos,
                                                   fovy, fovx, height, width)
   

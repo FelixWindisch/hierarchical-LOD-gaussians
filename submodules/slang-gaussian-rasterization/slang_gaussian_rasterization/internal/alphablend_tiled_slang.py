@@ -23,7 +23,7 @@ def set_grad(var):
     return hook
 
 def render_alpha_blend_tiles_slang_raw(xyz_ws, rotations, scales, opacity, 
-                                       sh_coeffs, active_sh,
+                                       sh_coeffs, beta, active_sh,
                                        world_view_transform, proj_mat, cam_pos,
                                        fovy, fovx, height, width, tile_size=16):
     
@@ -56,6 +56,7 @@ def render_alpha_blend_tiles_slang_raw(xyz_ws, rotations, scales, opacity,
         inv_cov_vs,
         opacity,
         rgb,
+        beta,
         render_grid)
     
     render_pkg = {
@@ -73,7 +74,7 @@ class AlphaBlendTiledRender(torch.autograd.Function):
     @staticmethod
     def forward(ctx, 
                 sorted_gauss_idx, tile_ranges,
-                xyz_vs, inv_cov_vs, opacity, rgb, render_grid, device="cuda"):
+                xyz_vs, inv_cov_vs, opacity, rgb, beta, render_grid, device="cuda"):
         output_img = torch.zeros((render_grid.image_height, 
                                   render_grid.image_width, 4), 
                                  device=device)
@@ -96,6 +97,7 @@ class AlphaBlendTiledRender(torch.autograd.Function):
             tile_ranges=tile_ranges,
             xyz_vs=xyz_vs, inv_cov_vs=inv_cov_vs, 
             opacity=opacity, rgb=rgb, 
+            beta=beta,
             output_img=output_img,
             contribution=contribution,
             d_contribution=d_contribution,
@@ -131,6 +133,8 @@ class AlphaBlendTiledRender(torch.autograd.Function):
         inv_cov_vs_grad = torch.zeros_like(inv_cov_vs)
         opacity_grad = torch.zeros_like(opacity)
         rgb_grad = torch.zeros_like(rgb)
+        beta = torch.zeros((xyz_vs.shape[0]), device=xyz_vs.device)
+        beta_grad = torch.zeros_like(beta)
         #breakpoint()
 
         assert (render_grid.tile_height, render_grid.tile_width) in slang_modules.alpha_blend_shaders, (
@@ -148,6 +152,7 @@ class AlphaBlendTiledRender(torch.autograd.Function):
             inv_cov_vs=(inv_cov_vs, inv_cov_vs_grad),
             opacity=(opacity, opacity_grad),
             rgb=(rgb, rgb_grad),
+            beta=(beta, beta_grad),
             output_img=(output_img, grad_output_img),
             contribution=contribution.contiguous(),# grad_contribution.contiguous()),
             d_contribution=grad_contribution.contiguous(),# grad_contribution.contiguous()),

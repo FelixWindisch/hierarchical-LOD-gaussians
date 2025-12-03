@@ -21,7 +21,11 @@ static const uint TILE_WIDTH = PYTHON_TILE_WIDTH;
 
 groupshared Splat_2D_AlphaBlend collected_splats[TILE_HEIGHT * TILE_WIDTH];
 groupshared uint32_t collected_idx[TILE_HEIGHT * TILE_WIDTH];
-
+[Differentiable]
+float update_contribution(float4 pixel_state_t_nm1, float4 gauss_rgba_t_n)
+{
+    return gauss_rgba_t_n.a * pixel_state_t_nm1.a;
+}
 
 [Differentiable]
 float4 update_pixel_state(float4 pixel_state_t_nm1, float4 gauss_rgba_t_n)
@@ -49,6 +53,7 @@ float4 alpha_blend(TensorView<int32_t> sorted_gauss_idx,
                    DiffTensorView distance_sigma,
                    TensorView<float> distance,
                    DiffTensorView final_pixel_state,
+                   TensorView<float> contribution,
                    TensorView<int32_t> n_contributors,
                    uint32_t2 pix_coord,
                    uint32_t tile_idx_start,
@@ -90,6 +95,12 @@ float4 alpha_blend(TensorView<int32_t> sorted_gauss_idx,
                 if (gauss_rgba.a < 1.0f / 255.0f)
                     continue;
                 
+                collected_idx[j] = sorted_gauss_idx[tile_idx_start + i * block_size + j];
+                float add = update_contribution(curr_pixel_state, gauss_rgba);
+
+                float out;
+                contribution.InterlockedAdd(collected_idx[j], add, out);
+
                 float4 new_pixel_state = update_pixel_state(curr_pixel_state, gauss_rgba);
                 
                 //early exit
@@ -123,6 +134,7 @@ void bwd_alpha_blend(TensorView<int32_t> sorted_gauss_idx,
                      DiffTensorView distance_sigma,
                      TensorView<float> distance,
                      DiffTensorView final_pixel_state,
+                     TensorView<float> contribution,
                      TensorView<int32_t> n_contributors,
                      uint32_t2 pix_coord,
                      uint32_t tile_idx_start,
@@ -253,6 +265,7 @@ void splat_tiled(TensorView<int32_t> sorted_gauss_idx,
                  DiffTensorView distance_sigma,
                  TensorView<float> distance,
                  DiffTensorView output_img,
+                 TensorView<float> contribution,
                  TensorView<int32_t> n_contributors,
                  int grid_height,
                  int grid_width,
@@ -277,6 +290,7 @@ void splat_tiled(TensorView<int32_t> sorted_gauss_idx,
                                      distance_sigma,
                                      distance,
                                      output_img,
+                                     contribution,
                                      n_contributors,
                                      pix_coord,
                                      tile_idx_start,

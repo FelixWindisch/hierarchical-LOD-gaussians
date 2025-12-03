@@ -36,7 +36,6 @@ import view_graph_utils
 from scipy.spatial import KDTree
 import numpy as np
 from gaussian_hierarchy._C import  get_spt_cut_cuda
-from stp_gaussian_rasterization import ExtendedSettings
 from gaussian_renderer import occlusion_cull, occlusion_cull_cached
 import json
 import pickle
@@ -443,7 +442,6 @@ def render(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoint_
                             opacity = nn.Parameter(torch.cat((opacity[:gaussians.skybox_points], load_tensor[:, opacity1:opacity2].cuda(non_blocking=non_blocking), opacity[reuse_gaussians_mask])).contiguous())
                             scales = nn.Parameter(torch.cat((scales[:gaussians.skybox_points], load_tensor[:, scales1:scales2].cuda(non_blocking=non_blocking), scales[reuse_gaussians_mask])).contiguous())
                             rotations = nn.Parameter(torch.cat((rotations[:gaussians.skybox_points], load_tensor[:, rotation1:rotation2].cuda(non_blocking=non_blocking), rotations[reuse_gaussians_mask])).contiguous())
-                            # TODO: ABS?
                             features_dc = nn.Parameter(torch.cat((features_dc[:gaussians.skybox_points], load_tensor[:, features1:features2].cuda(non_blocking=non_blocking).unsqueeze(1), features_dc[reuse_gaussians_mask])).contiguous())
                             features_rest = nn.Parameter(torch.cat((features_rest[:gaussians.skybox_points], load_tensor[:, features_rest1:features_rest2].cuda(non_blocking=non_blocking).reshape(len(load_tensor), SH_properties_single, 3), features_rest[reuse_gaussians_mask])).contiguous())
 

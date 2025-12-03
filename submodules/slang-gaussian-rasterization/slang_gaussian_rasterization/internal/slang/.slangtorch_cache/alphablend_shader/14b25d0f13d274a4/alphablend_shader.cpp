@@ -13086,585 +13086,639 @@ struct DiffTensorView_0
 };
 
 
-#line 282 "/data/fwindisch/hierarchical-LOD-gaussians/submodules/slang-gaussian-rasterization/slang_gaussian_rasterization/internal/slang/alphablend_shader.slang"
+#line 285 "/data/fwindisch/hierarchical-LOD-gaussians/submodules/slang-gaussian-rasterization/slang_gaussian_rasterization/internal/slang/alphablend_shader.slang"
 extern "C" {
 SLANG_PRELUDE_EXPORT
-void __kernel__splat_tiled_bwd_diff(TensorView _0, TensorView _1, DiffTensorView_0 _2, DiffTensorView_0 _3, DiffTensorView_0 _4, DiffTensorView_0 _5, DiffTensorView_0 _6, TensorView _7, TensorView _8, TensorView _9, int32_t _10, int32_t _11, int32_t _12, int32_t _13);
+void __kernel__splat_tiled_bwd_diff(TensorView _0, TensorView _1, DiffTensorView_0 _2, DiffTensorView_0 _3, DiffTensorView_0 _4, DiffTensorView_0 _5, DiffTensorView_0 _6, DiffTensorView_0 _7, TensorView _8, TensorView _9, TensorView _10, int32_t _11, int32_t _12, int32_t _13, int32_t _14);
 
 }
 
-#line 282
+#line 285
 extern "C" {
 SLANG_PRELUDE_EXPORT
-void __kernel__splat_tiled_fwd_diff(TensorView _0, TensorView _1, DiffTensorView_0 _2, DiffTensorView_0 _3, DiffTensorView_0 _4, DiffTensorView_0 _5, DiffTensorView_0 _6, TensorView _7, TensorView _8, TensorView _9, int32_t _10, int32_t _11, int32_t _12, int32_t _13);
+void __kernel__splat_tiled_fwd_diff(TensorView _0, TensorView _1, DiffTensorView_0 _2, DiffTensorView_0 _3, DiffTensorView_0 _4, DiffTensorView_0 _5, DiffTensorView_0 _6, DiffTensorView_0 _7, TensorView _8, TensorView _9, TensorView _10, int32_t _11, int32_t _12, int32_t _13, int32_t _14);
 
 }
 
-#line 261
+#line 263
 SLANG_PRELUDE_EXPORT
-void __kernel__splat_tiled(TensorView _0, TensorView _1, DiffTensorView_0 _2, DiffTensorView_0 _3, DiffTensorView_0 _4, DiffTensorView_0 _5, DiffTensorView_0 _6, TensorView _7, TensorView _8, TensorView _9, int32_t _10, int32_t _11, int32_t _12, int32_t _13);
+void __kernel__splat_tiled(TensorView _0, TensorView _1, DiffTensorView_0 _2, DiffTensorView_0 _3, DiffTensorView_0 _4, DiffTensorView_0 _5, DiffTensorView_0 _6, DiffTensorView_0 _7, TensorView _8, TensorView _9, TensorView _10, int32_t _11, int32_t _12, int32_t _13, int32_t _14);
 
 
-#line 261
+#line 263
 SLANG_PRELUDE_EXPORT
-void splat_tiled(std::tuple<uint32_t, uint32_t, uint32_t> _blockSize_0, std::tuple<uint32_t, uint32_t, uint32_t> _gridSize_0, torch::Tensor sorted_gauss_idx_0, torch::Tensor tile_ranges_0, std::tuple<torch::Tensor, std::tuple<torch::Tensor>> xyz_vs_0, std::tuple<torch::Tensor, std::tuple<torch::Tensor>> inv_cov_vs_0, std::tuple<torch::Tensor, std::tuple<torch::Tensor>> opacity_0, std::tuple<torch::Tensor, std::tuple<torch::Tensor>> rgb_0, std::tuple<torch::Tensor, std::tuple<torch::Tensor>> output_img_0, torch::Tensor contribution_0, torch::Tensor d_contribution_0, torch::Tensor n_contributors_0, int32_t grid_height_0, int32_t grid_width_0, int32_t tile_height_0, int32_t tile_width_0)
+void splat_tiled(std::tuple<uint32_t, uint32_t, uint32_t> _blockSize_0, std::tuple<uint32_t, uint32_t, uint32_t> _gridSize_0, torch::Tensor sorted_gauss_idx_0, torch::Tensor tile_ranges_0, std::tuple<torch::Tensor, std::tuple<torch::Tensor>> xyz_vs_0, std::tuple<torch::Tensor, std::tuple<torch::Tensor>> inv_cov_vs_0, std::tuple<torch::Tensor, std::tuple<torch::Tensor>> opacity_0, std::tuple<torch::Tensor, std::tuple<torch::Tensor>> rgb_0, std::tuple<torch::Tensor, std::tuple<torch::Tensor>> beta_0, std::tuple<torch::Tensor, std::tuple<torch::Tensor>> output_img_0, torch::Tensor contribution_0, torch::Tensor d_contribution_0, torch::Tensor n_contributors_0, int32_t grid_height_0, int32_t grid_width_0, int32_t tile_height_0, int32_t tile_width_0)
 {
 
-#line 261
+#line 263
     Vector<uint32_t, 3>  _S1 = Vector<uint32_t, 3> (std::get<int(0)>(_blockSize_0), std::get<int(1)>(_blockSize_0), std::get<int(2)>(_blockSize_0));
 
-#line 261
+#line 263
     Vector<uint32_t, 3>  _S2 = Vector<uint32_t, 3> (std::get<int(0)>(_gridSize_0), std::get<int(1)>(_gridSize_0), std::get<int(2)>(_gridSize_0));
 
-#line 261
+#line 263
     TensorView _S3 = make_tensor_view(tile_ranges_0, "tile_ranges", torch::kInt32, false);
 
-#line 261
+#line 263
     TensorView _S4 = make_tensor_view(std::get<int(0)>(xyz_vs_0), "xyz_vs_primal", torch::kFloat32, false);
 
-#line 261
+#line 263
     AtomicAdd_0 _S5 = { make_tensor_view(std::get<int(0)>(std::get<int(1)>(xyz_vs_0)), "xyz_vs_diff_diff", torch::kFloat32, false) };
 
-#line 261
+#line 263
     TensorView _S6 = make_tensor_view(std::get<int(0)>(inv_cov_vs_0), "inv_cov_vs_primal", torch::kFloat32, false);
 
-#line 261
+#line 263
     AtomicAdd_0 _S7 = { make_tensor_view(std::get<int(0)>(std::get<int(1)>(inv_cov_vs_0)), "inv_cov_vs_diff_diff", torch::kFloat32, false) };
 
-#line 261
+#line 263
     TensorView _S8 = make_tensor_view(std::get<int(0)>(opacity_0), "opacity_primal", torch::kFloat32, false);
 
-#line 261
+#line 263
     AtomicAdd_0 _S9 = { make_tensor_view(std::get<int(0)>(std::get<int(1)>(opacity_0)), "opacity_diff_diff", torch::kFloat32, false) };
 
-#line 261
+#line 263
     TensorView _S10 = make_tensor_view(std::get<int(0)>(rgb_0), "rgb_primal", torch::kFloat32, false);
 
-#line 261
+#line 263
     AtomicAdd_0 _S11 = { make_tensor_view(std::get<int(0)>(std::get<int(1)>(rgb_0)), "rgb_diff_diff", torch::kFloat32, false) };
 
-#line 261
-    TensorView _S12 = make_tensor_view(std::get<int(0)>(output_img_0), "output_img_primal", torch::kFloat32, false);
+#line 263
+    TensorView _S12 = make_tensor_view(std::get<int(0)>(beta_0), "beta_primal", torch::kFloat32, false);
 
-#line 261
-    AtomicAdd_0 _S13 = { make_tensor_view(std::get<int(0)>(std::get<int(1)>(output_img_0)), "output_img_diff_diff", torch::kFloat32, false) };
+#line 263
+    AtomicAdd_0 _S13 = { make_tensor_view(std::get<int(0)>(std::get<int(1)>(beta_0)), "beta_diff_diff", torch::kFloat32, false) };
 
-#line 261
-    TensorView _S14 = make_tensor_view(contribution_0, "contribution", torch::kFloat32, false);
+#line 263
+    TensorView _S14 = make_tensor_view(std::get<int(0)>(output_img_0), "output_img_primal", torch::kFloat32, false);
 
-#line 261
-    TensorView _S15 = make_tensor_view(d_contribution_0, "d_contribution", torch::kFloat32, false);
+#line 263
+    AtomicAdd_0 _S15 = { make_tensor_view(std::get<int(0)>(std::get<int(1)>(output_img_0)), "output_img_diff_diff", torch::kFloat32, false) };
 
-#line 261
-    TensorView _S16 = make_tensor_view(n_contributors_0, "n_contributors", torch::kInt32, false);
+#line 263
+    TensorView _S16 = make_tensor_view(contribution_0, "contribution", torch::kFloat32, false);
 
-#line 261
-    TensorView _S17 = make_tensor_view(sorted_gauss_idx_0, "sorted_gauss_idx", torch::kInt32, false);
+#line 263
+    TensorView _S17 = make_tensor_view(d_contribution_0, "d_contribution", torch::kFloat32, false);
 
-#line 261
-    FixedArray<void *, 14>  _S18;
+#line 263
+    TensorView _S18 = make_tensor_view(n_contributors_0, "n_contributors", torch::kInt32, false);
 
-#line 261
-    _S18[int(0)] = &_S17;
+#line 263
+    TensorView _S19 = make_tensor_view(sorted_gauss_idx_0, "sorted_gauss_idx", torch::kInt32, false);
 
-#line 261
-    TensorView _S19 = _S3;
+#line 263
+    FixedArray<void *, 15>  _S20;
 
-#line 261
-    _S18[int(1)] = &_S19;
+#line 263
+    _S20[int(0)] = &_S19;
 
-#line 261
-    DiffTensorView_0 _S20;
+#line 263
+    TensorView _S21 = _S3;
 
-#line 261
-    (&_S20)->primal_0 = _S4;
+#line 263
+    _S20[int(1)] = &_S21;
 
-#line 261
-    (&_S20)->diff_1 = _S5;
-
-#line 261
-    _S18[int(2)] = &_S20;
-
-#line 261
-    DiffTensorView_0 _S21;
-
-#line 261
-    (&_S21)->primal_0 = _S6;
-
-#line 261
-    (&_S21)->diff_1 = _S7;
-
-#line 261
-    _S18[int(3)] = &_S21;
-
-#line 261
+#line 263
     DiffTensorView_0 _S22;
 
-#line 261
-    (&_S22)->primal_0 = _S8;
+#line 263
+    (&_S22)->primal_0 = _S4;
 
-#line 261
-    (&_S22)->diff_1 = _S9;
+#line 263
+    (&_S22)->diff_1 = _S5;
 
-#line 261
-    _S18[int(4)] = &_S22;
+#line 263
+    _S20[int(2)] = &_S22;
 
-#line 261
+#line 263
     DiffTensorView_0 _S23;
 
-#line 261
-    (&_S23)->primal_0 = _S10;
+#line 263
+    (&_S23)->primal_0 = _S6;
 
-#line 261
-    (&_S23)->diff_1 = _S11;
+#line 263
+    (&_S23)->diff_1 = _S7;
 
-#line 261
-    _S18[int(5)] = &_S23;
+#line 263
+    _S20[int(3)] = &_S23;
 
-#line 261
+#line 263
     DiffTensorView_0 _S24;
 
-#line 261
-    (&_S24)->primal_0 = _S12;
+#line 263
+    (&_S24)->primal_0 = _S8;
 
-#line 261
-    (&_S24)->diff_1 = _S13;
+#line 263
+    (&_S24)->diff_1 = _S9;
 
-#line 261
-    _S18[int(6)] = &_S24;
+#line 263
+    _S20[int(4)] = &_S24;
 
-#line 261
-    TensorView _S25 = _S14;
+#line 263
+    DiffTensorView_0 _S25;
 
-#line 261
-    _S18[int(7)] = &_S25;
+#line 263
+    (&_S25)->primal_0 = _S10;
 
-#line 261
-    TensorView _S26 = _S15;
+#line 263
+    (&_S25)->diff_1 = _S11;
 
-#line 261
-    _S18[int(8)] = &_S26;
+#line 263
+    _S20[int(5)] = &_S25;
 
-#line 261
-    TensorView _S27 = _S16;
+#line 263
+    DiffTensorView_0 _S26;
 
-#line 261
-    _S18[int(9)] = &_S27;
+#line 263
+    (&_S26)->primal_0 = _S12;
 
-#line 261
-    int32_t _S28 = grid_height_0;
+#line 263
+    (&_S26)->diff_1 = _S13;
 
-#line 261
-    _S18[int(10)] = &_S28;
+#line 263
+    _S20[int(6)] = &_S26;
 
-#line 261
-    int32_t _S29 = grid_width_0;
+#line 263
+    DiffTensorView_0 _S27;
 
-#line 261
-    _S18[int(11)] = &_S29;
+#line 263
+    (&_S27)->primal_0 = _S14;
 
-#line 261
-    int32_t _S30 = tile_height_0;
+#line 263
+    (&_S27)->diff_1 = _S15;
 
-#line 261
-    _S18[int(12)] = &_S30;
+#line 263
+    _S20[int(7)] = &_S27;
 
-#line 261
-    int32_t _S31 = tile_width_0;
+#line 263
+    TensorView _S28 = _S16;
 
-#line 261
-    _S18[int(13)] = &_S31;
+#line 263
+    _S20[int(8)] = &_S28;
 
-#line 261
-    AT_CUDA_CHECK(cudaLaunchKernel((const void*)(__kernel__splat_tiled), slang_bit_cast<dim3>(_S2), slang_bit_cast<dim3>(_S1), &_S18[int(0)], 0, ((cudaStream_t)at::cuda::getCurrentCUDAStream())));
+#line 263
+    TensorView _S29 = _S17;
 
-#line 261
+#line 263
+    _S20[int(9)] = &_S29;
+
+#line 263
+    TensorView _S30 = _S18;
+
+#line 263
+    _S20[int(10)] = &_S30;
+
+#line 263
+    int32_t _S31 = grid_height_0;
+
+#line 263
+    _S20[int(11)] = &_S31;
+
+#line 263
+    int32_t _S32 = grid_width_0;
+
+#line 263
+    _S20[int(12)] = &_S32;
+
+#line 263
+    int32_t _S33 = tile_height_0;
+
+#line 263
+    _S20[int(13)] = &_S33;
+
+#line 263
+    int32_t _S34 = tile_width_0;
+
+#line 263
+    _S20[int(14)] = &_S34;
+
+#line 263
+    AT_CUDA_CHECK(cudaLaunchKernel((const void*)(__kernel__splat_tiled), slang_bit_cast<dim3>(_S2), slang_bit_cast<dim3>(_S1), &_S20[int(0)], 0, ((cudaStream_t)at::cuda::getCurrentCUDAStream())));
+
+#line 263
     return;
 }
 
 
-#line 261
+#line 263
 SLANG_PRELUDE_EXPORT
-static std::tuple<std::tuple<const char*, const char*, const char*, const char*, const char*, const char*, const char*, const char*, const char*, const char*, const char*, const char*, const char*, const char*, const char*, const char*>, std::tuple<const char*, const char*, const char*, const char*, const char*, const char*, const char*, const char*, const char*, const char*, const char*, const char*, const char*, const char*>, const char*, const char*> __funcinfo__splat_tiled()
+static std::tuple<std::tuple<const char*, const char*, const char*, const char*, const char*, const char*, const char*, const char*, const char*, const char*, const char*, const char*, const char*, const char*, const char*, const char*, const char*>, std::tuple<const char*, const char*, const char*, const char*, const char*, const char*, const char*, const char*, const char*, const char*, const char*, const char*, const char*, const char*, const char*>, const char*, const char*> __funcinfo__splat_tiled()
 {
 
-#line 261
-    return std::make_tuple(std::make_tuple(Slang::toTerminatedSlice("__blockSize").getBuffer(), Slang::toTerminatedSlice("__gridSize").getBuffer(), Slang::toTerminatedSlice("sorted_gauss_idx").getBuffer(), Slang::toTerminatedSlice("tile_ranges").getBuffer(), Slang::toTerminatedSlice("xyz_vs").getBuffer(), Slang::toTerminatedSlice("inv_cov_vs").getBuffer(), Slang::toTerminatedSlice("opacity").getBuffer(), Slang::toTerminatedSlice("rgb").getBuffer(), Slang::toTerminatedSlice("output_img").getBuffer(), Slang::toTerminatedSlice("contribution").getBuffer(), Slang::toTerminatedSlice("d_contribution").getBuffer(), Slang::toTerminatedSlice("n_contributors").getBuffer(), Slang::toTerminatedSlice("grid_height").getBuffer(), Slang::toTerminatedSlice("grid_width").getBuffer(), Slang::toTerminatedSlice("tile_height").getBuffer(), Slang::toTerminatedSlice("tile_width").getBuffer()), std::make_tuple(Slang::toTerminatedSlice("").getBuffer(), Slang::toTerminatedSlice("").getBuffer(), Slang::toTerminatedSlice("DiffTensorView").getBuffer(), Slang::toTerminatedSlice("DiffTensorView").getBuffer(), Slang::toTerminatedSlice("DiffTensorView").getBuffer(), Slang::toTerminatedSlice("DiffTensorView").getBuffer(), Slang::toTerminatedSlice("DiffTensorView").getBuffer(), Slang::toTerminatedSlice("").getBuffer(), Slang::toTerminatedSlice("").getBuffer(), Slang::toTerminatedSlice("").getBuffer(), Slang::toTerminatedSlice("").getBuffer(), Slang::toTerminatedSlice("").getBuffer(), Slang::toTerminatedSlice("").getBuffer(), Slang::toTerminatedSlice("").getBuffer()), Slang::toTerminatedSlice("splat_tiled_fwd_diff").getBuffer(), Slang::toTerminatedSlice("splat_tiled_bwd_diff").getBuffer());
+#line 263
+    return std::make_tuple(std::make_tuple(Slang::toTerminatedSlice("__blockSize").getBuffer(), Slang::toTerminatedSlice("__gridSize").getBuffer(), Slang::toTerminatedSlice("sorted_gauss_idx").getBuffer(), Slang::toTerminatedSlice("tile_ranges").getBuffer(), Slang::toTerminatedSlice("xyz_vs").getBuffer(), Slang::toTerminatedSlice("inv_cov_vs").getBuffer(), Slang::toTerminatedSlice("opacity").getBuffer(), Slang::toTerminatedSlice("rgb").getBuffer(), Slang::toTerminatedSlice("beta").getBuffer(), Slang::toTerminatedSlice("output_img").getBuffer(), Slang::toTerminatedSlice("contribution").getBuffer(), Slang::toTerminatedSlice("d_contribution").getBuffer(), Slang::toTerminatedSlice("n_contributors").getBuffer(), Slang::toTerminatedSlice("grid_height").getBuffer(), Slang::toTerminatedSlice("grid_width").getBuffer(), Slang::toTerminatedSlice("tile_height").getBuffer(), Slang::toTerminatedSlice("tile_width").getBuffer()), std::make_tuple(Slang::toTerminatedSlice("").getBuffer(), Slang::toTerminatedSlice("").getBuffer(), Slang::toTerminatedSlice("DiffTensorView").getBuffer(), Slang::toTerminatedSlice("DiffTensorView").getBuffer(), Slang::toTerminatedSlice("DiffTensorView").getBuffer(), Slang::toTerminatedSlice("DiffTensorView").getBuffer(), Slang::toTerminatedSlice("DiffTensorView").getBuffer(), Slang::toTerminatedSlice("DiffTensorView").getBuffer(), Slang::toTerminatedSlice("").getBuffer(), Slang::toTerminatedSlice("").getBuffer(), Slang::toTerminatedSlice("").getBuffer(), Slang::toTerminatedSlice("").getBuffer(), Slang::toTerminatedSlice("").getBuffer(), Slang::toTerminatedSlice("").getBuffer(), Slang::toTerminatedSlice("").getBuffer()), Slang::toTerminatedSlice("splat_tiled_fwd_diff").getBuffer(), Slang::toTerminatedSlice("splat_tiled_bwd_diff").getBuffer());
 }
 
 
-#line 261
+#line 263
 SLANG_PRELUDE_EXPORT
-void splat_tiled_fwd_diff(std::tuple<uint32_t, uint32_t, uint32_t> _blockSize_1, std::tuple<uint32_t, uint32_t, uint32_t> _gridSize_1, torch::Tensor sorted_gauss_idx_1, torch::Tensor tile_ranges_1, std::tuple<torch::Tensor, std::tuple<torch::Tensor>> xyz_vs_1, std::tuple<torch::Tensor, std::tuple<torch::Tensor>> inv_cov_vs_1, std::tuple<torch::Tensor, std::tuple<torch::Tensor>> opacity_1, std::tuple<torch::Tensor, std::tuple<torch::Tensor>> rgb_1, std::tuple<torch::Tensor, std::tuple<torch::Tensor>> output_img_1, torch::Tensor contribution_1, torch::Tensor d_contribution_1, torch::Tensor n_contributors_1, int32_t grid_height_1, int32_t grid_width_1, int32_t tile_height_1, int32_t tile_width_1)
+void splat_tiled_fwd_diff(std::tuple<uint32_t, uint32_t, uint32_t> _blockSize_1, std::tuple<uint32_t, uint32_t, uint32_t> _gridSize_1, torch::Tensor sorted_gauss_idx_1, torch::Tensor tile_ranges_1, std::tuple<torch::Tensor, std::tuple<torch::Tensor>> xyz_vs_1, std::tuple<torch::Tensor, std::tuple<torch::Tensor>> inv_cov_vs_1, std::tuple<torch::Tensor, std::tuple<torch::Tensor>> opacity_1, std::tuple<torch::Tensor, std::tuple<torch::Tensor>> rgb_1, std::tuple<torch::Tensor, std::tuple<torch::Tensor>> beta_1, std::tuple<torch::Tensor, std::tuple<torch::Tensor>> output_img_1, torch::Tensor contribution_1, torch::Tensor d_contribution_1, torch::Tensor n_contributors_1, int32_t grid_height_1, int32_t grid_width_1, int32_t tile_height_1, int32_t tile_width_1)
 {
 
-#line 261
-    Vector<uint32_t, 3>  _S32 = Vector<uint32_t, 3> (std::get<int(0)>(_blockSize_1), std::get<int(1)>(_blockSize_1), std::get<int(2)>(_blockSize_1));
+#line 263
+    Vector<uint32_t, 3>  _S35 = Vector<uint32_t, 3> (std::get<int(0)>(_blockSize_1), std::get<int(1)>(_blockSize_1), std::get<int(2)>(_blockSize_1));
 
-#line 261
-    Vector<uint32_t, 3>  _S33 = Vector<uint32_t, 3> (std::get<int(0)>(_gridSize_1), std::get<int(1)>(_gridSize_1), std::get<int(2)>(_gridSize_1));
+#line 263
+    Vector<uint32_t, 3>  _S36 = Vector<uint32_t, 3> (std::get<int(0)>(_gridSize_1), std::get<int(1)>(_gridSize_1), std::get<int(2)>(_gridSize_1));
 
-#line 261
-    TensorView _S34 = make_tensor_view(tile_ranges_1, "tile_ranges", torch::kInt32, false);
+#line 263
+    TensorView _S37 = make_tensor_view(tile_ranges_1, "tile_ranges", torch::kInt32, false);
 
-#line 261
-    TensorView _S35 = make_tensor_view(std::get<int(0)>(xyz_vs_1), "xyz_vs_primal", torch::kFloat32, false);
+#line 263
+    TensorView _S38 = make_tensor_view(std::get<int(0)>(xyz_vs_1), "xyz_vs_primal", torch::kFloat32, false);
 
-#line 261
-    AtomicAdd_0 _S36 = { make_tensor_view(std::get<int(0)>(std::get<int(1)>(xyz_vs_1)), "xyz_vs_diff_diff", torch::kFloat32, false) };
+#line 263
+    AtomicAdd_0 _S39 = { make_tensor_view(std::get<int(0)>(std::get<int(1)>(xyz_vs_1)), "xyz_vs_diff_diff", torch::kFloat32, false) };
 
-#line 261
-    TensorView _S37 = make_tensor_view(std::get<int(0)>(inv_cov_vs_1), "inv_cov_vs_primal", torch::kFloat32, false);
+#line 263
+    TensorView _S40 = make_tensor_view(std::get<int(0)>(inv_cov_vs_1), "inv_cov_vs_primal", torch::kFloat32, false);
 
-#line 261
-    AtomicAdd_0 _S38 = { make_tensor_view(std::get<int(0)>(std::get<int(1)>(inv_cov_vs_1)), "inv_cov_vs_diff_diff", torch::kFloat32, false) };
+#line 263
+    AtomicAdd_0 _S41 = { make_tensor_view(std::get<int(0)>(std::get<int(1)>(inv_cov_vs_1)), "inv_cov_vs_diff_diff", torch::kFloat32, false) };
 
-#line 261
-    TensorView _S39 = make_tensor_view(std::get<int(0)>(opacity_1), "opacity_primal", torch::kFloat32, false);
+#line 263
+    TensorView _S42 = make_tensor_view(std::get<int(0)>(opacity_1), "opacity_primal", torch::kFloat32, false);
 
-#line 261
-    AtomicAdd_0 _S40 = { make_tensor_view(std::get<int(0)>(std::get<int(1)>(opacity_1)), "opacity_diff_diff", torch::kFloat32, false) };
+#line 263
+    AtomicAdd_0 _S43 = { make_tensor_view(std::get<int(0)>(std::get<int(1)>(opacity_1)), "opacity_diff_diff", torch::kFloat32, false) };
 
-#line 261
-    TensorView _S41 = make_tensor_view(std::get<int(0)>(rgb_1), "rgb_primal", torch::kFloat32, false);
+#line 263
+    TensorView _S44 = make_tensor_view(std::get<int(0)>(rgb_1), "rgb_primal", torch::kFloat32, false);
 
-#line 261
-    AtomicAdd_0 _S42 = { make_tensor_view(std::get<int(0)>(std::get<int(1)>(rgb_1)), "rgb_diff_diff", torch::kFloat32, false) };
+#line 263
+    AtomicAdd_0 _S45 = { make_tensor_view(std::get<int(0)>(std::get<int(1)>(rgb_1)), "rgb_diff_diff", torch::kFloat32, false) };
 
-#line 261
-    TensorView _S43 = make_tensor_view(std::get<int(0)>(output_img_1), "output_img_primal", torch::kFloat32, false);
+#line 263
+    TensorView _S46 = make_tensor_view(std::get<int(0)>(beta_1), "beta_primal", torch::kFloat32, false);
 
-#line 261
-    AtomicAdd_0 _S44 = { make_tensor_view(std::get<int(0)>(std::get<int(1)>(output_img_1)), "output_img_diff_diff", torch::kFloat32, false) };
+#line 263
+    AtomicAdd_0 _S47 = { make_tensor_view(std::get<int(0)>(std::get<int(1)>(beta_1)), "beta_diff_diff", torch::kFloat32, false) };
 
-#line 261
-    TensorView _S45 = make_tensor_view(contribution_1, "contribution", torch::kFloat32, false);
+#line 263
+    TensorView _S48 = make_tensor_view(std::get<int(0)>(output_img_1), "output_img_primal", torch::kFloat32, false);
 
-#line 261
-    TensorView _S46 = make_tensor_view(d_contribution_1, "d_contribution", torch::kFloat32, false);
+#line 263
+    AtomicAdd_0 _S49 = { make_tensor_view(std::get<int(0)>(std::get<int(1)>(output_img_1)), "output_img_diff_diff", torch::kFloat32, false) };
 
-#line 261
-    TensorView _S47 = make_tensor_view(n_contributors_1, "n_contributors", torch::kInt32, false);
+#line 263
+    TensorView _S50 = make_tensor_view(contribution_1, "contribution", torch::kFloat32, false);
 
-#line 261
-    TensorView _S48 = make_tensor_view(sorted_gauss_idx_1, "sorted_gauss_idx", torch::kInt32, false);
+#line 263
+    TensorView _S51 = make_tensor_view(d_contribution_1, "d_contribution", torch::kFloat32, false);
 
-#line 261
-    FixedArray<void *, 14>  _S49;
+#line 263
+    TensorView _S52 = make_tensor_view(n_contributors_1, "n_contributors", torch::kInt32, false);
 
-#line 261
-    _S49[int(0)] = &_S48;
+#line 263
+    TensorView _S53 = make_tensor_view(sorted_gauss_idx_1, "sorted_gauss_idx", torch::kInt32, false);
 
-#line 261
-    TensorView _S50 = _S34;
+#line 263
+    FixedArray<void *, 15>  _S54;
 
-#line 261
-    _S49[int(1)] = &_S50;
+#line 263
+    _S54[int(0)] = &_S53;
 
-#line 261
-    DiffTensorView_0 _S51;
+#line 263
+    TensorView _S55 = _S37;
 
-#line 261
-    (&_S51)->primal_0 = _S35;
+#line 263
+    _S54[int(1)] = &_S55;
 
-#line 261
-    (&_S51)->diff_1 = _S36;
+#line 263
+    DiffTensorView_0 _S56;
 
-#line 261
-    _S49[int(2)] = &_S51;
+#line 263
+    (&_S56)->primal_0 = _S38;
 
-#line 261
-    DiffTensorView_0 _S52;
+#line 263
+    (&_S56)->diff_1 = _S39;
 
-#line 261
-    (&_S52)->primal_0 = _S37;
+#line 263
+    _S54[int(2)] = &_S56;
 
-#line 261
-    (&_S52)->diff_1 = _S38;
+#line 263
+    DiffTensorView_0 _S57;
 
-#line 261
-    _S49[int(3)] = &_S52;
+#line 263
+    (&_S57)->primal_0 = _S40;
 
-#line 261
-    DiffTensorView_0 _S53;
+#line 263
+    (&_S57)->diff_1 = _S41;
 
-#line 261
-    (&_S53)->primal_0 = _S39;
+#line 263
+    _S54[int(3)] = &_S57;
 
-#line 261
-    (&_S53)->diff_1 = _S40;
+#line 263
+    DiffTensorView_0 _S58;
 
-#line 261
-    _S49[int(4)] = &_S53;
+#line 263
+    (&_S58)->primal_0 = _S42;
 
-#line 261
-    DiffTensorView_0 _S54;
+#line 263
+    (&_S58)->diff_1 = _S43;
 
-#line 261
-    (&_S54)->primal_0 = _S41;
+#line 263
+    _S54[int(4)] = &_S58;
 
-#line 261
-    (&_S54)->diff_1 = _S42;
+#line 263
+    DiffTensorView_0 _S59;
 
-#line 261
-    _S49[int(5)] = &_S54;
+#line 263
+    (&_S59)->primal_0 = _S44;
 
-#line 261
-    DiffTensorView_0 _S55;
+#line 263
+    (&_S59)->diff_1 = _S45;
 
-#line 261
-    (&_S55)->primal_0 = _S43;
+#line 263
+    _S54[int(5)] = &_S59;
 
-#line 261
-    (&_S55)->diff_1 = _S44;
+#line 263
+    DiffTensorView_0 _S60;
 
-#line 261
-    _S49[int(6)] = &_S55;
+#line 263
+    (&_S60)->primal_0 = _S46;
 
-#line 261
-    TensorView _S56 = _S45;
+#line 263
+    (&_S60)->diff_1 = _S47;
 
-#line 261
-    _S49[int(7)] = &_S56;
+#line 263
+    _S54[int(6)] = &_S60;
 
-#line 261
-    TensorView _S57 = _S46;
+#line 263
+    DiffTensorView_0 _S61;
 
-#line 261
-    _S49[int(8)] = &_S57;
+#line 263
+    (&_S61)->primal_0 = _S48;
 
-#line 261
-    TensorView _S58 = _S47;
+#line 263
+    (&_S61)->diff_1 = _S49;
 
-#line 261
-    _S49[int(9)] = &_S58;
+#line 263
+    _S54[int(7)] = &_S61;
 
-#line 261
-    int32_t _S59 = grid_height_1;
+#line 263
+    TensorView _S62 = _S50;
 
-#line 261
-    _S49[int(10)] = &_S59;
+#line 263
+    _S54[int(8)] = &_S62;
 
-#line 261
-    int32_t _S60 = grid_width_1;
+#line 263
+    TensorView _S63 = _S51;
 
-#line 261
-    _S49[int(11)] = &_S60;
+#line 263
+    _S54[int(9)] = &_S63;
 
-#line 261
-    int32_t _S61 = tile_height_1;
+#line 263
+    TensorView _S64 = _S52;
 
-#line 261
-    _S49[int(12)] = &_S61;
+#line 263
+    _S54[int(10)] = &_S64;
 
-#line 261
-    int32_t _S62 = tile_width_1;
+#line 263
+    int32_t _S65 = grid_height_1;
 
-#line 261
-    _S49[int(13)] = &_S62;
+#line 263
+    _S54[int(11)] = &_S65;
 
-#line 261
-    AT_CUDA_CHECK(cudaLaunchKernel((const void*)(__kernel__splat_tiled_fwd_diff), slang_bit_cast<dim3>(_S33), slang_bit_cast<dim3>(_S32), &_S49[int(0)], 0, ((cudaStream_t)at::cuda::getCurrentCUDAStream())));
+#line 263
+    int32_t _S66 = grid_width_1;
 
-#line 261
+#line 263
+    _S54[int(12)] = &_S66;
+
+#line 263
+    int32_t _S67 = tile_height_1;
+
+#line 263
+    _S54[int(13)] = &_S67;
+
+#line 263
+    int32_t _S68 = tile_width_1;
+
+#line 263
+    _S54[int(14)] = &_S68;
+
+#line 263
+    AT_CUDA_CHECK(cudaLaunchKernel((const void*)(__kernel__splat_tiled_fwd_diff), slang_bit_cast<dim3>(_S36), slang_bit_cast<dim3>(_S35), &_S54[int(0)], 0, ((cudaStream_t)at::cuda::getCurrentCUDAStream())));
+
+#line 263
     return;
 }
 
 
-#line 261
+#line 263
 SLANG_PRELUDE_EXPORT
-void splat_tiled_bwd_diff(std::tuple<uint32_t, uint32_t, uint32_t> _blockSize_2, std::tuple<uint32_t, uint32_t, uint32_t> _gridSize_2, torch::Tensor sorted_gauss_idx_2, torch::Tensor tile_ranges_2, std::tuple<torch::Tensor, std::tuple<torch::Tensor>> xyz_vs_2, std::tuple<torch::Tensor, std::tuple<torch::Tensor>> inv_cov_vs_2, std::tuple<torch::Tensor, std::tuple<torch::Tensor>> opacity_2, std::tuple<torch::Tensor, std::tuple<torch::Tensor>> rgb_2, std::tuple<torch::Tensor, std::tuple<torch::Tensor>> output_img_2, torch::Tensor contribution_2, torch::Tensor d_contribution_2, torch::Tensor n_contributors_2, int32_t grid_height_2, int32_t grid_width_2, int32_t tile_height_2, int32_t tile_width_2)
+void splat_tiled_bwd_diff(std::tuple<uint32_t, uint32_t, uint32_t> _blockSize_2, std::tuple<uint32_t, uint32_t, uint32_t> _gridSize_2, torch::Tensor sorted_gauss_idx_2, torch::Tensor tile_ranges_2, std::tuple<torch::Tensor, std::tuple<torch::Tensor>> xyz_vs_2, std::tuple<torch::Tensor, std::tuple<torch::Tensor>> inv_cov_vs_2, std::tuple<torch::Tensor, std::tuple<torch::Tensor>> opacity_2, std::tuple<torch::Tensor, std::tuple<torch::Tensor>> rgb_2, std::tuple<torch::Tensor, std::tuple<torch::Tensor>> beta_2, std::tuple<torch::Tensor, std::tuple<torch::Tensor>> output_img_2, torch::Tensor contribution_2, torch::Tensor d_contribution_2, torch::Tensor n_contributors_2, int32_t grid_height_2, int32_t grid_width_2, int32_t tile_height_2, int32_t tile_width_2)
 {
 
-#line 261
-    Vector<uint32_t, 3>  _S63 = Vector<uint32_t, 3> (std::get<int(0)>(_blockSize_2), std::get<int(1)>(_blockSize_2), std::get<int(2)>(_blockSize_2));
+#line 263
+    Vector<uint32_t, 3>  _S69 = Vector<uint32_t, 3> (std::get<int(0)>(_blockSize_2), std::get<int(1)>(_blockSize_2), std::get<int(2)>(_blockSize_2));
 
-#line 261
-    Vector<uint32_t, 3>  _S64 = Vector<uint32_t, 3> (std::get<int(0)>(_gridSize_2), std::get<int(1)>(_gridSize_2), std::get<int(2)>(_gridSize_2));
+#line 263
+    Vector<uint32_t, 3>  _S70 = Vector<uint32_t, 3> (std::get<int(0)>(_gridSize_2), std::get<int(1)>(_gridSize_2), std::get<int(2)>(_gridSize_2));
 
-#line 261
-    TensorView _S65 = make_tensor_view(tile_ranges_2, "tile_ranges", torch::kInt32, false);
+#line 263
+    TensorView _S71 = make_tensor_view(tile_ranges_2, "tile_ranges", torch::kInt32, false);
 
-#line 261
-    TensorView _S66 = make_tensor_view(std::get<int(0)>(xyz_vs_2), "xyz_vs_primal", torch::kFloat32, false);
+#line 263
+    TensorView _S72 = make_tensor_view(std::get<int(0)>(xyz_vs_2), "xyz_vs_primal", torch::kFloat32, false);
 
-#line 261
-    AtomicAdd_0 _S67 = { make_tensor_view(std::get<int(0)>(std::get<int(1)>(xyz_vs_2)), "xyz_vs_diff_diff", torch::kFloat32, false) };
+#line 263
+    AtomicAdd_0 _S73 = { make_tensor_view(std::get<int(0)>(std::get<int(1)>(xyz_vs_2)), "xyz_vs_diff_diff", torch::kFloat32, false) };
 
-#line 261
-    TensorView _S68 = make_tensor_view(std::get<int(0)>(inv_cov_vs_2), "inv_cov_vs_primal", torch::kFloat32, false);
+#line 263
+    TensorView _S74 = make_tensor_view(std::get<int(0)>(inv_cov_vs_2), "inv_cov_vs_primal", torch::kFloat32, false);
 
-#line 261
-    AtomicAdd_0 _S69 = { make_tensor_view(std::get<int(0)>(std::get<int(1)>(inv_cov_vs_2)), "inv_cov_vs_diff_diff", torch::kFloat32, false) };
+#line 263
+    AtomicAdd_0 _S75 = { make_tensor_view(std::get<int(0)>(std::get<int(1)>(inv_cov_vs_2)), "inv_cov_vs_diff_diff", torch::kFloat32, false) };
 
-#line 261
-    TensorView _S70 = make_tensor_view(std::get<int(0)>(opacity_2), "opacity_primal", torch::kFloat32, false);
+#line 263
+    TensorView _S76 = make_tensor_view(std::get<int(0)>(opacity_2), "opacity_primal", torch::kFloat32, false);
 
-#line 261
-    AtomicAdd_0 _S71 = { make_tensor_view(std::get<int(0)>(std::get<int(1)>(opacity_2)), "opacity_diff_diff", torch::kFloat32, false) };
+#line 263
+    AtomicAdd_0 _S77 = { make_tensor_view(std::get<int(0)>(std::get<int(1)>(opacity_2)), "opacity_diff_diff", torch::kFloat32, false) };
 
-#line 261
-    TensorView _S72 = make_tensor_view(std::get<int(0)>(rgb_2), "rgb_primal", torch::kFloat32, false);
+#line 263
+    TensorView _S78 = make_tensor_view(std::get<int(0)>(rgb_2), "rgb_primal", torch::kFloat32, false);
 
-#line 261
-    AtomicAdd_0 _S73 = { make_tensor_view(std::get<int(0)>(std::get<int(1)>(rgb_2)), "rgb_diff_diff", torch::kFloat32, false) };
+#line 263
+    AtomicAdd_0 _S79 = { make_tensor_view(std::get<int(0)>(std::get<int(1)>(rgb_2)), "rgb_diff_diff", torch::kFloat32, false) };
 
-#line 261
-    TensorView _S74 = make_tensor_view(std::get<int(0)>(output_img_2), "output_img_primal", torch::kFloat32, false);
+#line 263
+    TensorView _S80 = make_tensor_view(std::get<int(0)>(beta_2), "beta_primal", torch::kFloat32, false);
 
-#line 261
-    AtomicAdd_0 _S75 = { make_tensor_view(std::get<int(0)>(std::get<int(1)>(output_img_2)), "output_img_diff_diff", torch::kFloat32, false) };
+#line 263
+    AtomicAdd_0 _S81 = { make_tensor_view(std::get<int(0)>(std::get<int(1)>(beta_2)), "beta_diff_diff", torch::kFloat32, false) };
 
-#line 261
-    TensorView _S76 = make_tensor_view(contribution_2, "contribution", torch::kFloat32, false);
+#line 263
+    TensorView _S82 = make_tensor_view(std::get<int(0)>(output_img_2), "output_img_primal", torch::kFloat32, false);
 
-#line 261
-    TensorView _S77 = make_tensor_view(d_contribution_2, "d_contribution", torch::kFloat32, false);
+#line 263
+    AtomicAdd_0 _S83 = { make_tensor_view(std::get<int(0)>(std::get<int(1)>(output_img_2)), "output_img_diff_diff", torch::kFloat32, false) };
 
-#line 261
-    TensorView _S78 = make_tensor_view(n_contributors_2, "n_contributors", torch::kInt32, false);
+#line 263
+    TensorView _S84 = make_tensor_view(contribution_2, "contribution", torch::kFloat32, false);
 
-#line 261
-    TensorView _S79 = make_tensor_view(sorted_gauss_idx_2, "sorted_gauss_idx", torch::kInt32, false);
+#line 263
+    TensorView _S85 = make_tensor_view(d_contribution_2, "d_contribution", torch::kFloat32, false);
 
-#line 261
-    FixedArray<void *, 14>  _S80;
+#line 263
+    TensorView _S86 = make_tensor_view(n_contributors_2, "n_contributors", torch::kInt32, false);
 
-#line 261
-    _S80[int(0)] = &_S79;
+#line 263
+    TensorView _S87 = make_tensor_view(sorted_gauss_idx_2, "sorted_gauss_idx", torch::kInt32, false);
 
-#line 261
-    TensorView _S81 = _S65;
+#line 263
+    FixedArray<void *, 15>  _S88;
 
-#line 261
-    _S80[int(1)] = &_S81;
+#line 263
+    _S88[int(0)] = &_S87;
 
-#line 261
-    DiffTensorView_0 _S82;
+#line 263
+    TensorView _S89 = _S71;
 
-#line 261
-    (&_S82)->primal_0 = _S66;
+#line 263
+    _S88[int(1)] = &_S89;
 
-#line 261
-    (&_S82)->diff_1 = _S67;
+#line 263
+    DiffTensorView_0 _S90;
 
-#line 261
-    _S80[int(2)] = &_S82;
+#line 263
+    (&_S90)->primal_0 = _S72;
 
-#line 261
-    DiffTensorView_0 _S83;
+#line 263
+    (&_S90)->diff_1 = _S73;
 
-#line 261
-    (&_S83)->primal_0 = _S68;
+#line 263
+    _S88[int(2)] = &_S90;
 
-#line 261
-    (&_S83)->diff_1 = _S69;
+#line 263
+    DiffTensorView_0 _S91;
 
-#line 261
-    _S80[int(3)] = &_S83;
+#line 263
+    (&_S91)->primal_0 = _S74;
 
-#line 261
-    DiffTensorView_0 _S84;
+#line 263
+    (&_S91)->diff_1 = _S75;
 
-#line 261
-    (&_S84)->primal_0 = _S70;
+#line 263
+    _S88[int(3)] = &_S91;
 
-#line 261
-    (&_S84)->diff_1 = _S71;
+#line 263
+    DiffTensorView_0 _S92;
 
-#line 261
-    _S80[int(4)] = &_S84;
+#line 263
+    (&_S92)->primal_0 = _S76;
 
-#line 261
-    DiffTensorView_0 _S85;
+#line 263
+    (&_S92)->diff_1 = _S77;
 
-#line 261
-    (&_S85)->primal_0 = _S72;
+#line 263
+    _S88[int(4)] = &_S92;
 
-#line 261
-    (&_S85)->diff_1 = _S73;
+#line 263
+    DiffTensorView_0 _S93;
 
-#line 261
-    _S80[int(5)] = &_S85;
+#line 263
+    (&_S93)->primal_0 = _S78;
 
-#line 261
-    DiffTensorView_0 _S86;
+#line 263
+    (&_S93)->diff_1 = _S79;
 
-#line 261
-    (&_S86)->primal_0 = _S74;
+#line 263
+    _S88[int(5)] = &_S93;
 
-#line 261
-    (&_S86)->diff_1 = _S75;
+#line 263
+    DiffTensorView_0 _S94;
 
-#line 261
-    _S80[int(6)] = &_S86;
+#line 263
+    (&_S94)->primal_0 = _S80;
 
-#line 261
-    TensorView _S87 = _S76;
+#line 263
+    (&_S94)->diff_1 = _S81;
 
-#line 261
-    _S80[int(7)] = &_S87;
+#line 263
+    _S88[int(6)] = &_S94;
 
-#line 261
-    TensorView _S88 = _S77;
+#line 263
+    DiffTensorView_0 _S95;
 
-#line 261
-    _S80[int(8)] = &_S88;
+#line 263
+    (&_S95)->primal_0 = _S82;
 
-#line 261
-    TensorView _S89 = _S78;
+#line 263
+    (&_S95)->diff_1 = _S83;
 
-#line 261
-    _S80[int(9)] = &_S89;
+#line 263
+    _S88[int(7)] = &_S95;
 
-#line 261
-    int32_t _S90 = grid_height_2;
+#line 263
+    TensorView _S96 = _S84;
 
-#line 261
-    _S80[int(10)] = &_S90;
+#line 263
+    _S88[int(8)] = &_S96;
 
-#line 261
-    int32_t _S91 = grid_width_2;
+#line 263
+    TensorView _S97 = _S85;
 
-#line 261
-    _S80[int(11)] = &_S91;
+#line 263
+    _S88[int(9)] = &_S97;
 
-#line 261
-    int32_t _S92 = tile_height_2;
+#line 263
+    TensorView _S98 = _S86;
 
-#line 261
-    _S80[int(12)] = &_S92;
+#line 263
+    _S88[int(10)] = &_S98;
 
-#line 261
-    int32_t _S93 = tile_width_2;
+#line 263
+    int32_t _S99 = grid_height_2;
 
-#line 261
-    _S80[int(13)] = &_S93;
+#line 263
+    _S88[int(11)] = &_S99;
 
-#line 261
-    AT_CUDA_CHECK(cudaLaunchKernel((const void*)(__kernel__splat_tiled_bwd_diff), slang_bit_cast<dim3>(_S64), slang_bit_cast<dim3>(_S63), &_S80[int(0)], 0, ((cudaStream_t)at::cuda::getCurrentCUDAStream())));
+#line 263
+    int32_t _S100 = grid_width_2;
 
-#line 261
+#line 263
+    _S88[int(12)] = &_S100;
+
+#line 263
+    int32_t _S101 = tile_height_2;
+
+#line 263
+    _S88[int(13)] = &_S101;
+
+#line 263
+    int32_t _S102 = tile_width_2;
+
+#line 263
+    _S88[int(14)] = &_S102;
+
+#line 263
+    AT_CUDA_CHECK(cudaLaunchKernel((const void*)(__kernel__splat_tiled_bwd_diff), slang_bit_cast<dim3>(_S70), slang_bit_cast<dim3>(_S69), &_S88[int(0)], 0, ((cudaStream_t)at::cuda::getCurrentCUDAStream())));
+
+#line 263
     return;
 }
 
 
-#line 261
+#line 263
 SLANG_PRELUDE_EXPORT
 static std::tuple<std::tuple<const char*, const char*>, std::tuple<const char*, const char*>> __typeinfo__DiffTensorView()
 {
 
-#line 261
+#line 263
     return std::make_tuple(std::make_tuple(Slang::toTerminatedSlice("primal").getBuffer(), Slang::toTerminatedSlice("diff").getBuffer()), std::make_tuple(Slang::toTerminatedSlice("").getBuffer(), Slang::toTerminatedSlice("AtomicAdd").getBuffer()));
 }
 
 
-#line 261
+#line 263
 SLANG_PRELUDE_EXPORT
 static std::tuple<std::tuple<const char*>, std::tuple<const char*>> __typeinfo__AtomicAdd()
 {
 
-#line 261
+#line 263
     return std::make_tuple(std::make_tuple(Slang::toTerminatedSlice("diff").getBuffer()), std::make_tuple(Slang::toTerminatedSlice("").getBuffer()));
 }
 

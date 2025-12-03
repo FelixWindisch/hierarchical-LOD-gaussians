@@ -366,6 +366,11 @@ def render(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoint_
 
 
 
+
+
+
+
+
                         gaussian_indices = torch.cat((gaussian_indices[:gaussians.skybox_points], load_from_disk_indices, gaussian_indices[reuse_gaussians_mask]))
                         print(f"Load Percent: {len(load_from_disk_indices) * 100/ number_of_gaussians_to_render}")
                         load_from_disk_indices = load_from_disk_indices.to(opt.storage_device)
@@ -468,7 +473,7 @@ def render(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoint_
                         print("STATS")
                         #print(replay_stats["VRAM"][-1])
                         #print(torch.tensor(replay_stats["frame_time"][5:]).mean())
-                        #print(torch.tensor(replay_stats["frame_time"]).max())
+                        #print(torch.tensor(replay_stats["frame_time"][5:]).max())
                         #print(torch.tensor(replay_stats["cut_time"]).mean())
                         #print(torch.tensor(replay_stats["cut_time"]).max())
                     ####### RENDER

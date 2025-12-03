@@ -251,22 +251,26 @@ def render(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoint_
                     
                 
                 
-                
-
-                render_pkg = render_vanilla(
-                    viewpoint_cam, 
-                    means3D,
-                    gaussians.opacity_activation(opacity),
-                    gaussians.scaling_activation(scales), 
-                    gaussians.rotation_activation(rotations),
-                    features_dc,
-                    features_rest,
-                    pipe, 
-                    background,
-                    override_color = None, 
-                    sh_degree = gaussians.active_sh_degree,
-                    )
-                torch.cuda.empty_cache()
+                torch.cuda.synchronize() 
+                t = time.time()
+                for i in range(10):
+                    render_pkg = render_vanilla(
+                        viewpoint_cam, 
+                        means3D,
+                        gaussians.opacity_activation(opacity),
+                        gaussians.scaling_activation(scales), 
+                        gaussians.rotation_activation(rotations),
+                        features_dc,
+                        features_rest,
+                        pipe, 
+                        background,
+                        override_color = None, 
+                        sh_degree = gaussians.active_sh_degree,
+                        )
+                torch.cuda.synchronize() 
+                FPS = 10.0 / (time.time() - t) 
+                print(f"TIME: {(time.time() - t)}")
+                torch.cuda.empty_cache() 
                 
                 image = render_pkg["render"]
                 gt_image = viewpoint_cam.original_image.cuda()
@@ -299,15 +303,17 @@ def render(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoint_
                     ssims_aerial += ssim_current
                     lpipss_aerial += lpips_current
                 Gaussians.append(len(means3D))
-                PSNR.append(psnr_current.item())
+                PSNR.append(FPS)
                 print()
                 ####### RENDER
             plt.plot(Gaussians, PSNR, marker='x')
             Gaussians = []
             PSNR = []
-    plt.xlabel("PSNR")
-    plt.ylabel("Number of Gaussians")
+    plt.xlabel("Number of Gaussians")
+    plt.ylabel("FPS")
     plt.grid(True)
+    
+    plt.savefig('EVAL_FPS.png')
     plt.show()
 
     #for i in range(1, len(training_generator)+1):

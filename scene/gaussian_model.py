@@ -55,6 +55,10 @@ opacity1 = 13
 opacity2 = 14
 features_rest1 = 14
 features_rest2 = 14 + SH_properties
+d_mu1 = features_rest2
+d_mu2 = features_rest2 + 1
+d_sigma1 = d_mu2
+d_sigma2 = d_mu2 + 1
 number_properties = features_rest2
 
 
@@ -209,6 +213,9 @@ class GaussianModel:
         upper_tree_indices, cut_indices = self.cut_hierarchy_on_condition(self.nodes, condition)
         
         
+        self.SPT_index_per_Gaussian = torch.zeros(len(self.properties), dtype=torch.int32, device=device) -1
+        
+        
         
         bounding_sphere_radii = [] #torch.zeros_like(upper_tree_indices)
         self.SPT_starts = torch.zeros(1, device='cuda', dtype=torch.int32)
@@ -234,6 +241,9 @@ class GaussianModel:
             SPT[0, 2] = 1000000000000
             stack = torch.zeros(1, dtype=torch.int32, device = device)
             stack[0] = cut_node
+            
+            self.SPT_index_per_Gaussian[cut_node] = index
+            
             max_distances = torch.zeros(1, device=device)
             max_distances[0] = SPT[0,1]
             bounding_sphere_radius = torch.max(self.scaling_activation(self.properties[cut_node, scales1: scales2]), dim=-1)[0].item() * 3.0
@@ -257,7 +267,7 @@ class GaussianModel:
                 stack_SPT[:, 0] = stack
                 min_distances = self.get_min_distance(stack, target_granularity) + center_distances
                 max_distances = torch.cat((max_distances, max_distances))
-                
+                self.SPT_index_per_Gaussian[stack] = index
                 
                 ### Revive
                 if(revive_gaussians):
@@ -673,7 +683,37 @@ class GaussianModel:
             self.nodes[indices] = self.nodes.clone()[self.skybox_points:self.size]
             pass
         print("Morton Sort Complete")
-            
+    
+    def sort_SPT_order(self):
+        #pass
+
+        indices = self.SPT_gaussian_indices
+        indices = indices.to(torch.int).to(self._xyz.device)
+        # Make sure the root node stays in place
+        root_index = torch.where(indices==0)[0][0]
+        indices[root_index] = indices[0]
+        indices[0] = 0
+        
+        indices += self.skybox_points
+        with torch.no_grad():
+            self._opacity[indices] = self._opacity[self.skybox_points:self.size].clone().detach().requires_grad_(True)
+            self._xyz[indices] = self._xyz[self.skybox_points:self.size].clone().detach().requires_grad_(True)
+            self._scaling[indices] = self._scaling[self.skybox_points:self.size].clone().detach().requires_grad_(True)
+            self._rotation[indices] = self._rotation[self.skybox_points:self.size].clone().detach().requires_grad_(True)
+            self._features_dc[indices] = self._features_dc[self.skybox_points:self.size].clone().detach().requires_grad_(True)
+            self._features_rest[indices] = self._features_rest[self.skybox_points:self.size].clone().detach().requires_grad_(True)
+            self.nodes[self.skybox_points:self.size, hierarchy_node_parent] = indices[self.nodes[self.skybox_points:self.size, hierarchy_node_parent] - self.skybox_points]
+            sibling_mask = self.nodes[:, hierarchy_node_next_sibling] > 0
+            #sibling_mask_with_skybox = torch.cat((torch.zeros(self.skybox_points, dtype=torch.bool), sibling_mask))
+            self.nodes[sibling_mask, hierarchy_node_next_sibling] = indices[self.nodes[sibling_mask, hierarchy_node_next_sibling] - self.skybox_points]
+            child_mask = self.nodes[:, hierarchy_node_first_child] > 0
+            #child_mask_with_skybox = torch.cat((torch.zeros(self.skybox_points, dtype=torch.bool), child_mask))
+            self.nodes[child_mask, hierarchy_node_first_child] = indices[self.nodes[child_mask, hierarchy_node_first_child]- self.skybox_points]
+            self.nodes[self.skybox_points, hierarchy_node_parent] = -1
+            self.nodes[self.skybox_points, hierarchy_node_next_sibling] = 0
+            self.nodes[indices] = self.nodes.clone()[self.skybox_points:self.size]
+            pass
+        print("Morton Sort Complete")
         
     def merge_gaussians(self, indices):
         ellipse_surface  = lambda scale: scale[0] * scale[1] + scale[0] * scale[2] + scale[1] * scale[2]
@@ -794,6 +834,8 @@ class GaussianModel:
         self.opacity_activation = torch.sigmoid
         self.inverse_opacity_activation = inverse_sigmoid
 
+        self.beta_activation = torch.exp
+        
         self.rotation_activation = torch.nn.functional.normalize
 
 
@@ -1210,6 +1252,36 @@ class GaussianModel:
                         self.properties[:self.size, rotation1:rotation2],
                         self.nodes[:self.size],
                         self.max_sh_degree)
+
+    def save_smooth_hier():
+        torch.save(self.properties, self.hierarchy_path + f"Gaussians_{filename}.pt")
+        full_occlusion = torch.cat((self.SPT_means3D, self.SPT_scales, self.SPT_rotations, self.SPT_features_dc, self.SPT_opacity, self.SPT_features_rest, self.SPT_beta))
+        torch.save(full_occlusion, self.hierarchy_path + f"Occlusion_{filename}.pt")
+        
+        export_SPT_starts = torch.zeros_like(self.SPT_gaussian_indices)
+        export_SPT_starts[:len(SPT_starts)] = self.SPT_starts
+        export_SPT_starts[len(SPT_starts):] = -1
+        
+        full_SPT = torch.cat((self.SPT_max, self.SPT_min, self.SPT_guassian_indices, export_SPT_starts), dim=1)
+        torch.save(full_SPT, self.hierarchy_path + f"SPT_{filename}.pt")
+
+    def load_smooth_hier(path):
+        self.properties = torch.load(path + f"Gaussians_{filename}.pt")
+        full_occlusion = torch.load(path + f"Occlusion_{filename}.pt")
+        self.SPT_means3D = full_occlusion[:, :3]
+        self.SPT_scales = full_occlusion[:, 3:6]
+        self.SPT_rotations = full_occlusion[:, 6:10]
+        self.SPT_features_dc = full_occlusion[:, 10:13]
+        self.SPT_opacity = full_occlusion[:, 13:14]
+        self.SPT_features_rest = full_occlusion[:, 14:-1]
+        self.SPT_beta = full_occlusion[:, -1:]
+
+        full_SPT = torch.load(path + f"SPT_{filename}.pt")
+        self.SPT_max = full_SPT[:, :3]
+        self.SPT_min = full_SPT[:, 3:6]
+        self.SPT_gaussian_indices = full_SPT[:, 6:-1].long()
+        SPT_starts_raw = full_SPT[:, -1].long()
+        self.SPT_starts = SPT_starts_raw[SPT_starts_raw != -1]
 
     def update_learning_rate(self, iteration):
         ''' Learning rate scheduling per step '''
@@ -1696,10 +1768,9 @@ class GaussianModel:
     def _sample_alives(self, probs, num, alive_indices=None):
         probs = probs / (probs.sum() + torch.finfo(torch.float32).eps)
         sampled_idxs = torch.multinomial(probs, num, replacement=True)
-        if alive_indices is not None:
-            sampled_idxs = alive_indices[sampled_idxs]
+        return_idxs = alive_indices[sampled_idxs]
         ratio = torch.bincount(sampled_idxs).unsqueeze(-1)
-        return sampled_idxs, ratio
+        return return_idxs, ratio, sampled_idxs
     
     def relocate_gs(self, dead_mask, size, storage_device='cpu', densification=False):
         if dead_mask.sum() == 0:
@@ -1898,4 +1969,253 @@ class GaussianModel:
         #    self.densification_postfix(new_xyz, new_features_dc, new_features_rest, new_opacity, new_scaling, new_rotation, reset_params=False)      
             
         return num_gs
+    
+    
+    def add_new_gs_smooth(self, cap_max, size, densification, densify_percent = 1.05, densify_threshold = 0.01):
+        device = self.properties.device
+        target_num = min(cap_max, int(densify_percent * size))
+        num_gs = max(0, target_num - size)
+        if num_gs <= 0:
+            return 0
+        
+        
+        # all Gaussians with an SPT can be densified
+        densify_indices = self.SPT_gaussian_indices.cpu()
+        #if len(densify_indices) > 16_000_000:
+        #    densify_indices = densify_indices[torch.randperm(len(densify_indices))[:16_000_000]]
+        probs = self.opacity_activation(self.properties[densify_indices, opacity1:opacity2]).squeeze(-1)
+        add_idx, ratio, insertion_indices = self._sample_alives(probs=probs, num=num_gs, alive_indices=densify_indices)
+
+        
+        ratio_ = torch.zeros((self.size,1), device=ratio.device, dtype=torch.long)
+        ratio_[add_idx] = ratio[insertion_indices]
+            
+            
+        spawn_SPTs = self.SPT_index_per_Gaussian[add_idx]
+        (   new_xyz, 
+            new_features_dc,
+            new_features_rest,
+            new_opacity,
+            new_scaling,
+            new_rotation 
+        ) = self._update_params(add_idx, ratio=ratio_)
+        
+        print(f"Spawn {len(add_idx)} new Gaussians")
+
+        new_opacity = new_opacity.to(device)
+        new_scaling = new_scaling.to(device)
+        
+        
+        add_idx = add_idx.to(torch.int32)
+        add_idx = add_idx.to(device)
+
+        self.properties[add_idx, opacity1:opacity2] = new_opacity
+        self.properties[add_idx, scales1:scales2] = new_scaling
+        self.densification_postfix_with_storage(new_xyz, new_features_dc, new_features_rest, new_opacity, new_scaling, new_rotation, reset_params=False)
+        self.properties[self.size:self.size+len(new_xyz), d_mu1:d_mu2] = self.properties[add_idx, d_mu1:d_mu2]
+        self.properties[self.size:self.size+len(new_xyz), d_sigma1:d_sigma2] = self.properties[add_idx, d_sigma1:d_sigma2]
+        
+        # Reset the Momentum of Gaussians that were copied
+        self.properties[add_idx, number_properties + 2:] = 0
+        
+        
+        #update the SPTs
+        gaussian_indices_to_insert = torch.arange(size,size+len(add_idx), dtype=torch.int32).cuda()
+        SPT_mins_to_insert = self.SPT_min[insertion_indices]
+        SPT_maxs_to_insert = self.SPT_max[insertion_indices]
+        
+        idx_A = torch.arange(len(self.SPT_gaussian_indices), dtype=torch.float)
+        idx_B = insertion_indices.float() - 0.5
+        all_values = torch.cat([self.SPT_gaussian_indices, gaussian_indices_to_insert.cuda()])
+        all_indices = torch.cat([idx_A, idx_B])
+        sort_order = all_indices.argsort()
+        result = all_values[sort_order]
+        self.SPT_gaussian_indices = result
+        
+        idx_A = torch.arange(len(self.SPT_min), dtype=torch.float)
+        idx_B = insertion_indices.float() - 0.5
+        all_values = torch.cat([self.SPT_min, SPT_mins_to_insert])
+        all_indices = torch.cat([idx_A, idx_B])
+        sort_order = all_indices.argsort()
+        result = all_values[sort_order]
+        self.SPT_min = result
+        
+        idx_A = torch.arange(len(self.SPT_max), dtype=torch.float)
+        idx_B = insertion_indices.float() - 0.5
+        all_values = torch.cat([self.SPT_max, SPT_maxs_to_insert])
+        all_indices = torch.cat([idx_A, idx_B])
+        sort_order = all_indices.argsort()
+        result = all_values[sort_order]
+        self.SPT_max = result
+        
+        C_sorted, _ = torch.sort(insertion_indices)
+        shifts = torch.searchsorted(C_sorted.cuda(), self.SPT_starts, right=False)
+        self.SPT_starts = self.SPT_starts + shifts
+        self.SPT_starts = self.SPT_starts.to(torch.int32)
+        self.size += len(add_idx)
+        
+        
+        
+        #re-sort
+        sorted_indices = vectorized_segment_sort(self.SPT_max, self.SPT_starts)
+        self.SPT_gaussian_indices = self.SPT_gaussian_indices[sorted_indices]
+        self.SPT_min = self.SPT_min[sorted_indices]
+        self.SPT_max = self.SPT_max[sorted_indices]
+        return num_gs
+    
+    
+    
+    def relocate_gs_smooth(self, dead_mask, size, storage_device='cpu', densification=False):
+        if dead_mask.sum() == 0:
+            return
+        dead_indices = dead_mask.nonzero(as_tuple=True)[0]
+        
+        
+        # make sure that Gaussians do not respawn at dead locations
+        densify_indices = self.SPT_gaussian_indices
+        
+        mask = torch.isin(dead_indices.cuda(), densify_indices)
+        dead_indices = dead_indices[mask.cpu()]
+        
+        if(len(dead_indices) == 0):
+            return
+        mask = ~torch.isin(densify_indices, dead_indices.cuda())
+        removal_indices = torch.where(~mask)[0]
+        removal_gaussian_indices = densify_indices[~mask]
+        densify_indices = densify_indices[mask].cpu()
+        
+        
+
+        # Torch.multionmial can only handle 16_000_000 elements. If there are more possible respawn locations, uniformly sample 16M
+        if len(densify_indices) > 16_000_000:
+            densify_indices = densify_indices[torch.randperm(len(densify_indices))[:16_000_000]]
+        probs = (self.opacity_activation(self.properties[densify_indices, opacity1])) 
+
+        if densification == "classic":
+            probs *= (self._densification_criterium[densify_indices] + 1)
+
+        # reinit_idx are the Gaussians where the dead Gaussians are respawned
+        reinit_idx, ratio, insertion_indices = self._sample_alives(alive_indices=densify_indices, probs=probs, num=dead_indices.shape[0])
+        
+        ratio_ = torch.zeros((self.size, 1), device=ratio.device, dtype=torch.long)
+        ratio_[reinit_idx] = ratio[insertion_indices]
+        
+        (
+            self.properties[dead_indices, xyz1:xyz2], 
+            self.properties[dead_indices, features1:features2],
+            self.properties[dead_indices, features_rest1:features_rest2],
+            new_opacity,
+            new_scaling,
+            self.properties[dead_indices, rotation1:rotation2] 
+        ) = self._update_params(reinit_idx, ratio=ratio_)
+        
+        new_opacity = new_opacity.to(storage_device)
+        new_scaling = new_scaling.to(storage_device)
+        self.properties[reinit_idx, opacity1:opacity2] = new_opacity
+        self.properties[reinit_idx, scales1:scales2] = new_scaling
+        
+        
+        # Respawned Gaussians become exact copies
+        self.properties[dead_indices, : number_properties + 2] = self.properties[reinit_idx, : number_properties + 2]
+        
+        # Reset the Momentum of Gaussians that were copied
+        self.properties[reinit_idx, number_properties + 2:] = 0
+        
+        #update the SPTs
+        insertion_indices = insertion_indices.cuda()
+        SPT_mins_to_insert = self.SPT_min[insertion_indices]
+        SPT_maxs_to_insert = self.SPT_max[insertion_indices]
+        
+        self.SPT_gaussian_indices, self.SPT_starts = swap_and_track(self.SPT_gaussian_indices, removal_indices, insertion_indices, self.SPT_starts)
+        
+        
+        self.SPT_max, _ = swap_and_track(self.SPT_max, removal_indices, insertion_indices, torch.empty(0, device='cuda'))
+        self.SPT_min, _ = swap_and_track(self.SPT_min, removal_indices, insertion_indices, torch.empty(0, device='cuda'))
+        
+        #re-sort
+        sorted_indices = vectorized_segment_sort(self.SPT_max, self.SPT_starts)
+        self.SPT_gaussian_indices = self.SPT_gaussian_indices[sorted_indices]
+        self.SPT_min = self.SPT_min[sorted_indices]
+        self.SPT_max = self.SPT_max[sorted_indices]
+        
+        
+def swap_and_track(A, remove_idx, insert_idx, D):
+    """
+    A: Original tensor
+    remove_idx: Indices of elements to move (Source)
+    insert_idx: Indices defining where they go (Target: right of A[insert_idx])
+    D: Indices to track
+    """
+    
+    # --- Step 1: Generate New Tensor A ---
+    
+    # 1. Initialize scores with original indices (0.0, 1.0, 2.0...)
+    #    Survivors will keep these scores.
+    scores = torch.arange(len(A), dtype=torch.float32, device=A.device)
+    
+    # 2. Update scores for the "Movers"
+    #    We want them to appear to the RIGHT of 'insert_idx'.
+    #    So we give them a score slightly higher than the target index.
+    #    (e.g., insert right of 5 -> score 5.5)
+    scores[remove_idx] = insert_idx.float() + 0.5
+    
+    # 3. Sort based on scores to get the new order
+    #    Stable sort ensures that if multiple items go to the same spot, 
+    #    their relative order from 'remove_idx' is preserved.
+    perm = torch.argsort(scores)
+    A_new = A[perm]
+    
+    
+    # --- Step 2: Update Indices D ---
+    
+    # We calculate the net shift for each D based on how many 
+    # insertions and removals happened strictly to its left.
+    
+    # Check insertions to the left (Push D right)
+    # Logic: If we insert right of X (score X.5), and X < D, 
+    # then the new element is to the left of D.
+    inserts_left_mask = insert_idx.unsqueeze(1) < D.unsqueeze(0)
+    shift_right = inserts_left_mask.sum(dim=0)
+    
+    # Check removals to the left (Pull D left)
+    # Logic: If we remove X, and X < D, the gap closes and D moves left.
+    # Note: If X == D, we do NOT shift (D stays to point at the element filling the gap).
+    removes_left_mask = remove_idx.unsqueeze(1) < D.unsqueeze(0)
+    shift_left = removes_left_mask.sum(dim=0)
+    
+    # Apply Net Flux
+    D_new = D + shift_right - shift_left
+
+    return A_new, D_new.to(torch.int32)
+        
+def vectorized_segment_sort(values, boundaries):
+    # 1. Calculate the length of each segment
+    lengths = boundaries[1:] - boundaries[:-1]
+    
+    # 2. Create segment IDs (e.g. [0, 0, 0, 1, 1, 2, 2...])
+    # repeat_interleave repeats the index 'i' for 'lengths[i]' times
+    segment_ids = torch.repeat_interleave(torch.arange(len(lengths), device=values.device), lengths)
+    
+    # 3. Create a unique sort key: Segment ID (Primary) + Value (Secondary)
+    # We normalize values to (0, 1) range to ensure they don't interfere with Segment IDs
+    min_val = values.min()
+    max_val = values.max()
+    
+    # Avoid division by zero if all values are identical
+    val_range = max_val - min_val
+    if val_range == 0:
+        val_range = 1.0
+        
+    # Construct the key using float64 to preserve precision
+    # key = integer_part (segment) + fractional_part (normalized value)
+    normalized_values = 1.0- ( (values - min_val) / (val_range + 1e-6))
+    sort_keys = segment_ids.to(torch.float64) + normalized_values.to(torch.float64)
+    
+    # 4. Get the indices that would sort this combined key
+    sorted_indices = torch.argsort(sort_keys)
+    
+    # 5. Gather the values using these indices
+    return sorted_indices
+            
 #endregion
+

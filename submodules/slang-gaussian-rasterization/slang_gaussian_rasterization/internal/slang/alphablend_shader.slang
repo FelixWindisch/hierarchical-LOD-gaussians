@@ -52,6 +52,7 @@ float4 alpha_blend(TensorView<int32_t> sorted_gauss_idx,
                    DiffTensorView inv_cov_vs,
                    DiffTensorView opacity,
                    DiffTensorView rgb,
+                   DiffTensorView beta,
                    DiffTensorView final_pixel_state,
                    TensorView<float> contribution,
                    TensorView<float> d_contribution,
@@ -69,6 +70,9 @@ float4 alpha_blend(TensorView<int32_t> sorted_gauss_idx,
     uint32_t block_size = tile_height * tile_width;
     bool is_inside = (pix_coord.x < W && pix_coord.y < H);
     bool thread_active = is_inside;
+    if (tile_idx_end <= tile_idx_start) {
+        return curr_pixel_state;
+    }
     const int shared_memory_rounds = ((tile_idx_end - tile_idx_start + block_size - 1) / block_size);
     uint32_t thread_rank = cudaThreadIdx().y * cudaBlockDim().x + cudaThreadIdx().x;
     int32_t local_n_contrib = 0;
@@ -130,6 +134,7 @@ void bwd_alpha_blend(TensorView<int32_t> sorted_gauss_idx,
                      DiffTensorView inv_cov_vs,
                      DiffTensorView opacity,
                      DiffTensorView rgb,
+                     DiffTensorView beta,
                      DiffTensorView final_pixel_state,
                      TensorView<float> contribution,
                      TensorView<float> d_contribution,
@@ -264,6 +269,7 @@ void splat_tiled(TensorView<int32_t> sorted_gauss_idx,
                  DiffTensorView inv_cov_vs,
                  DiffTensorView opacity,
                  DiffTensorView rgb,
+                 DiffTensorView beta,
                  DiffTensorView output_img,
                  TensorView<float> contribution,
                  TensorView<float> d_contribution,
@@ -287,6 +293,7 @@ void splat_tiled(TensorView<int32_t> sorted_gauss_idx,
                                      inv_cov_vs,
                                      opacity,
                                      rgb,
+                                     beta,
                                      output_img,
                                      contribution,
                                      d_contribution,

@@ -45,12 +45,30 @@ import random
 from globals import *
 from preprocess.read_write_model import qvec2rotmat, rotmat2qvec, qvec2rotmat_torch, rotmat2qvec_torch, rotation_matrix_to_quaternion
 import lod_slang_gaussian_rasterization.api.inria_3dgs as gaussian_renderer
+import slang_gaussian_rasterization.api.inria_3dgs as occlusion_renderer
 
 # to check CPU RAM usage
 pid = os.getpid()
 
 
 
+def occlusion_cull_slang(gaussians, camera, pipe, background, opacity_multiplier = 1, scale_multiplier = 1):
+    #shs = torch.cat((features_dc, features_rest), dim=1).contiguous()
+    render_pkg = gaussian_renderer.render(
+        camera, 
+        gaussians.SPT_means3D, 
+        gaussians.opacity_activation(gaussians.SPT_opacity), 
+        gaussians.scaling_activation(gaussians.SPT_scales), 
+        gaussians.rotation_activation(gaussians.SPT_rotations), 
+        #gaussians.SPT_opacity,
+        #gaussians.SPT_scales,
+        #gaussians.SPT_rotations,
+        gaussians.SPT_features_dc, 
+        gaussians.SPT_features_rest, 
+        gaussians.beta_activation(gaussians.SPT_beta*4),
+        pipe, background)
+    #torchvision.utils.save_image(render_pkg["render"], "occlusion.png")
+    return render_pkg["contribution"], render_pkg["render"]
 
 
 
@@ -169,7 +187,16 @@ def training(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoin
     #gaussians.sort_morton()
     
     gaussians.build_hierarchical_SPT(opt.SPT_root_volume, SPT_Target_Granularity, opt.min_SPT_size, use_bounding_spheres=opt.use_bounding_spheres, revive_gaussians=Revive_Gaussians)
+    
+    gaussians.properties[gaussians.SPT_gaussian_indices, d_mu1] = ((gaussians.SPT_max + gaussians.SPT_min) / 2.0).cpu()
+    difference = gaussians.SPT_max - gaussians.SPT_min
+    # torch.sqrt(2*math.pi) = 2.5
+    gaussians.properties[gaussians.SPT_gaussian_indices, d_sigma1] = ((difference) / math.sqrt(2*math.pi)).cpu()
+    gaussians.SPT_max = (gaussians.properties[gaussians.SPT_gaussian_indices.cpu(), d_mu1] + 3 * gaussians.properties[gaussians.SPT_gaussian_indices.cpu(), d_sigma1]).cuda()
+    gaussians.SPT_min = (gaussians.properties[gaussians.SPT_gaussian_indices.cpu(), d_mu1] - 3 * gaussians.properties[gaussians.SPT_gaussian_indices.cpu(), d_sigma1]).cuda()
     print(f"Built {len(gaussians.SPT_starts)} SPTs, which contain {len(gaussians.SPT_gaussian_indices)*100/(len(gaussians.SPT_gaussian_indices) + len(gaussians.upper_tree_nodes))} % of Gaussians")
+
+#
     
     bg_color = [1, 1, 1] if dataset.white_background else [0, 0, 0]
     background = torch.tensor(bg_color, dtype=torch.float32, device="cuda")
@@ -504,6 +531,7 @@ def training(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoin
                 
                 gaussians.properties[write_back_indices, :] = torch.cat((write_back_tensors), dim=1).cpu() 
                 
+                #TODO: Write back to SPT_max, SPT_min
 
                 full_mask = torch.cat((torch.where(reuse_gaussians_mask)[0], torch.where(cache_gaussians_mask)[0]))
                 
@@ -588,6 +616,7 @@ def training(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoin
                 gaussian_SPT_indices = torch.cumsum(gaussian_SPT_indices, dim=0) - 1
                 distances = SPT_distances[gaussian_SPT_indices]
                 distances[:SPT_starts_new[0]] = 0.0
+                
                 render_pkg = gaussian_renderer.render(
                             viewpoint_cam, 
                             means3D,
@@ -607,7 +636,7 @@ def training(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoin
                             #gaussians=gaussians
                             )
                
-
+                contribution = render_pkg["contribution"]
                 __post_render_peak = torch.cuda.max_memory_allocated(device='cuda')
                 torch.cuda.reset_peak_memory_stats()
                 
@@ -837,12 +866,17 @@ def training(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoin
                         # only redistribute leaf nodes
                         dead_mask = torch.logical_and(dead_mask, gaussians.nodes[:gaussians.size, 2] == 0)
                         print(f"Respawn {torch.sum(dead_mask)} Gaussians")
-                        gaussians.relocate_gs(dead_mask, gaussians.size, storage_device=opt.storage_device, densification=opt.densification)
+                        gaussians.relocate_gs_smooth(dead_mask, gaussians.size, storage_device=opt.storage_device, densification=opt.densification)
                            
                         gaussians.build_hierarchical_SPT(opt.SPT_root_volume, SPT_Target_Granularity, use_bounding_spheres=opt.use_bounding_spheres, revive_gaussians=Revive_Gaussians)
+                        
+                        
                         gaussians.properties[gaussians.SPT_gaussian_indices, d_mu1] = (gaussians.SPT_max + gaussians.SPT_min) / 2.0
                         gaussians.properties[gaussians.SPT_gaussian_indices, d_sigma1] = ((gaussians.SPT_max - gaussians.SPT_min) / 2.0)
-                        breakpoint()
+                        
+                        #expand the ranges 
+                        
+                        
                         print(f"Built {len(gaussians.SPT_starts)} SPTs, which contain {len(gaussians.SPT_gaussian_indices)*100/(len(gaussians.SPT_gaussian_indices) + len(gaussians.upper_tree_nodes))} % of Gaussians")
 
                         if opt.densification == "classic":

@@ -270,6 +270,10 @@ float4 evaluate_splat(Splat_2D_AlphaBlend g,
                  pix_coord.y - ndc2pix(g_xyz.y, H) };
     float power = -0.5f * (g_inv_cov_vs[0][0] * d.x * d.x +
                            g_inv_cov_vs[1][1] * d.y * d.y + (g_inv_cov_vs[0][1] + g_inv_cov_vs[1][0]) * d.x * d.y);
+
+    if (power > 0.f) {
+        return float4(0);
+    }
     float alpha = min(0.99f, g_opacity * exp(power));
     float3 premult_rgb = g_rgb * alpha;
     

@@ -23,4 +23,5 @@ slang_gaussian_rasterization/internal/slang/tile_shader.slang
 slang_gaussian_rasterization/internal/slang/utils.slang
 slang_gaussian_rasterization/internal/slang/vertex_shader.slang
 slang_gaussian_rasterization/internal/sort_by_keys/__init__.py
+slang_gaussian_rasterization/internal/sort_by_keys/sort_by_keys.cu
 slang_gaussian_rasterization/internal/sort_by_keys/sort_by_keys_torch.py

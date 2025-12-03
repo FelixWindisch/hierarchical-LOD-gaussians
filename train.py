@@ -9,6 +9,7 @@ from scene import Scene, GaussianModel
 from arguments import ModelParams, PipelineParams, OptimizationParams
 import debug_utils
 import train_fine
+import train_final
 import view_graph_utils
 import networkx as nx
 import train_coarse
@@ -147,7 +148,7 @@ if __name__ == '__main__':
     #optimization_params = optimization_params.extract(args)
 
 
-    train_smooth.training(
+    train_final.training(
         model_params, 
         optimization_params, 
         pipeline_params, 
