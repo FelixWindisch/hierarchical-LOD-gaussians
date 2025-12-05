@@ -46,6 +46,8 @@ if __name__ == '__main__':
     parser.add_argument('--masks_dir', default="")
     parser.add_argument('--depths_dir', default="")
     
+    parser.add_argument('--evaluation', default="False")
+    
     
     parser.add_argument('--config', default="")
     
@@ -156,6 +158,7 @@ if __name__ == '__main__':
         checkpoint_iterations=[], 
         checkpoint=[], 
         debug_from=[], 
-        view_graph=view_graph_utils)
+        view_graph=view_graph_utils,
+        evaluation = (args.evaluation == "True"))
     
     print(f"Training finished in {time.time() - start_time:.2f} seconds.")

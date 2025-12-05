@@ -46,6 +46,9 @@ from preprocess.read_write_model import qvec2rotmat, rotmat2qvec, qvec2rotmat_to
 import lod_slang_gaussian_rasterization.api.inria_3dgs as gaussian_renderer
 import slang_gaussian_rasterization.api.inria_3dgs as occlusion_renderer
 import slang_beta_rasterization.api.inria_3dgs as beta_renderer
+from utils.image_utils import psnr
+from lpipsPyTorch import lpips
+from fused_ssim import fused_ssim
 
 # to check CPU RAM usage
 pid = os.getpid()
@@ -109,7 +112,7 @@ def direct_collate(x):
     return x
 
 
-Write_Tensor_Board = False
+Write_Tensor_Board = True
 #Standard
 #Culling
 
@@ -134,9 +137,13 @@ non_blocking=False
 
 
 
+def training(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoint_iterations, checkpoint, debug_from, view_graph, evaluation = False):
+    global SH_properties, features_rest2, SH_properties, SH_properties_single, Write_Tensor_Board
+    #opt.iterations = 20
 
-def training(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoint_iterations, checkpoint, debug_from, view_graph):
-    global SH_properties, features_rest2, SH_properties, SH_properties_single
+    PSNR_total = 0
+    SSIM_total = 0
+    LPIPS_total = 0
     __post_backward_peak = 0
     __prev_peak_memory = 0
     __prev_number_rendered = 0
@@ -146,8 +153,8 @@ def training(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoin
     #torch.cuda.memory._record_memory_history()
     #torch.autograd.set_detect_anomaly(True)
     
-    if Write_Tensor_Board:
-        writer = SummaryWriter()
+    if Write_Tensor_Board and not evaluation:
+        writer = SummaryWriter("CampusChunkFinal_" + str(uuid.uuid4())[:8])
     gaussians = GaussianModel(opt.SH_degree)
     
     scene = Scene(dataset, gaussians, resolution_scales=[1], create_from_hier=True, llff_hold=opt.llff_hold)
@@ -309,6 +316,18 @@ def training(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoin
     SPT_contribution = None
     
     
+    if evaluation:
+        gaussians.load_smooth_hier("Something")
+        training_generator = DataLoader(scene.getTestCameras(), num_workers = 8, prefetch_factor = 1, persistent_workers = True, collate_fn=direct_collate, shuffle=False)
+        opt.iterations = len(training_generator)
+        opt.use_GPU_caching = False
+        opt.vary_distance_multiplier = False
+        opt.optimize_exposure = False
+        Write_Tensor_Board = False
+        print(f"EVALUATE {opt.iterations} images")
+        progress_bar = tqdm(range(0, opt.iterations), desc="Training progress")
+
+    
     print("Gaussians Initialized")
     prev_cam_center = torch.zeros(3, device='cuda', dtype=torch.float32)
     print("Current Time:", datetime.now().strftime("%H:%M:%S"))
@@ -327,7 +346,13 @@ def training(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoin
                 viewpoint_cam.projection_matrix = viewpoint_cam.projection_matrix.cuda()
                 viewpoint_cam.full_proj_transform = viewpoint_cam.full_proj_transform.cuda()
                 viewpoint_cam.camera_center = viewpoint_cam.camera_center.cuda()
-                
+                if iteration >= opt.iterations:
+                    if evaluation:
+                        print(f"Evaluated {iteration} / {opt.iterations} images")
+                        print(f"Average PSNR: {PSNR_total/opt.iterations}, SSIM: {SSIM_total/opt.iterations}, LPIPS: {LPIPS_total/opt.iterations}")
+                    else:
+                        gaussians.save_smooth_hier()
+                    exit()
                 
                 xyz_lr = gaussians.xyz_scheduler_args(iteration)
                 if opt.optimize_exposure:
@@ -703,8 +728,23 @@ def training(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoin
                 
                 image = render_pkg["render"]#, render_pkg["viewspace_points"], render_pkg["visibility_filter"], render_pkg["radii"]
                 
-                # Loss
                 gt_image = viewpoint_cam.original_image.cuda()
+                if evaluation:
+                    #with torch.no_grad():
+                    #    if viewpoint_cam.alpha_mask.cuda() is not None:
+                    #        image *= viewpoint_cam.alpha_mask.cuda() 
+                    #        gt_image *= viewpoint_cam.alpha_mask.cuda()
+                    psnr_current = psnr(image.detach() * viewpoint_cam.alpha_mask.cuda() , gt_image).mean().double().item()
+                    ssim_current = ssim(image.detach() * viewpoint_cam.alpha_mask.cuda() , gt_image).mean().double().item()
+                    lpips_current = lpips(image.detach() * viewpoint_cam.alpha_mask.cuda() , gt_image, net_type='vgg').mean().double().item()
+                    print(f"{psnr_current}, {ssim_current}, {lpips_current}")
+                    PSNR_total += psnr_current  
+                    SSIM_total += ssim_current
+                    LPIPS_total += lpips_current
+                
+                
+                # Loss
+                
                 if viewpoint_cam.alpha_mask is not None:
                     #print(f"Alpha mask: {viewpoint_cam.alpha_mask.sum()} / {viewpoint_cam.alpha_mask.nelement()}")
                     Ll1 = l1_loss(image * viewpoint_cam.alpha_mask.cuda(), gt_image)
@@ -730,7 +770,9 @@ def training(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoin
                 if iteration % 50 == 0 or iteration == 1:
                     torchvision.utils.save_image(image, os.path.join(scene.model_path, str(iteration) + ".png"))
                     
-                    
+                if evaluation:
+                    torchvision.utils.save_image(image, os.path.join("output", str(iteration) + ".png"))
+                    torchvision.utils.save_image(gt_image, os.path.join("output", str(iteration) + "_gt.png"))
                 
                 iteration_time = sub_clock()
                 #hierarchy_loss = 0 #torch.sum(torch.clamp_min(torch.max(torch.abs(gaussians.get_scaling[indices]), dim=-1)[0] - torch.max(torch.abs(gaussians.get_scaling[parents]), dim=-1)[0], 0)) / len(indices)
@@ -826,10 +868,7 @@ def training(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoin
                         print("\n[ITER {}] Saving Gaussians".format(iteration))
                         print("peak memory: ", torch.cuda.max_memory_allocated(device='cuda'))
 
-                    if iteration == opt.iterations:
-                        gaussians.save_hier(file_name=opt.output_file_name)
-                        progress_bar.close()
-                        return
+                   
 
 
                     #region Densification
@@ -956,7 +995,7 @@ def training(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoin
                         #endregion
                         
                     #region Optimization
-                    elif iteration < opt.iterations:
+                    elif iteration < opt.iterations and not evaluation:
                         if opt.optimize_exposure:
                             #print("optimize exposure")
                             gaussians.exposure_optimizer.step()

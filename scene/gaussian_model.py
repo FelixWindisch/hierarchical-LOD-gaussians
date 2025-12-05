@@ -1253,21 +1253,25 @@ class GaussianModel:
                         self.nodes[:self.size],
                         self.max_sh_degree)
 
-    def save_smooth_hier():
-        torch.save(self.properties, self.hierarchy_path + f"Gaussians_{filename}.pt")
-        full_occlusion = torch.cat((self.SPT_means3D, self.SPT_scales, self.SPT_rotations, self.SPT_features_dc, self.SPT_opacity, self.SPT_features_rest, self.SPT_beta))
-        torch.save(full_occlusion, self.hierarchy_path + f"Occlusion_{filename}.pt")
+    def save_smooth_hier(self, file_name="final"):
+        path = os.path.dirname(self.hierarchy_path)
+        torch.save(self.properties[:self.size, :], path + f"/Gaussians_{file_name}.pt")
+        full_occlusion = torch.cat((self.SPT_means3D, self.SPT_scales, self.SPT_rotations, self.SPT_features_dc.reshape(((len(self.SPT_means3D)),3)), self.SPT_opacity, self.SPT_features_rest.reshape((len(self.SPT_means3D), SH_properties)), self.SPT_beta.reshape((len(self.SPT_means3D), 1))), dim=-1)
+        torch.save(full_occlusion, path + f"/Occlusion_{file_name}.pt")
         
         export_SPT_starts = torch.zeros_like(self.SPT_gaussian_indices)
-        export_SPT_starts[:len(SPT_starts)] = self.SPT_starts
-        export_SPT_starts[len(SPT_starts):] = -1
+        export_SPT_starts[:len(self.SPT_starts)] = self.SPT_starts
+        export_SPT_starts[len(self.SPT_starts):] = -1
         
-        full_SPT = torch.cat((self.SPT_max, self.SPT_min, self.SPT_guassian_indices, export_SPT_starts), dim=1)
-        torch.save(full_SPT, self.hierarchy_path + f"SPT_{filename}.pt")
+        full_SPT = torch.vstack((self.SPT_max, self.SPT_min, self.SPT_gaussian_indices, export_SPT_starts))
+        torch.save(full_SPT, path + f"/SPT_{file_name}.pt")
 
-    def load_smooth_hier(path):
-        self.properties = torch.load(path + f"Gaussians_{filename}.pt")
-        full_occlusion = torch.load(path + f"Occlusion_{filename}.pt")
+    def load_smooth_hier(self, path, file_name="final"):
+        path = os.path.dirname(self.hierarchy_path)
+        
+        self.properties = torch.load(path + f"/Gaussians_{file_name}.pt")
+        self.size = len(self.properties)
+        full_occlusion = torch.load(path + f"/Occlusion_{file_name}.pt")
         self.SPT_means3D = full_occlusion[:, :3]
         self.SPT_scales = full_occlusion[:, 3:6]
         self.SPT_rotations = full_occlusion[:, 6:10]
@@ -1276,11 +1280,11 @@ class GaussianModel:
         self.SPT_features_rest = full_occlusion[:, 14:-1]
         self.SPT_beta = full_occlusion[:, -1:]
 
-        full_SPT = torch.load(path + f"SPT_{filename}.pt")
-        self.SPT_max = full_SPT[:, :3]
-        self.SPT_min = full_SPT[:, 3:6]
-        self.SPT_gaussian_indices = full_SPT[:, 6:-1].long()
-        SPT_starts_raw = full_SPT[:, -1].long()
+        full_SPT = torch.load(path + f"/SPT_{file_name}.pt")
+        self.SPT_max = full_SPT[0, :]
+        self.SPT_min = full_SPT[1, :]
+        self.SPT_gaussian_indices = full_SPT[2, :].int()
+        SPT_starts_raw = full_SPT[3, :].int()
         self.SPT_starts = SPT_starts_raw[SPT_starts_raw != -1]
 
     def update_learning_rate(self, iteration):
