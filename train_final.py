@@ -49,10 +49,91 @@ import slang_beta_rasterization.api.inria_3dgs as beta_renderer
 from utils.image_utils import psnr
 from lpipsPyTorch import lpips
 from fused_ssim import fused_ssim
+import matplotlib.pyplot as plt
 
+import torch.nn.functional as F
 # to check CPU RAM usage
 pid = os.getpid()
 
+def plot_gaussian_columns(means, variances, colors,  min_vals, max_vals, weights=None, height=500, y_range=(-5, 5)):
+    """
+    Generates an image where each column is a Gaussian distribution.
+    
+    Args:
+        means (Tensor): Shape (N,). Means of the distributions.
+        variances (Tensor): Shape (N,). Variances of the distributions.
+        colors (Tensor): Shape (N, 3). RGB colors in range [0, 1].
+        height (int): Height of the resulting image in pixels.
+        y_range (tuple): The (min, max) value represented by the image height.
+        
+    Returns:
+        Tensor: Image tensor of shape (Height, N, 3).
+    """
+    device = means.device
+    min_vals = min_vals.to(device)
+    max_vals = max_vals.to(device)
+    num_gaussians = means.shape[0]
+    if weights is None:
+        weights = torch.ones(num_gaussians, device=device)
+    w = weights.view(1, -1)
+    # 1. Setup the coordinate system
+    # We create a column vector of Y coordinates (Height, 1)
+    y_coords = torch.linspace(y_range[0], y_range[1], height, device=device).view(-1, 1)
+    
+    # Reshape inputs for broadcasting:
+    # Means/Vars: (1, N)
+    mu = means.view(1, -1)
+    sigma2 = variances.view(1, -1)
+    
+    # 2. Calculate Gaussian Intensity (Unnormalized Kernel)
+    # Result shape: (Height, N)
+    # We use the kernel exp(-dist^2 / 2var) so the peak is always 1.0 (max opacity)
+    squared_diff = (y_coords - mu)**2
+    intensity = torch.exp(-squared_diff / (2 * (sigma2**2)))
+    
+    intensity *= w  # Apply weights to intensity
+    # 3. Prepare for Color Mixing
+    # Expand Intensity to (Height, N, 1) to broadcast against colors
+    alpha = intensity.unsqueeze(-1)
+    
+    # Expand Colors to (1, N, 3) to broadcast against rows
+    rgb = colors.view(1, num_gaussians, 3)
+    
+    # Define White (1, 1, 1)
+    white = torch.tensor([1.0, 1.0, 1.0], device=device)
+    
+    # 4. Mix Colors
+    # Formula: alpha * Color + (1 - alpha) * White
+    image_tensor = alpha * rgb + (1 - alpha) * white
+    def val_to_row_indices(values):
+        """Converts data values to row indices [0, height-1]"""
+        # 1. Normalize values to 0.0 - 1.0 based on y_range
+        norm = (values - y_range[0]) / (y_range[1] - y_range[0])
+        # 2. Scale to image height
+        indices = (norm * (height - 1)).round().long()
+        return indices
+
+    # Convert min/max tensors to pixel indices
+    min_idx = val_to_row_indices(min_vals)
+    max_idx = val_to_row_indices(max_vals)
+    
+    # Column indices [0, 1, ..., N-1]
+    col_idx = torch.arange(num_gaussians, device=device)
+    
+    # Define Red Color
+    red = torch.tensor([1.0, 0.0, 0.0], device=device)
+
+    # --- Plot Min Markers ---
+    # We create a mask to ensure we don't try to draw outside the image (if min < y_range)
+    valid_min = (min_idx >= 0) & (min_idx < height)
+    # Apply Red using Advanced Indexing: image[rows, cols] = red
+    image_tensor[min_idx[valid_min], col_idx[valid_min], :] = red
+    
+    # --- Plot Max Markers ---
+    valid_max = (max_idx >= 0) & (max_idx < height)
+    image_tensor[max_idx[valid_max], col_idx[valid_max], :] = red
+    # Clip just in case, though math guarantees [0,1] bounds
+    return image_tensor.clamp(0, 1)
 
 
 def occlusion_cull_slang(gaussians, camera, pipe, background, opacity_multiplier = 1, scale_multiplier = 1):
@@ -266,7 +347,7 @@ def training(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoin
     if opt.densification == "classic":
         densification_criterium = torch.zeros(gaussians.skybox_points, device='cuda', dtype=torch.float32)
         densification_criterium_cache = torch.empty((0), device='cuda', dtype=torch.float32)
-    if opt.prune_unused:
+    if opt.prune_unused and not evaluation:
         contributed = torch.zeros(gaussians.skybox_points, device='cuda', dtype=torch.bool)
         contributed_cache = torch.empty((0), device='cuda', dtype=torch.bool)
         
@@ -318,19 +399,27 @@ def training(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoin
     
     if evaluation:
         gaussians.load_smooth_hier("Something")
-        training_generator = DataLoader(scene.getTestCameras(), num_workers = 8, prefetch_factor = 1, persistent_workers = True, collate_fn=direct_collate, shuffle=False)
+        #training_generator = DataLoader(scene.getTestCameras(), num_workers = 8, prefetch_factor = 1, persistent_workers = True, collate_fn=direct_collate, shuffle=False)
         opt.iterations = len(training_generator)
         opt.use_GPU_caching = False
         opt.vary_distance_multiplier = False
         opt.optimize_exposure = False
+        opt.prune_unused = False
         Write_Tensor_Board = False
         print(f"EVALUATE {opt.iterations} images")
         progress_bar = tqdm(range(0, opt.iterations), desc="Training progress")
-
-    
+    #lines = 400000
+    #colors =  F.normalize(gaussians.properties[gaussians.SPT_gaussian_indices[:lines].cpu(),features1:features2].abs(), p=2, dim=1)
+    #image = plot_gaussian_columns(gaussians.properties[gaussians.SPT_gaussian_indices[:lines].cpu(),d_mu1],gaussians.properties[gaussians.SPT_gaussian_indices[:lines].cpu(),d_sigma1], colors, gaussians.SPT_max[:lines],gaussians.SPT_min[:lines],  height=300, y_range=(-100,900)) #gaussians.opacity_activation(gaussians.properties[gaussians.SPT_gaussian_indices[:lines].cpu(),opacity1]),
+    #torchvision.utils.save_image(image.permute(2,0,1), "SPT_distance_distribution.png")
+    #return
     print("Gaussians Initialized")
     prev_cam_center = torch.zeros(3, device='cuda', dtype=torch.float32)
     print("Current Time:", datetime.now().strftime("%H:%M:%S"))
+    
+    
+    
+    
     while iteration < opt.iterations + 1:
         for viewpoint_batch in training_generator:
             for viewpoint_cam in viewpoint_batch:
@@ -605,7 +694,7 @@ def training(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoin
                 
                 #Write back to SPT_max, SPT_min
                 #TODO: accelerate
-                if len(write_back_indices) > 0:
+                if len(write_back_indices) > 0 and not evaluation:
                     current_idx = 0
                     for write_back_SPT, write_back_cache_SPT in zip(write_back_SPT_indices, write_back_SPT_cache_indices):
                         
@@ -626,7 +715,7 @@ def training(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoin
                     gaussians._densification_criterium[write_back_indices] = densification_criterium_full[write_back_mask].to(opt.storage_device, non_blocking=non_blocking)
                     densification_criterium = torch.cat((densification_criterium[:gaussians.skybox_points], gaussians._densification_criterium[load_from_disk_indices].cuda(non_blocking=non_blocking), densification_criterium_full[reuse_gaussians_mask])).detach()
                     densification_criterium_cache = densification_criterium_full[cache_gaussians_mask]
-                if opt.prune_unused:
+                if opt.prune_unused and not evaluation:
                     contributed_full = torch.cat((contributed, contributed_cache)).detach()
                     gaussians._contributed[write_back_indices] = contributed_full[write_back_mask].to(opt.storage_device, non_blocking=non_blocking)
                     contributed = torch.cat((contributed[:gaussians.skybox_points], gaussians._contributed[load_from_disk_indices].cuda(non_blocking=non_blocking), contributed_full[reuse_gaussians_mask])).detach()
@@ -701,7 +790,7 @@ def training(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoin
                 gaussian_SPT_indices = torch.cumsum(gaussian_SPT_indices, dim=0) - 1
                 distances = SPT_distances[gaussian_SPT_indices]
                 distances[:SPT_starts_new[0]] = 0.0
-                
+
                 render_pkg = gaussian_renderer.render(
                             viewpoint_cam, 
                             means3D,
@@ -784,7 +873,7 @@ def training(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoin
                     opacity_loss = torch.sum((gaussians.opacity_activation(opacity[contributing_gaussians]))) / number_of_contributing_gaussians
                     scaling_loss = torch.sum((gaussians.scaling_activation(scales[contributing_gaussians])))  / number_of_contributing_gaussians
                     
-                if opt.prune_unused:
+                if opt.prune_unused and not evaluation:
                     contributed = torch.logical_or(contributed, contribution > 0.0001)
                     
                 if opt.lambda_opacity > 0 and opt.densification == "MCMC":
@@ -910,7 +999,7 @@ def training(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoin
                                 #gaussians._densification_criterium[gaussian_indices] = torch.cat((densification_criterium, densification_criterium_cache)).to(opt.storage_device)  
                                 densification_criterium_cache = torch.empty((0), device='cuda', dtype=torch.float32)
                                 densification_criterium = torch.zeros(gaussians.skybox_points, device='cuda', dtype=torch.float32)
-                        if opt.prune_unused:
+                        if opt.prune_unused and not evaluation:
                             # Don't write back the contributed, it is reset anyway
                             contributed_cache = torch.empty((0), device='cuda', dtype=torch.bool)
                             contributed = torch.zeros(gaussians.skybox_points, device='cuda', dtype=torch.bool)

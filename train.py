@@ -9,7 +9,8 @@ from scene import Scene, GaussianModel
 from arguments import ModelParams, PipelineParams, OptimizationParams
 import debug_utils
 import train_fine
-import train_final
+import train_fast
+#import train_final
 import view_graph_utils
 import networkx as nx
 import train_coarse
@@ -150,7 +151,7 @@ if __name__ == '__main__':
     #optimization_params = optimization_params.extract(args)
 
 
-    train_final.training(
+    train_fine.training(
         model_params, 
         optimization_params, 
         pipeline_params, 
@@ -158,7 +159,8 @@ if __name__ == '__main__':
         checkpoint_iterations=[], 
         checkpoint=[], 
         debug_from=[], 
-        view_graph=view_graph_utils,
-        evaluation = (args.evaluation == "True"))
+        view_graph=view_graph_utils
+        #,evaluation = (args.evaluation == "True")
+        )
     
     print(f"Training finished in {time.time() - start_time:.2f} seconds.")
