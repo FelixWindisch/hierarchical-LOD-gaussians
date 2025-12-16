@@ -1121,6 +1121,7 @@ class GaussianModel:
         self.inverse_opacity_activation = inverse_sigmoid
         self.is_hierarchy = True
         self.spatial_lr_scale = spatial_lr_scale
+        print(path)
         xyz, shs_all, alpha, scales, rots, nodes = load_dynamic_hierarchy(path)
         # set first child to 0 for all nodes that do not have children (because this is fucked up in some hierarchy files)
         SH_mapping = {4: 1, 9: 2, 16: 3}
@@ -1772,6 +1773,14 @@ class GaussianModel:
     def _sample_alives(self, probs, num, alive_indices=None):
         probs = probs / (probs.sum() + torch.finfo(torch.float32).eps)
         sampled_idxs = torch.multinomial(probs, num, replacement=True)
+        if alive_indices is not None:
+            sampled_idxs = alive_indices[sampled_idxs]
+        ratio = torch.bincount(sampled_idxs).unsqueeze(-1)
+        return sampled_idxs, ratio
+    
+    def _sample_alives_smooth(self, probs, num, alive_indices=None):
+        probs = probs / (probs.sum() + torch.finfo(torch.float32).eps)
+        sampled_idxs = torch.multinomial(probs, num, replacement=True)
         return_idxs = alive_indices[sampled_idxs]
         ratio = torch.bincount(sampled_idxs).unsqueeze(-1)
         return return_idxs, ratio, sampled_idxs
@@ -1985,14 +1994,21 @@ class GaussianModel:
         
         # all Gaussians with an SPT can be densified
         densify_indices = self.SPT_gaussian_indices.cpu()
-        #if len(densify_indices) > 16_000_000:
-        #    densify_indices = densify_indices[torch.randperm(len(densify_indices))[:16_000_000]]
-        probs = self.opacity_activation(self.properties[densify_indices, opacity1:opacity2]).squeeze(-1)
-        add_idx, ratio, insertion_indices = self._sample_alives(probs=probs, num=num_gs, alive_indices=densify_indices)
-
+        if len(densify_indices) > 16_000_000:
+            reduced = torch.randperm(len(densify_indices))[:16_000_000]
+        else:
+            reduced = torch.arange(0, len(densify_indices))
+        
+        probs = self.opacity_activation(self.properties[densify_indices[reduced], opacity1:opacity2]).squeeze(-1)
+        add_idx, ratio, insertion_indices = self._sample_alives_smooth(probs=probs, num=num_gs, alive_indices=densify_indices[reduced])
+        
         
         ratio_ = torch.zeros((self.size,1), device=ratio.device, dtype=torch.long)
         ratio_[add_idx] = ratio[insertion_indices]
+        
+        insertion_indices = reduced[insertion_indices]
+                
+        
             
             
         spawn_SPTs = self.SPT_index_per_Gaussian[add_idx]
@@ -2092,17 +2108,24 @@ class GaussianModel:
 
         # Torch.multionmial can only handle 16_000_000 elements. If there are more possible respawn locations, uniformly sample 16M
         if len(densify_indices) > 16_000_000:
-            densify_indices = densify_indices[torch.randperm(len(densify_indices))[:16_000_000]]
-        probs = (self.opacity_activation(self.properties[densify_indices, opacity1])) 
-
-        if densification == "classic":
-            probs *= (self._densification_criterium[densify_indices] + 1)
-
-        # reinit_idx are the Gaussians where the dead Gaussians are respawned
-        reinit_idx, ratio, insertion_indices = self._sample_alives(alive_indices=densify_indices, probs=probs, num=dead_indices.shape[0])
+            reduced = torch.randperm(len(densify_indices))[:16_000_000]
+        else:
+            reduced = torch.arange(0, len(densify_indices))
+        
+        probs = self.opacity_activation(self.properties[densify_indices[reduced], opacity1:opacity2]).squeeze(-1)
+        reinit_idx, ratio, insertion_indices = self._sample_alives_smooth(probs=probs, num=len(dead_indices), alive_indices=densify_indices[reduced])
         
         ratio_ = torch.zeros((self.size, 1), device=ratio.device, dtype=torch.long)
         ratio_[reinit_idx] = ratio[insertion_indices]
+        
+        insertion_indices = reduced[insertion_indices]
+
+        #if densification == "classic":
+        #    probs *= (self._densification_criterium[densify_indices] + 1)
+
+
+        
+        
         
         (
             self.properties[dead_indices, xyz1:xyz2], 
@@ -2178,14 +2201,21 @@ def swap_and_track(A, remove_idx, insert_idx, D):
     # Check insertions to the left (Push D right)
     # Logic: If we insert right of X (score X.5), and X < D, 
     # then the new element is to the left of D.
-    inserts_left_mask = insert_idx.unsqueeze(1) < D.unsqueeze(0)
-    shift_right = inserts_left_mask.sum(dim=0)
+    insert_idx_sorted = insert_idx[torch.argsort(insert_idx)]
+    shift_right = torch.searchsorted(insert_idx_sorted, D)
+    
+    #inserts_left_mask = insert_idx.unsqueeze(1) < D.unsqueeze(0)
+    #shift_right = inserts_left_mask.sum(dim=0)
     
     # Check removals to the left (Pull D left)
     # Logic: If we remove X, and X < D, the gap closes and D moves left.
     # Note: If X == D, we do NOT shift (D stays to point at the element filling the gap).
-    removes_left_mask = remove_idx.unsqueeze(1) < D.unsqueeze(0)
-    shift_left = removes_left_mask.sum(dim=0)
+    
+    remove_idx_sorted = remove_idx[torch.argsort(remove_idx)]
+    shift_left = torch.searchsorted(remove_idx_sorted, D)
+    
+    #removes_left_mask = remove_idx.unsqueeze(1) < D.unsqueeze(0)
+    #shift_left = removes_left_mask.sum(dim=0)
     
     # Apply Net Flux
     D_new = D + shift_right - shift_left
