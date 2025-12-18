@@ -186,6 +186,7 @@ def render(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoint_
                 LOD_detail_cut = lambda indices : gaussians.min_distance_squared[indices] > (camera_position - gaussians.upper_tree_xyz[indices]).square().sum(dim=-1) * distance_multiplier
                 # The coarse cut contains intermediate nodes from the upper tree and leaf nodes, with some leaf nodes containing SPTs
                 coarse_cut = gaussians.cut_hierarchy_on_condition(gaussians.upper_tree_nodes, LOD_detail_cut, return_upper_tree=False, root_node=0, leave_out_of_cut_condition=frustum_cull)
+                print(torch.cuda.max_memory_allocated())
                 if False:
                     bg_color = [0, 0, 0]
                     background = torch.tensor(bg_color, dtype=torch.float32, device="cuda")
@@ -282,7 +283,7 @@ def render(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoint_
                 iteration += 1
                 psnr_current = psnr(image.detach(), gt_image).mean().double()
                 ssim_current = ssim(image.detach(), gt_image).mean().double()
-                lpips_current = lpips(image, gt_image, net_type='vgg').mean().double()
+                lpips_current = 0 #lpips(image, gt_image, net_type='vgg').mean().double()
                 torchvision.utils.save_image(image,  "output/" + os.path.basename(viewpoint_cam.image_name) + f"_{psnr_current}.png")
                 #torchvision.utils.save_image(gt_image,  "output/" + viewpoint_cam.image_name + "_gt.png")
                 psnrs += psnr_current

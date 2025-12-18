@@ -10,7 +10,7 @@ from arguments import ModelParams, PipelineParams, OptimizationParams
 import debug_utils
 import train_fine
 import train_fast
-#import train_final
+import train_final
 import view_graph_utils
 import networkx as nx
 import train_coarse
@@ -48,6 +48,8 @@ if __name__ == '__main__':
     parser.add_argument('--depths_dir', default="")
     
     parser.add_argument('--evaluation', default="False")
+    parser.add_argument('--viewer', default="False")
+    parser.add_argument('--final', default="False")
     
     
     parser.add_argument('--config', default="")
@@ -150,17 +152,29 @@ if __name__ == '__main__':
     
     #optimization_params = optimization_params.extract(args)
 
-
-    train_fine.training(
-        model_params, 
-        optimization_params, 
-        pipeline_params, 
-        saving_iterations=[200000, 250000, 300000], 
-        checkpoint_iterations=[], 
-        checkpoint=[], 
-        debug_from=[], 
-        view_graph=view_graph_utils
-        #,evaluation = (args.evaluation == "True")
-        )
+    if args.final == "True":
+        train_final.training(
+            model_params, 
+            optimization_params, 
+            pipeline_params, 
+            saving_iterations=[], 
+            checkpoint_iterations=[], 
+            checkpoint=False, 
+            debug_from=-1,
+            view_graph=view_graph_utils,
+            evaluation = (args.evaluation == "True"),
+            viewer = (args.viewer == "True")
+            )
+    else:
+        train_fine.training(
+            model_params, 
+            optimization_params, 
+            pipeline_params, 
+            saving_iterations=[200000, 250000, 300000], 
+            checkpoint_iterations=[], 
+            checkpoint=[], 
+            debug_from=[], 
+            view_graph=view_graph_utils
+            )
     
     print(f"Training finished in {time.time() - start_time:.2f} seconds.")

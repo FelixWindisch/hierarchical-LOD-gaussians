@@ -72,6 +72,15 @@ def vertex_and_tile_shader(xyz_ws,
     with torch.no_grad():
       index_buffer_offset = torch.cumsum(tiles_touched, dim=0, dtype=tiles_touched.dtype)
       total_size_index_buffer = index_buffer_offset[-1]
+      if total_size_index_buffer == 0:
+          return (torch.zeros((0,), device="cuda", dtype=torch.int32),
+                  torch.zeros((render_grid.grid_height*render_grid.grid_width, 2), 
+                              device="cuda",
+                              dtype=torch.int32),
+                  radii,
+                  xyz_vs,
+                  inv_cov_vs,
+                  rgb)
       unsorted_keys = torch.zeros((total_size_index_buffer,), 
                                   device="cuda", 
                                   dtype=torch.int64)
@@ -95,6 +104,9 @@ def vertex_and_tile_shader(xyz_ws,
       tile_ranges = torch.zeros((render_grid.grid_height*render_grid.grid_width, 2), 
                                 device="cuda",
                                 dtype=torch.int32)
+      print("XXXXX")
+      print(total_size_index_buffer)
+      print(safe_div_ceil(total_size_index_buffer,256))
       slang_modules.tile_shader.compute_tile_ranges(sorted_keys=sorted_keys,
                                                     out_tile_ranges=tile_ranges).launchRaw(
               blockSize=(256, 1, 1),

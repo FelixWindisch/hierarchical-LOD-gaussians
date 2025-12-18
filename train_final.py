@@ -10,6 +10,7 @@
 #
 from utils.general_utils import get_expon_lr_func
 import os
+from utils.graphics_utils import getWorld2View2, getProjectionMatrix
 import torch
 from torch import nn
 import debug_utils
@@ -50,7 +51,7 @@ from utils.image_utils import psnr
 from lpipsPyTorch import lpips
 from fused_ssim import fused_ssim
 import matplotlib.pyplot as plt
-
+import json
 import torch.nn.functional as F
 # to check CPU RAM usage
 pid = os.getpid()
@@ -218,7 +219,7 @@ non_blocking=False
 
 
 
-def training(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoint_iterations, checkpoint, debug_from, view_graph, evaluation = False):
+def training(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoint_iterations, checkpoint, debug_from, view_graph, evaluation = False, viewer = False):
     global SH_properties, features_rest2, SH_properties, SH_properties_single, Write_Tensor_Board
     #opt.iterations = 20
 
@@ -408,6 +409,29 @@ def training(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoin
         Write_Tensor_Board = False
         print(f"EVALUATE {opt.iterations} images")
         progress_bar = tqdm(range(0, opt.iterations), desc="Training progress")
+    if viewer:
+        gaussians.load_smooth_hier("Something")
+        opt.iterations = 10000000000000000000
+        opt.vary_distance_multiplier = False
+        opt.optimize_exposure = False
+        network_gui.init("127.0.0.1", 6009)
+        while network_gui.conn is None:
+            network_gui.try_connect()
+            print("Try connect")
+        viewer_options = {
+        "distance_multiplier" : 1.0, 
+        "render_SPTs" : False, 
+        "freeze_view" : False, 
+        "color_distance" : False, 
+        "color_size" : False,
+        "reuse_SPT_tolerance" : 0.0,
+        "separate_SPTs" : False,
+        "highlight_leaves" : False,
+        "show_occlusion" : False,
+        "use_occlusion_culling" : False,
+        "record_traj" : False
+        }
+        distance_multiplier = viewer_options["distance_multiplier"]
     #lines = 400000
     #colors =  F.normalize(gaussians.properties[gaussians.SPT_gaussian_indices[:lines].cpu(),features1:features2].abs(), p=2, dim=1)
     #image = plot_gaussian_columns(gaussians.properties[gaussians.SPT_gaussian_indices[:lines].cpu(),d_mu1],gaussians.properties[gaussians.SPT_gaussian_indices[:lines].cpu(),d_sigma1], colors, gaussians.SPT_max[:lines],gaussians.SPT_min[:lines],  height=300, y_range=(-100,900)) #gaussians.opacity_activation(gaussians.properties[gaussians.SPT_gaussian_indices[:lines].cpu(),opacity1]),
@@ -417,10 +441,10 @@ def training(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoin
     prev_cam_center = torch.zeros(3, device='cuda', dtype=torch.float32)
     print("Current Time:", datetime.now().strftime("%H:%M:%S"))
     
+
     
     
-    
-    while iteration < opt.iterations + 1:
+    while iteration < opt.iterations + 1 and (not viewer or network_gui.conn):
         for viewpoint_batch in training_generator:
             for viewpoint_cam in viewpoint_batch:
                 sub_clock()
@@ -448,20 +472,34 @@ def training(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoin
                     for param_group in gaussians.exposure_optimizer.param_groups:
                         param_group['lr'] = gaussians.exposure_scheduler_args(iteration)
 
+                if viewer:
+                    viewpoint_cam, do_training, keep_alive_, scaling_modifer, slider = network_gui.receive()
+                    for key, value in slider.items():
+                            if key in viewer_options:
+                                if type(viewer_options[key]) is bool:
+                                    viewer_options[key] = value > 0
+                                if type(viewer_options[key]) is float:
+                                    viewer_options[key] = value
+                    viewpoint_cam.world_view_transform = viewpoint_cam.world_view_transform.cuda()
+                    viewpoint_cam.full_proj_transform = viewpoint_cam.full_proj_transform.cuda()
+                    viewpoint_cam.camera_center = viewpoint_cam.camera_center.cuda()
+                    viewpoint_cam.projection_matrix = getProjectionMatrix(znear=viewpoint_cam.znear, zfar=viewpoint_cam.zfar, fovX=viewpoint_cam.FoVx, fovY=viewpoint_cam.FoVy, primx = 0, primy=0).transpose(0,1).cuda()
                 clock()
                 
-
                 
-                distance_multiplier = base_focal_length / viewpoint_cam.focal_length
+                if not viewer:
+                    distance_multiplier = base_focal_length / viewpoint_cam.focal_length
+                else:
+                    distance_multiplier = viewer_options["distance_multiplier"]
                 if iteration % 10 != 0 and opt.vary_distance_multiplier:
                     distance_multiplier = distance_multiplier * (1 + torch.pow(torch.rand(1),4) * 5).cuda()
                     
                 ############# SPT Cache
                 camera_position = viewpoint_cam.camera_center.cuda()
                 
-                
-                occlusions, occlusion_image = occlusion_cull_slang(gaussians, viewpoint_cam, pipe, background)
-                occlusion_mask = (occlusions > 0).cuda()
+                if Use_Occlusion_Culling:
+                    occlusions, occlusion_image = occlusion_cull_slang(gaussians, viewpoint_cam, pipe, background)
+                    occlusion_mask = (occlusions > 0).cuda()
 
                                             
 
@@ -512,7 +550,7 @@ def training(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoin
                     close_enough &= (prev_distances_compare/distances_compare) < Reuse_SPT_Tolerance_Farther #0.5
                 else:
                     close_enough = torch.zeros(len(prev_distances_compare), dtype=torch.bool, device='cuda')
-                
+                print(close_enough.sum().item(), "SPTs reused this frame")
                 reuse_SPT_indices = SPT_indices[equal_SPT_cache_indices[close_enough]]
 
 
@@ -809,7 +847,12 @@ def training(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoin
                             #use_trained_exp = opt.optimize_exposure,
                             #gaussians=gaussians
                             )
-               
+                if viewer:
+                    net_image = render_pkg["render"].cpu()
+                    net_image_bytes = memoryview((torch.clamp(net_image, min=0, max=1.0) * 255).byte().permute(1, 2, 0).contiguous().to('cpu').numpy())
+                    train_params = {"Num_Rendered" : len(gaussian_indices), "Number_of_SPTs" : len(SPT_indices), "Percentage_Rendered" : len(gaussian_indices)/gaussians.size, "Percentage_SPTs" : len(SPT_indices)/len(gaussians.SPT_starts)}
+                    network_gui.send(net_image_bytes, json.dumps({"iteration" : 99, "num_gaussians" : gaussians.size, "loss" : 0, "sh_degree":1, "error" : 0, "paused" : False, "train_params" : train_params})) #dataset.source_path)
+                    continue
                 contribution = render_pkg["contribution"]
                 __post_render_peak = torch.cuda.max_memory_allocated(device='cuda')
                 torch.cuda.reset_peak_memory_stats()
