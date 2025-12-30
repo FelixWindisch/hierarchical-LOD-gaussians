@@ -453,6 +453,71 @@ def _single_tensor_adam2(
 
 
 
+def _all_tensor_adam(
+    # 
+    
+    properties: Tensor,
+    grads: Tensor,
+    
+    # only used for AMSGrad
+    max_exp_avg_sqs: Tensor,
+    
+    state_steps: Tensor,
+    # WTF?
+    *,
+                        amsgrad: bool,
+                        beta1: float,
+                        beta2: float,
+                        lr: Tensor,
+                        weight_decay: float,
+                        eps: float,
+                        maximize: bool,
+                        capturable: bool):
+    grad = grads if not maximize else -grads
+    
+    number_properties = properties.shape[1] // 3
+    step_t = state_steps
+    param = properties[:, :number_properties]
+    exp_avg = properties[:, number_properties : 2*number_properties]
+    exp_avg_sqs = properties[:, 2*number_properties:]
+
+    if capturable:
+        assert param.is_cuda and step_t.is_cuda, "If capturable=True, params and state_steps must be CUDA tensors."
+
+    # update step
+    step_t += 1
+
+    if weight_decay != 0:
+        grad = grad.add(param, alpha=weight_decay)
+
+
+    # Decay the first and second moment running average coefficient
+    exp_avg.mul_(beta1).add_(grad, alpha=1 - beta1)
+    exp_avg_sqs.mul_(beta2).addcmul_(grad, grad.conj(), value=1 - beta2)
+
+    step = step_t.item()
+    bias_correction1 = 1 - beta1 ** step
+    bias_correction2 = 1 - beta2 ** step
+    
+
+    bias_correction2_sqrt = math.sqrt(bias_correction2)
+
+
+    denom = (exp_avg_sqs.sqrt() / bias_correction2_sqrt).add_(eps)
+
+    for i in range(number_properties):
+        step_size = lr[i] / bias_correction1
+        parami = param[:, i]
+        parami.addcdiv_(exp_avg[:, i], denom[:, i], value=-step_size)
+        param[:, i] = parami
+    properties[:, :number_properties] = param
+    properties[:, number_properties:2*number_properties] = exp_avg
+    properties[:, 2*number_properties:] = exp_avg_sqs
+
+
+
+
+
 
 # use this if you want to step *all elements*
 def _global_single_tensor_adam2(

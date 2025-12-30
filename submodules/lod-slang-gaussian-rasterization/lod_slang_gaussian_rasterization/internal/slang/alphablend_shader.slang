@@ -96,6 +96,8 @@ float4 alpha_blend(TensorView<int32_t> sorted_gauss_idx,
                     continue;
                 
                 collected_idx[j] = sorted_gauss_idx[tile_idx_start + i * block_size + j];
+                
+                
                 float add = update_contribution(curr_pixel_state, gauss_rgba);
 
                 float out;

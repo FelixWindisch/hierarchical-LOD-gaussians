@@ -60,6 +60,8 @@ render_pkg["viewspace_points"].label = "means2D"
 render_pkg["viewspace_points"].grad.label = "means2D_grad"
 gaussians.bounding_sphere_radii.label = "bounding_sphere_radii"
 
+
+import builtins
 import gc
 import sys
 gc.collect()
@@ -80,7 +82,7 @@ for obj in gc.get_objects():
                     unknown_size += obj.nelement() * obj.element_size()
     except:
         pass
-known_tensors = sorted(known_tensors, key=lambda x : x.nelement() * x.element_size(), reverse=True)
+known_tensors = builtins.sorted(known_tensors, key=lambda x : x.nelement() * x.element_size(), reverse=True)
 labels = []
 for obj in known_tensors:
     print(obj.label, end=":   ")
@@ -88,7 +90,7 @@ for obj in known_tensors:
     	print(" (DUPLICATE) ", end="")
     print(type(obj), obj.size(), obj.dtype, f" {obj.nelement() * obj.element_size():_} ", sys.getrefcount(obj))
     labels.append(obj.label)
-unknown_tensors = sorted(unknown_tensors, key=lambda x : x.nelement() * x.element_size(), reverse=True)
+unknown_tensors = builtins.sorted(unknown_tensors, key=lambda x : x.nelement() * x.element_size(), reverse=True)
 for obj in unknown_tensors:
     print("UNKNOWN", end=":   ")
     print(type(obj), obj.size(), obj.dtype, f" {obj.nelement() * obj.element_size():_} ", sys.getrefcount(obj))

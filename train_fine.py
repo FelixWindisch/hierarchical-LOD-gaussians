@@ -221,7 +221,7 @@ def training(dataset, opt:OptimizationParams, pipe, saving_iterations, checkpoin
     prev_cam_center = torch.zeros(3, device='cuda', dtype=torch.float32)
     print("Current Time:", datetime.now().strftime("%H:%M:%S"))
     
-    gaussians.properties.pin_memory()
+    #gaussians.properties.pin_memory()
     
     while iteration < opt.iterations + 1:
         for viewpoint_batch in training_generator:

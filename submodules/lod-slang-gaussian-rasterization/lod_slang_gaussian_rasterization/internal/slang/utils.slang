@@ -23,6 +23,12 @@ float read_t1_float(uint32_t idx, DiffTensorView t1)
 }
 
 [Differentiable]
+float2 read_t2_float(uint32_t idx, DiffTensorView t2)
+{
+    return float2(t2[uint2(idx, 0)], t2[uint2(idx, 1)]);
+}
+
+[Differentiable]
 float3 read_t3_float3(uint32_t idx, DiffTensorView t3)
 {
     return float3(t3[uint2(idx, 0)],
@@ -238,7 +244,7 @@ struct Splat_2D_AlphaBlend : IDifferentiable
     float opacity;
     float2x2 inv_cov_vs;
     float distance_mu;
-    float distance_sigma;
+    float2 distance_sigma;
 };
 
 [Differentiable]
@@ -256,7 +262,7 @@ Splat_2D_AlphaBlend load_splat_alphablend(int32_t g_idx,
     float2x2 g_inv_cov = read_t2x2_float2x2(g_idx, inv_cov_vs);
 
     float g_distance_mu = read_t1_float(g_idx, distance_mu);
-    float g_distance_sigma = read_t1_float(g_idx, distance_sigma);
+    float2 g_distance_sigma = read_t2_float(g_idx, distance_sigma);
    // float g_contrib = read_t1_float(g_idx, contribution);
     return { g_xyz_vs, g_rgb, g_opacity, g_inv_cov, g_distance_mu, g_distance_sigma };
 }
@@ -287,7 +293,15 @@ float4 evaluate_splat(Splat_2D_AlphaBlend g,
         return float4(0);
     }
     float alpha = min(0.99f, g_opacity * exp(power));
-    alpha *= exp(-0.5f * ((distance - g.distance_mu) * (distance - g.distance_mu)) / (2 * g.distance_sigma * g.distance_sigma + 0.0000001f));
+    if (distance < g.distance_mu)
+    {
+        alpha *= exp(-0.5f * ((distance - g.distance_mu) * (distance - g.distance_mu)) / (2 * g.distance_sigma[0] * g.distance_sigma[0] + 0.00000001f));
+    }
+    else
+    {
+        alpha *= exp(-0.5f * ((distance - g.distance_mu) * (distance - g.distance_mu)) / (2 * g.distance_sigma[1] * g.distance_sigma[1] + 0.00000001f));
+    }
+    
     float3 premult_rgb = g_rgb * alpha;
     
     return float4(premult_rgb, alpha);

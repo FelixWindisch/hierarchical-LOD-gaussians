@@ -206,6 +206,8 @@ class GaussianModel:
         
 
     def build_hierarchical_SPT(self, SPT_Root_Volume, target_granularity, min_SPT_Size = 100, use_bounding_spheres=True, revive_gaussians = False):
+        keep_gaussians_mask = torch.zeros(len(self.properties), dtype=torch.bool, device=self.properties.device)
+        
         SPT_scale = SPT_Root_Volume
         device = self.properties.device
         
@@ -1759,8 +1761,93 @@ class GaussianModel:
         torch.cuda.empty_cache()
         return optimizable_tensor
     
+    
+    def compute_relocation_torch(self,
+    opacity_old: torch.Tensor, 
+    scale_old: torch.Tensor, 
+    N: torch.Tensor, 
+    ):
+        """
+        PyTorch implementation of the compute_relocation CUDA kernel.
+
+        Args:
+            opacity_old: Float tensor of shape (P)
+            scale_old: Float tensor of shape (P, 3)
+            N: Int tensor of shape (P) containing split counts
+            binoms: Float tensor (flattened) containing binomial coefficients
+            n_max: Int stride for accessing binoms
+
+        Returns:
+            opacity_new: Float tensor of shape (P)
+            scale_new: Float tensor of shape (P, 3)
+        """
+        n_max = 51
+        binoms = torch.zeros((n_max, n_max)).float().cuda()
+        for n in range(n_max):
+            for k in range(n+1):
+                binoms[n, k] = math.comb(n, k)
+        binoms = binoms.flatten()
+        # Ensure inputs are on the same device
+        device = opacity_old.device
+
+        # 1. Compute new opacity (Vectorized)
+        # CUDA: opacity_new[idx] = 1.0f - powf(1.0f - opacity_old[idx], 1.0f / N_idx);
+        inv_N = 1.0 / N.float()
+        opacity_new = 1.0 - (1.0 - opacity_old).pow(inv_N)
+
+        # 2. Compute Denom Sum
+        # Because N varies per element, we process batches of elements that share the same N value.
+        denom_sum = torch.zeros_like(opacity_old)
+        unique_n_values = torch.unique(N)
+
+        for n_val in unique_n_values:
+            n_val_int = int(n_val.item())
+
+            # Create a boolean mask for elements where N == n_val
+            mask = (N == n_val)
+            if not mask.any():
+                continue
+
+            # Extract the subset of opacities for this N
+            sub_opacity_new = opacity_new[mask]
+            sub_sum = torch.zeros_like(sub_opacity_new)
+
+            # Replicate the CUDA nested loops
+            # Outer loop: i from 1 to N_idx
+            for i in range(1, n_val_int + 1):
+                # Inner loop: k from 0 to i-1
+                for k in range(0, i):
+                    # CUDA: binoms[(i-1) * n_max + k]
+                    # Note: binoms is a tensor, so we fetch the scalar value
+                    bin_coeff = binoms[(i - 1) * n_max + k].item()
+
+                    # CUDA: (pow(-1, k) / sqrt(k + 1)) * pow(opacity_new[idx], k + 1)
+                    # We compute the scalar part first
+                    scalar_term = ((-1) ** k) / ((k + 1) ** 0.5)
+
+                    # Compute the term dependent on opacity
+                    term = scalar_term * (sub_opacity_new.pow(k + 1))
+
+                    sub_sum += (bin_coeff * term)
+
+            # Assign the computed sums back to the main tensor
+            denom_sum[mask] = sub_sum
+
+        # 3. Compute new scale (Vectorized)
+        # CUDA: float coeff = (opacity_old[idx] / denom_sum);
+        # Avoid division by zero if denom_sum is 0 (though unlikely in this algo context)
+        coeff = opacity_old / (denom_sum + 1e-8) 
+
+        # CUDA: scale_new[idx * 3 + i] = coeff * scale_old[idx * 3 + i];
+        # We unsqueeze coeff to shape (P, 1) to broadcast over scale_old (P, 3)
+        scale_new = scale_old * coeff.unsqueeze(-1)
+
+        return opacity_new, scale_new
+        
+        
     def _update_params(self, idxs, ratio):
-        new_opacity, new_scaling = compute_relocation_cuda(
+        # This should be compute_relocation_cuda
+        new_opacity, new_scaling = self.compute_relocation_torch(
             opacity_old=self.opacity_activation(self.properties[idxs, opacity1]).cuda(),
             scale_old=self.scaling_activation(self.properties[idxs, scales1:scales2]).cuda(),
             N=ratio[idxs, 0].cuda() + 1
@@ -1984,6 +2071,33 @@ class GaussianModel:
         return num_gs
     
     
+    def duplicate_in_tensor(self, tensor, duplicate_indices):
+        offsets = torch.arange(1, len(duplicate_indices) + 1)
+        target_indices = duplicate_indices + offsets
+        # target_indices is now [2, 5, 8, 12]
+
+        # 3. Create the Output Container
+        total_rows = tensor.size(0) + len(duplicate_indices)
+        if tensor.dim() == 2:
+            output = torch.empty(total_rows, tensor.size(1)).to(tensor.device)
+        else:
+            output = torch.empty(total_rows).to(tensor.device)
+
+        # 4. Create a Boolean Mask
+        # Start with a mask of all True (True = "This slot belongs to Old Data")
+        mask = torch.ones(total_rows, dtype=torch.bool)
+
+        # Mark the specific insertion spots as False (False = "This slot belongs to New Data")
+        mask[target_indices] = False
+
+        # 5. Fill the Tensor (Scatter)
+        # Fill the "False" spots with new values
+        output[~mask] = tensor[duplicate_indices]
+
+        # Fill the "True" spots with old values
+        output[mask] = tensor
+        return output
+    
     def add_new_gs_smooth(self, cap_max, size, densification, densify_percent = 1.05, densify_threshold = 0.01):
         device = self.properties.device
         target_num = min(cap_max, int(densify_percent * size))
@@ -1993,7 +2107,7 @@ class GaussianModel:
         
         
         # all Gaussians with an SPT can be densified
-        densify_indices = self.SPT_gaussian_indices.cpu()
+        densify_indices = self.SPT_gaussian_indices[self.skybox_points:].cpu()
         if len(densify_indices) > 16_000_000:
             reduced = torch.randperm(len(densify_indices))[:16_000_000]
         else:
@@ -2006,12 +2120,7 @@ class GaussianModel:
         ratio_ = torch.zeros((self.size,1), device=ratio.device, dtype=torch.long)
         ratio_[add_idx] = ratio[insertion_indices]
         
-        insertion_indices = reduced[insertion_indices]
-                
-        
-            
-            
-        spawn_SPTs = self.SPT_index_per_Gaussian[add_idx]
+                            
         (   new_xyz, 
             new_features_dc,
             new_features_rest,
@@ -2029,58 +2138,38 @@ class GaussianModel:
         add_idx = add_idx.to(torch.int32)
         add_idx = add_idx.to(device)
 
-        self.properties[add_idx, opacity1:opacity2] = new_opacity
-        self.properties[add_idx, scales1:scales2] = new_scaling
-        self.densification_postfix_with_storage(new_xyz, new_features_dc, new_features_rest, new_opacity, new_scaling, new_rotation, reset_params=False)
-        self.properties[self.size:self.size+len(new_xyz), d_mu1:d_mu2] = self.properties[add_idx, d_mu1:d_mu2]
-        self.properties[self.size:self.size+len(new_xyz), d_sigma1:d_sigma2] = self.properties[add_idx, d_sigma1:d_sigma2]
+        #self.properties[add_idx, opacity1:opacity2] = new_opacity
+        #self.properties[add_idx, scales1:scales2] = new_scaling
+        
+        add_idx, _ = torch.sort(add_idx)
+        
+
+        self.properties = self.duplicate_in_tensor(self.properties, add_idx)
+        self.SPT_min = self.duplicate_in_tensor(self.SPT_min, add_idx) + torch.rand(len(self.SPT_min) + len(add_idx)).cuda() * 0.01
+        self.SPT_max = self.duplicate_in_tensor(self.SPT_max, add_idx) + torch.rand(len(self.SPT_max) + len(add_idx)).cuda() * 0.01
+        
+        
+        bin_ids = torch.bucketize(add_idx.cuda(), self.SPT_starts, right=True) - 1
+        valid_mask = (bin_ids >= 0) & (bin_ids < (len(self.SPT_starts) - 1))
+        valid_bin_ids = bin_ids[valid_mask]
+        counts = torch.bincount(valid_bin_ids, minlength=len(self.SPT_starts) - 1)
+        self.SPT_starts[1:] += torch.cumsum(counts, 0)
+        
+        #self.densification_postfix_with_storage(new_xyz, new_features_dc, new_features_rest, new_opacity, new_scaling, new_rotation, reset_params=False)
+        #self.properties[self.size:self.size+len(new_xyz), d_mu1:d_mu2] = self.properties[add_idx, d_mu1:d_mu2]
+        #self.properties[self.size:self.size+len(new_xyz), d_sigma1:d_sigma2] = self.properties[add_idx, d_sigma1:d_sigma2]
         
         # Reset the Momentum of Gaussians that were copied
-        self.properties[add_idx, number_properties + 2:] = 0
-        
-        
-        #update the SPTs
-        gaussian_indices_to_insert = torch.arange(size,size+len(add_idx), dtype=torch.int32).cuda()
-        SPT_mins_to_insert = self.SPT_min[insertion_indices]
-        SPT_maxs_to_insert = self.SPT_max[insertion_indices]
-        
-        idx_A = torch.arange(len(self.SPT_gaussian_indices), dtype=torch.float)
-        idx_B = insertion_indices.float() - 0.5
-        all_values = torch.cat([self.SPT_gaussian_indices, gaussian_indices_to_insert.cuda()])
-        all_indices = torch.cat([idx_A, idx_B])
-        sort_order = all_indices.argsort()
-        result = all_values[sort_order]
-        self.SPT_gaussian_indices = result
-        
-        idx_A = torch.arange(len(self.SPT_min), dtype=torch.float)
-        idx_B = insertion_indices.float() - 0.5
-        all_values = torch.cat([self.SPT_min, SPT_mins_to_insert])
-        all_indices = torch.cat([idx_A, idx_B])
-        sort_order = all_indices.argsort()
-        result = all_values[sort_order]
-        self.SPT_min = result
-        
-        idx_A = torch.arange(len(self.SPT_max), dtype=torch.float)
-        idx_B = insertion_indices.float() - 0.5
-        all_values = torch.cat([self.SPT_max, SPT_maxs_to_insert])
-        all_indices = torch.cat([idx_A, idx_B])
-        sort_order = all_indices.argsort()
-        result = all_values[sort_order]
-        self.SPT_max = result
-        
-        C_sorted, _ = torch.sort(insertion_indices)
-        shifts = torch.searchsorted(C_sorted.cuda(), self.SPT_starts, right=False)
-        self.SPT_starts = self.SPT_starts + shifts
-        self.SPT_starts = self.SPT_starts.to(torch.int32)
-        self.size += len(add_idx)
-        
-        
+        self.properties[add_idx, self.properties.shape[1] // 3:] = 0
         
         #re-sort
-        sorted_indices = vectorized_segment_sort(self.SPT_max, self.SPT_starts)
-        self.SPT_gaussian_indices = self.SPT_gaussian_indices[sorted_indices]
-        self.SPT_min = self.SPT_min[sorted_indices]
-        self.SPT_max = self.SPT_max[sorted_indices]
+        sorted_indices = vectorized_segment_sort(self.SPT_max[self.skybox_points:], self.SPT_starts - self.skybox_points) + self.skybox_points
+        self.SPT_gaussian_indices = torch.arange(0, len(self.SPT_min)).cuda().to(torch.int32)
+        self.SPT_min[self.skybox_points:] = self.SPT_min[sorted_indices]
+        self.SPT_max[self.skybox_points:] = self.SPT_max[sorted_indices]
+        self.properties[self.skybox_points:] = self.properties[sorted_indices.cpu()]
+        
+        self.size = len(self.SPT_max)
         return num_gs
     
     
