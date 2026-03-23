@@ -20,6 +20,7 @@ pip install torch torchvision --index-url https://download.pytorch.org/whl/cu126
 
 pip install -r requirements.txt
 ```
+Install the last 5 dependencies with --no-build-isolation if you get errors.
 
 ### Compiling hierarchy generator and merger
 These files were adapted from Hierarchical 3DGS and can be built as follows:
